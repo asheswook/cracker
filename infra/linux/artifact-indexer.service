@@ -1,0 +1,27 @@
+[Unit]
+Description=Background attachment document indexing
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/autonomous-assistant
+Environment=PATH=%h/.bun/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=%h/.config/autonomous-assistant/daemon.env
+RuntimeDirectory=assistant-artifact-indexer
+RuntimeDirectoryMode=0700
+Environment=DOCUMENT_TEMP_ROOT=%t/assistant-artifact-indexer
+ExecStartPre=/usr/bin/env bun services/daemon/artifact-indexer.ts --preflight
+ExecStart=/usr/bin/env bun services/daemon/artifact-indexer.ts
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=5
+KillMode=control-group
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+CPUQuota=20%
+MemoryMax=256M
+TasksMax=16
+
+[Install]
+WantedBy=default.target

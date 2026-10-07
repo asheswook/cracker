@@ -1,0 +1,8 @@
+.assistant-shell .native-composer .composer-input-row { display: none; }
+.assistant-shell .native-composer .composer-region { padding-bottom: 0; }
+.assistant-shell .native-composer .messenger-composer {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.assistant-shell .native-composer .draft-attachments:empty { display: none; }

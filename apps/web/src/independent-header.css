@@ -1,0 +1,69 @@
+.independent-header-active .main-surface::before { display: none; }
+html[data-header-only='true'],
+html[data-header-only='true'] body,
+html[data-header-only='true'] #root {
+  background: transparent;
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+}
+html[data-header-only='true'] .assistant-shell.app-shell {
+  display: block;
+  height: 100%;
+  min-height: 100%;
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+}
+html[data-header-only='true'] .assistant-shell .main-surface {
+  height: 100%;
+  min-height: 100%;
+  overflow: visible;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+html[data-header-only='true'] .assistant-shell .messenger-header,
+html[data-header-only='true'] .assistant-shell .main-surface::before { position: absolute; }
+
+html[data-header-only='true'] .main-surface { display: flow-root; }
+html[data-header-only='true'] .archive-banner { position: relative; z-index: 3; }
+
+@media (max-height: 180px) {
+  html:is([data-header-only='true'], [data-message-canvas='true']) .assistant-shell {
+    --message-header-inset: var(--s1);
+    --message-identity-height: 44px;
+    --message-header-clearance: calc(var(--s1) + 44px + var(--s1));
+    --message-top-fade-height: var(--message-header-clearance);
+  }
+  html:is([data-header-only='true'], [data-message-canvas='true']) .messenger-header-start,
+  html:is([data-header-only='true'], [data-message-canvas='true']) .messenger-header .header-actions {
+    padding-top: 0;
+  }
+  html:is([data-header-only='true'], [data-message-canvas='true']) .messenger-header-start {
+    flex-direction: row;
+  }
+  html:is([data-header-only='true'], [data-message-canvas='true']) .messenger-header .status { display: none; }
+  html:is([data-header-only='true'], [data-message-canvas='true']) .messenger-header .messenger-identity {
+    flex-direction: row;
+    justify-content: center;
+    gap: var(--s2);
+    min-height: 44px;
+    padding-block: 0;
+  }
+  html:is([data-header-only='true'], [data-message-canvas='true']) .messenger-identity > .assistant-character {
+    --character-size: 32px;
+    margin-bottom: 0;
+  }
+  html:is([data-header-only='true'], [data-message-canvas='true']) .messenger-header .icon-button,
+  html:is([data-header-only='true'], [data-message-canvas='true']) .messenger-header .computer-trigger {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+@media (max-height: 180px) {
+  html[data-message-canvas='true'] .assistant-shell:not(.independent-header-active) .native-composer .message-column {
+    padding-bottom: var(--s2);
+  }
+}

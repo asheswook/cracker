@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "autonomous-assistant-control",
+  "main": "services/control/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "placement": {"mode":"smart"},
+  "ai": {"binding":"AI"},
+  "vectorize": [{"binding":"CONTEXT_INDEX","index_name":"assistant-contexts"}],
+  "build": {"command":"pnpm --dir apps/web build"},
+  "r2_buckets": [{"binding":"ARTIFACTS","bucket_name":"autonomous-assistant-artifacts"}],
+  "assets": {"directory":"./apps/web/dist","binding":"ASSETS","not_found_handling":"single-page-application","run_worker_first":["/v1/*","/health","/ready"]},
+  "hyperdrive": [{
+    "binding": "DATABASE",
+    "id": "00000000000000000000000000000000",
+    "localConnectionString": "postgres://assistant:assistant@127.0.0.1:55439/assistant_dev"
+  }],
+  "durable_objects": {"bindings": [{"name":"ROOMS","class_name":"AssistantRoom"},{"name":"SCREENS","class_name":"ScreenRoom"}]},
+  "migrations": [{"tag":"v1","new_sqlite_classes":["AssistantRoom"]},{"tag":"v2","new_sqlite_classes":["ScreenRoom"]}],
+  "triggers": {"crons":["* * * * *"]},
+  "observability": {"enabled":true},
+  "rules": [{"type":"Text","globs":["**/*.sql"],"fallthrough":true}]
+}

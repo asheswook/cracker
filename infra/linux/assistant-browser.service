@@ -1,0 +1,17 @@
+[Unit]
+Description=Shared Assistant Chrome browser
+Requires=assistant-xvfb.service
+After=assistant-xvfb.service assistant-desktop.service
+
+[Service]
+Type=simple
+Environment=DISPLAY=:99
+Environment=XAUTHORITY=%h/.config/autonomous-assistant/xauthority
+ExecStart=/bin/sh %h/.local/share/autonomous-assistant/infra/linux/start-browser.sh
+Restart=always
+RestartSec=2
+TimeoutStopSec=20
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

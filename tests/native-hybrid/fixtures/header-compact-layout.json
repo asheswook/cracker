@@ -1,0 +1,75 @@
+[
+  {
+    "scenario": "header-false",
+    "height": 52,
+    "rects": [
+      {
+        "x": 20,
+        "y": 4,
+        "width": 44,
+        "height": 44
+      },
+      {
+        "x": 255,
+        "y": 4,
+        "width": 240,
+        "height": 44
+      },
+      {
+        "x": 686,
+        "y": 4,
+        "width": 44,
+        "height": 44
+      }
+    ],
+    "pass": true
+  },
+  {
+    "scenario": "header-true",
+    "height": 52,
+    "rects": [
+      {
+        "x": 20,
+        "y": 4,
+        "width": 44,
+        "height": 44
+      },
+      {
+        "x": 64,
+        "y": 4,
+        "width": 44,
+        "height": 44
+      },
+      {
+        "x": 255,
+        "y": 4,
+        "width": 240,
+        "height": 44
+      },
+      {
+        "x": 686,
+        "y": 4,
+        "width": 44,
+        "height": 44
+      }
+    ],
+    "pass": true
+  },
+  {
+    "scenario": "real-App-header-rejection-fallback",
+    "feed": [
+      0,
+      116
+    ],
+    "warning": false,
+    "header": [
+      0,
+      52
+    ],
+    "tail": [
+      6.140625,
+      108.140625
+    ],
+    "pass": true
+  }
+]

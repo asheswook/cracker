@@ -1,0 +1,3 @@
+ALTER TABLE memory_corrections ADD COLUMN known_to timestamptz;
+ALTER TABLE memory_assertions DROP CONSTRAINT memory_assertions_workspace_id_supersedes_id_fkey;
+ALTER TABLE memory_assertions ADD CONSTRAINT memory_assertions_workspace_id_supersedes_id_fkey FOREIGN KEY(workspace_id,supersedes_id) REFERENCES memories(workspace_id,id);

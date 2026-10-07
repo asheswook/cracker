@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Browser
+Exec=sh -c "exec \"$HOME/.local/share/autonomous-assistant/infra/linux/open-browser.sh\""
+Icon=web-browser
+Terminal=false

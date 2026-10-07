@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Browser
+Exec=sh -c "exec \"$HOME/.local/share/autonomous-assistant/infra/linux/open-browser.sh\" \"$@\"" -- %U
+Icon=google-chrome
+Terminal=false
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
+Categories=Network;WebBrowser;

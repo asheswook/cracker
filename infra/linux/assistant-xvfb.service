@@ -1,0 +1,14 @@
+[Unit]
+Description=Private X11 display for Autonomous Assistant
+
+[Service]
+Type=simple
+Environment=DISPLAY=:99
+Environment=XAUTHORITY=%h/.config/autonomous-assistant/xauthority
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1364x1024x24 -nolisten tcp -auth %h/.config/autonomous-assistant/xauthority
+ExecStartPost=%h/.local/share/autonomous-assistant/infra/linux/wait-display.sh
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=20
+KillMode=control-group
+UMask=0077

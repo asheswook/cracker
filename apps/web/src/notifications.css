@@ -1,0 +1,52 @@
+.notification-panel {
+  display: grid;
+  gap: 20px;
+}
+.notification-description,
+.notification-status,
+.notification-note {
+  margin: 0;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+.notification-description {
+  color: var(--muted);
+  font-size: 14px;
+}
+.notification-status {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-muted);
+  color: var(--ink);
+  font-size: 14px;
+}
+.notification-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.notification-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.notification-preference {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.notification-preference input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+}
+.notification-preference small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}

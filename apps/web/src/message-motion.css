@@ -1,0 +1,26 @@
+.feed-content {
+  position: relative;
+}
+.working-message[data-exiting="true"] {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+.working-message[data-exiting="true"] .typing-bubble i {
+  animation-play-state: paused;
+}
+.working-message[data-cleared="true"],
+.working-message[data-cleared="true"] .typing-bubble {
+  transition: none;
+}
+.working-message[data-holding="true"] {
+  height: calc(var(--s10) + var(--s5));
+  padding-bottom: var(--s5);
+}
+.working-message[data-holding="true"] .typing-bubble i {
+  animation-play-state: paused;
+}
+.working-message[data-active="false"] .typing-bubble {
+  visibility: hidden;
+}

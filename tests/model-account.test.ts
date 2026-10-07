@@ -1,0 +1,44 @@
+import { expect, test } from "bun:test";
+import { AccountStatus } from "../packages/models/account-schema.ts";
+import { DaemonPoll } from "../packages/protocol/index.ts";
+import { controlFixture } from "./control-fixture.ts";
+
+const f = controlFixture();
+const route = `/v1/model-account?vm_id=${f.vm}`;
+const action = (kind = "connect", id = crypto.randomUUID()) => f.request("/v1/model-account", f.client, { vm_id: f.vm, request_id: id, action: kind });
+const claim = () => f.request("/v1/daemon/model-account/claim", f.machine, {});
+test("account requests are scoped, idempotent, serialized, and exclude dispatch until observed", async () => {
+  expect((await f.request(route, f.alienToken)).status).toBe(404);
+  expect((await f.request(route, f.machine)).status).toBe(403);
+  const first = await f.request(route);
+  expect(first.headers.get("cache-control")).toBe("no-store");
+  expect(AccountStatus.parse(await first.json()).state).toBe("unknown");
+  const id = crypto.randomUUID();
+  expect((await action("connect", id)).status).toBe(200);
+  expect((await action("connect", id)).status).toBe(200);
+  expect((await action("disconnect", id)).status).toBe(409);
+  expect((await action()).status).toBe(409);
+  await f.newTask();
+  expect(DaemonPoll.parse(await (await f.request("/v1/daemon/poll", f.machine)).json()).assignment).toBeNull();
+  expect(await (await claim()).json()).toMatchObject({ request: { request_id: id, action: "connect", login_location: "vm" } });
+  expect(await (await claim()).json()).toEqual({ request: null });
+  expect((await f.request("/v1/daemon/model-account/observed", f.machine, { request_id: crypto.randomUUID(), state: "connected", error_code: null })).status).toBe(409);
+  expect((await f.request("/v1/daemon/model-account/observed", f.machine, { request_id: null, state: "disconnected", error_code: null })).status).toBe(200);
+  expect(AccountStatus.parse(await (await f.request(route)).json()).state).toBe("connecting");
+  expect((await f.request("/v1/daemon/model-account/observed", f.machine, { request_id: id, state: "connected", error_code: null })).status).toBe(200);
+  const dispatched = DaemonPoll.parse(await (await f.request("/v1/daemon/poll", f.machine)).json());
+  expect(dispatched.assignment).not.toBeNull();
+  expect((await action("disconnect")).status).toBe(409);
+  await f.finishActive();
+});
+test("expired login fails visibly and permits a fresh request without replaying the old login", async () => {
+  const requestId = crypto.randomUUID();
+  expect((await action("connect", requestId)).status).toBe(200);
+  await claim();
+  await f.sql`UPDATE assistant.chatgpt_accounts SET lease_until=now()-interval '1 second' WHERE vm_id=${f.vm}`;
+  expect(await (await claim()).json()).toEqual({ request: null });
+  const failed = AccountStatus.parse(await (await f.request(route)).json());
+  expect(failed.state).toBe("requires_login"); expect(failed.error_code).toBe("login_interrupted");
+  expect((await action("disconnect")).status).toBe(200);
+  expect((await f.request("/v1/daemon/model-account/observed", f.machine, { request_id: requestId, state: "connected", error_code: null })).status).toBe(409);
+});

@@ -1,0 +1,22 @@
+@media (max-width: 767px), (any-pointer: coarse) {
+  :root
+    body
+    :is(
+      input:not(
+        [type="button"],
+        [type="submit"],
+        [type="reset"],
+        [type="checkbox"],
+        [type="radio"],
+        [type="range"],
+        [type="color"],
+        [type="file"],
+        [type="hidden"],
+        [type="image"]
+      ),
+      textarea,
+      select
+    ) {
+    font-size: max(16px, 1rem);
+  }
+}

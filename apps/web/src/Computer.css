@@ -1,0 +1,399 @@
+.computer-session {
+  --computer-control-ink: #b2b9c6;
+  gap: var(--s3);
+  min-width: 0;
+}
+.computer-session .computer-identity {
+  padding: 0;
+}
+.computer-session .computer-frame {
+  flex-shrink: 0;
+  transition: box-shadow 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.computer-session[data-ownership="user"] .computer-frame {
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.computer-session .video-region {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: max(120px, calc(100dvh - 320px));
+}
+.screen-keyboard-help {
+  position: absolute;
+  inset: auto var(--s3) var(--s3);
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r2);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: keep-all;
+  pointer-events: none;
+  opacity: 0;
+}
+.video-region video:focus-visible + .screen-keyboard-help {
+  opacity: 1;
+}
+.screen-takeover,
+.screen-control-pending {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  color: var(--ink);
+  background: transparent;
+}
+.screen-takeover {
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+}
+.screen-takeover span,
+.screen-control-pending {
+  font-size: 13px;
+  font-weight: 500;
+}
+.screen-takeover span {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  border-radius: var(--r2);
+  background: var(--glass);
+  padding: var(--s3) var(--s4);
+  box-shadow: var(--shadow-float);
+  opacity: 0;
+  transition: opacity 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.screen-takeover:hover span,
+.screen-takeover:focus-visible span {
+  opacity: 1;
+}
+.screen-takeover:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -4px;
+}
+.screen-control-pending {
+  inset: auto var(--s3) var(--s3);
+  padding: var(--s3);
+  border-radius: var(--r2);
+  background: var(--glass);
+  pointer-events: none;
+}
+.computer-control-strip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  column-gap: var(--s3);
+  row-gap: var(--s1);
+  padding: var(--s1) var(--s2);
+  border-radius: 0 0 var(--r3) var(--r3);
+  align-self: center;
+  max-width: 100%;
+  margin-top: calc(-1 * var(--s3));
+  background: var(--surface-muted);
+}
+.computer-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: keep-all;
+}
+.computer-owner svg {
+  flex-shrink: 0;
+}
+.computer-session[data-ownership="user"] .computer-owner {
+  color: var(--warning);
+}
+.computer-control-strip .computer-control-action {
+  min-height: 44px;
+  padding: var(--s2) var(--s3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.computer-panel.computer-session:fullscreen {
+  display: flex;
+  overflow: auto;
+  padding: max(var(--s5), env(safe-area-inset-top, 0px)) max(var(--s5), env(safe-area-inset-right, 0px))
+    max(var(--s5), env(safe-area-inset-bottom, 0px)) max(var(--s5), env(safe-area-inset-left, 0px));
+}
+.computer-session:fullscreen .computer-frame {
+  min-height: 120px;
+  flex: 1 1 0;
+}
+.computer-session:fullscreen .video-region {
+  min-height: 0;
+  max-height: none;
+  aspect-ratio: auto;
+}
+@media (hover: none) {
+  .screen-takeover span {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .computer-session .computer-frame,
+  .screen-takeover span {
+    transition: none;
+  }
+}
+.computer-session .screen-connection {
+  position: absolute;
+  inset: 0;
+  justify-content: safe center;
+  color: var(--muted);
+  background: var(--surface-muted);
+  gap: var(--s2);
+  padding: var(--s3);
+  text-align: center;
+  overflow: auto;
+}
+.computer-session .screen-connection strong {
+  max-width: 36ch;
+  text-wrap: balance;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.computer-session .screen-connection > span {
+  max-width: 38ch;
+  color: var(--muted);
+  font-size: 12px;
+  word-break: keep-all;
+}
+.computer-session .screen-connection > svg {
+  flex-shrink: 0;
+}
+.computer-session .screen-connection .button {
+  min-height: 44px;
+  flex-shrink: 0;
+}
+
+.computer-session[popover] {
+  position: static;
+  inset: auto;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  overflow: visible;
+}
+.computer-session .screen-toolbar {
+  min-height: 44px;
+  height: auto;
+}
+.computer-session .screen-toolbar .icon-button {
+  width: 44px;
+  height: 44px;
+}
+.computer-session[data-expanded="true"] {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: var(--computer-viewport-height, 100dvh);
+  top: var(--computer-viewport-top, 0px);
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: max(var(--s2), env(safe-area-inset-top, 0px)) max(var(--s2), env(safe-area-inset-right, 0px))
+    max(var(--s2), env(safe-area-inset-bottom, 0px)) max(var(--s2), env(safe-area-inset-left, 0px));
+  background: var(--surface);
+  overflow: auto;
+}
+.computer-session[data-expanded="true"] .computer-identity {
+  display: none;
+}
+.computer-session[data-expanded="true"] .computer-frame {
+  display: flex;
+  flex-direction: column;
+  min-height: 100px;
+  flex: 1 1 0;
+}
+.computer-session[data-expanded="true"] .video-region {
+  flex: 1;
+  min-height: 0;
+  aspect-ratio: auto;
+  max-height: none;
+}
+.computer-input-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  text-wrap: balance;
+  word-break: keep-all;
+  text-align: center;
+}
+.computer-keyboard {
+  position: relative;
+  flex-shrink: 0;
+}
+.computer-keyboard textarea {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font-size: 16px;
+  resize: none;
+}
+.computer-keyboard[data-open="false"] {
+  height: 0;
+}
+.computer-keyboard-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s1);
+}
+.computer-keyboard-keys > button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--r2);
+  color: var(--ink);
+  background: var(--surface-muted);
+  font: inherit;
+  font-size: 12px;
+}
+.inspector-dialog:not([data-inline]) .computer-inspector .inspector-header .icon-button {
+  width: 44px;
+  height: 44px;
+}
+.computer-session[data-keyboard-compact="true"] {
+  gap: 0;
+}
+.computer-session[data-keyboard-compact="true"] .screen-toolbar {
+  padding-inline: var(--s1);
+  flex-shrink: 0;
+  gap: var(--s1);
+}
+.computer-session .computer-compact-keys {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: none;
+}
+.computer-compact-keys > button {
+  flex: 0 0 auto;
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  color: var(--computer-control-ink);
+  font: inherit;
+  font-size: 12px;
+}
+.computer-session[data-keyboard-compact="true"] .computer-control-action {
+  color: var(--computer-control-ink);
+  background: transparent;
+  flex-shrink: 0;
+  min-height: 44px;
+  padding-inline: var(--s2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.computer-session[data-keyboard-compact="true"] .computer-input-hint {
+  display: none;
+}
+.computer-session[data-zoomed="true"] .video-region {
+  display: block;
+  place-items: start;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.computer-session[data-zoomed="true"] .video-region video {
+  position: relative;
+  inset: auto;
+  display: block;
+  width: auto;
+  min-width: 100%;
+  max-width: none;
+  height: auto;
+}
+.computer-session[data-panning="true"] .video-region video {
+  touch-action: pan-x pan-y;
+  cursor: grab;
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .inspector-dialog:not([data-inline]) .computer-inspector .inspector-header {
+    height: calc(var(--s12) + env(safe-area-inset-top, 0px));
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-inline: max(var(--s3), env(safe-area-inset-left, 0px)) max(var(--s3), env(safe-area-inset-right, 0px));
+  }
+  .inspector-dialog:not([data-inline]) .computer-inspector .inspector-body {
+    padding: 0 max(var(--s3), env(safe-area-inset-right, 0px)) max(var(--s2), env(safe-area-inset-bottom, 0px)) max(var(--s3), env(safe-area-inset-left, 0px));
+  }
+  .inspector-dialog:not([data-inline]) .computer-inspector .inspector-body > div:has(> .computer-session) {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .inspector-dialog:not([data-inline]) .computer-session:not([data-expanded="true"]) {
+    height: 100%;
+    min-height: 0;
+    gap: var(--s1);
+  }
+  .inspector-dialog:not([data-inline]) .computer-session .computer-identity {
+    flex-shrink: 0;
+  }
+  .inspector-dialog:not([data-inline]) .computer-session .computer-icon {
+    display: none;
+  }
+  .inspector-dialog:not([data-inline]) .computer-session .computer-identity > div {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s2);
+    min-width: 0;
+  }
+  .inspector-dialog:not([data-inline]) .computer-session .computer-identity h3 {
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .inspector-dialog:not([data-inline]) .computer-session .computer-identity p {
+    flex-shrink: 0;
+    margin: 0;
+    white-space: nowrap;
+  }
+  .inspector-dialog:not([data-inline]) .computer-session .computer-frame {
+    display: flex;
+    flex-direction: column;
+    flex: 1 0 120px;
+    min-height: 120px;
+  }
+  .inspector-dialog:not([data-inline]) .computer-session .screen-toolbar {
+    flex-shrink: 0;
+  }
+  .inspector-dialog:not([data-inline]) .computer-session .video-region {
+    flex: 1;
+    min-height: 0;
+    aspect-ratio: auto;
+    max-height: none;
+  }
+  .inspector-dialog:not([data-inline]) .computer-session .computer-control-strip {
+    margin-top: 0;
+  }
+  .computer-session[data-expanded="true"] {
+    gap: var(--s1);
+  }
+  .computer-session[data-expanded="true"] .computer-input-hint {
+    display: none;
+  }
+  .computer-session[data-expanded="true"] .computer-control-strip {
+    margin-top: 0;
+  }
+}

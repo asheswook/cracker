@@ -1,0 +1,31 @@
+.schedule-section-title { margin: 28px 0 10px; font-size: .8rem; font-weight: 600; color: var(--muted); }
+.schedule-list { list-style: none; padding: 0; margin: 0; }
+.schedule-list .resource-meta { align-items: flex-start; line-height: 1.6; }
+.schedule-list .resource-meta > span { min-width: 0; overflow-wrap: anywhere; }
+.schedule-list .resource-meta svg { flex-shrink: 0; }
+.schedule-list .resource-item h3 { overflow-wrap: anywhere; }
+.schedule-list .schedule-next { margin-top: 12px; font-size: .8rem; }
+.schedule-list .schedule-error { color: var(--danger); }
+.schedule-history { margin-top: var(--s4); padding-top: var(--s3); border-top: 1px solid var(--line); }
+.schedule-history-heading, .schedule-history-meta { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--s2); }
+.schedule-history-heading h3 { margin: 0; font-size: .8rem; font-weight: 600; }
+.schedule-history-list { list-style: none; padding: 0; margin: var(--s2) 0; }
+.schedule-history-list > li { padding-block: var(--s3); }
+.schedule-history-meta { color: var(--muted); font-size: .8rem; line-height: 1.6; margin-bottom: var(--s1); }
+.schedule-history-meta time { min-width: 0; overflow-wrap: anywhere; }
+.schedule-history .button { min-height: 44px; }
+.schedules-panel > .work-filters { margin: 20px 0; }
+.schedule-objective-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; white-space: pre-wrap; line-height: 1.65; }
+.schedule-objective summary { list-style: none; cursor: pointer; border-radius: var(--s1); font-size: 14px; font-weight: 500; }
+.schedule-objective summary::-webkit-details-marker { display: none; }
+.schedule-objective summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 40%, transparent); outline-offset: var(--s1); }
+.schedule-objective-toggle { display: flex; align-items: center; gap: var(--s1); min-height: 44px; color: var(--accent); font-size: 13px; font-weight: 500; }
+.schedule-objective summary:hover .schedule-objective-toggle { color: var(--accent-hover); }
+.schedule-objective-less, .schedule-objective[open] .schedule-objective-more { display: none; }
+.schedule-objective[open] .schedule-objective-less { display: inline; }
+.schedule-objective[open] .schedule-objective-text { display: none; }
+.schedule-list .schedule-objective-full { margin: 0; color: var(--ink); font-size: 14px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.schedule-objective[open] .schedule-objective-toggle svg { transform: rotate(180deg); }
+@media (max-width: 767px), (pointer: coarse) {
+  .schedule-list .work-actions .button { min-height: 44px; }
+}

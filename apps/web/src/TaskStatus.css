@@ -1,0 +1,58 @@
+.task-inline.task-inline-with-reason {
+  align-items: flex-start;
+}
+.task-inline-with-reason > svg {
+  flex: none;
+  margin-top: var(--s4);
+}
+.task-inline-with-reason > .icon-button {
+  flex: none;
+  margin-top: var(--s2);
+}
+.task-reason {
+  min-width: 0;
+  flex: 1;
+}
+.task-reason summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: var(--s2);
+  padding: var(--s1) 0;
+  cursor: pointer;
+  list-style: none;
+  border-radius: var(--r1);
+}
+.task-reason summary::-webkit-details-marker {
+  display: none;
+}
+.task-reason-open,
+.task-reason-close {
+  color: var(--accent);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.task-reason-close,
+.task-reason[open] .task-reason-open {
+  display: none;
+}
+.task-reason[open] .task-reason-close {
+  display: inline;
+}
+.task-reason-body {
+  max-height: min(180px, 25dvh);
+  overflow: auto;
+  margin: 0 0 var(--s2);
+  padding: var(--s1) 0;
+  font-size: 13px;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.task-reason summary:focus-visible,
+.task-reason-body:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
+}

@@ -1,0 +1,55 @@
+name: Checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: assistant
+          POSTGRES_PASSWORD: assistant
+          POSTGRES_DB: assistant_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U assistant -d assistant_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://assistant:assistant@127.0.0.1:5432/assistant_test
+    steps:
+      - name: Checkout (v4)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Node setup (v4)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.7.0'
+      - name: Bun setup (v2)
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.2.10'
+      - run: npm install --global pnpm@10.33.2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm exec tsc --noEmit -p tsconfig.worker.json
+      - run: pnpm --dir apps/web build
+      - run: DATABASE_URL="$TEST_DATABASE_URL" bun scripts/migrate.ts
+      - name: Context and conversation regressions
+        run: bun test tests/context*.test.ts tests/semantic*.test.ts tests/runtime-semantic-context.test.ts tests/runtime-task-context.test.ts tests/control-unknown-queue.test.ts tests/extensions.test.ts
+      - name: Account and interrupted-run regressions
+        run: bun test tests/model-account*.test.ts tests/provider-account.test.ts tests/provider-local-login.test.ts tests/provider-lock.test.ts tests/model-settings.test.ts tests/control-validation-retry.test.ts tests/control-recovery.test.ts tests/runtime-active-recovery.test.ts tests/runtime-disconnect-followup.test.ts
+      - name: Scan source for secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=gitleaks_8.30.1_linux_x64.tar.gz
+          curl --fail --silent --show-error --location "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/$archive" --output "$RUNNER_TEMP/$archive"
+          printf '%s  %s\n' '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb' "$RUNNER_TEMP/$archive" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
+          scan_dir=$(mktemp -d "$RUNNER_TEMP/source.XXXXXX")
+          git archive HEAD | tar -x -C "$scan_dir"
+          "$RUNNER_TEMP/gitleaks" dir "$scan_dir" --redact --no-banner

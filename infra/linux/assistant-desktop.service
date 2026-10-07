@@ -1,0 +1,15 @@
+[Unit]
+Description=Xfce desktop with dock, terminal and files on private Assistant X11 display
+Requires=assistant-xvfb.service
+After=assistant-xvfb.service
+PartOf=assistant-xvfb.service
+
+[Service]
+Type=simple
+Environment=DISPLAY=:99
+Environment=XAUTHORITY=%h/.config/autonomous-assistant/xauthority
+ExecStart=%h/.local/share/autonomous-assistant/infra/linux/start-desktop.sh
+Restart=on-failure
+RestartSec=2
+KillMode=control-group
+UMask=0077

@@ -1,0 +1,4 @@
+ALTER TABLE responsibility_evaluations DROP CONSTRAINT responsibility_evaluations_outcome_check;
+ALTER TABLE responsibility_evaluations ADD CONSTRAINT responsibility_evaluations_outcome_check CHECK(outcome IN ('quiet','notify','complete','action'));
+CREATE TABLE responsibility_actions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),workspace_id uuid NOT NULL,responsibility_id uuid NOT NULL,context_hash text NOT NULL,objective text NOT NULL,state text NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','dispatched','cancelled')),task_id uuid,created_at timestamptz NOT NULL DEFAULT now(),dispatched_at timestamptz,UNIQUE(workspace_id,responsibility_id,context_hash),FOREIGN KEY(workspace_id,responsibility_id) REFERENCES responsibilities(workspace_id,id),FOREIGN KEY(workspace_id,task_id) REFERENCES tasks(workspace_id,id));
+CREATE UNIQUE INDEX responsibility_action_task ON responsibility_actions(task_id) WHERE task_id IS NOT NULL;

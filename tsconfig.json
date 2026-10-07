@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ESNext", "module": "ESNext", "moduleResolution": "Bundler",
+    "lib": ["ESNext", "DOM"], "types": ["bun"], "strict": true,
+    "noUncheckedIndexedAccess": true, "exactOptionalPropertyTypes": true,
+    "noFallthroughCasesInSwitch": true, "noPropertyAccessFromIndexSignature": true,
+    "verbatimModuleSyntax": true, "skipLibCheck": true, "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["packages/**/*.ts", "services/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["services/control/worker.ts", "services/control/room.ts", "services/control/screen-room.ts"]
+}

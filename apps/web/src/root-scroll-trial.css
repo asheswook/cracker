@@ -1,0 +1,47 @@
+html[data-root-scroll-trial='true'],
+html[data-root-scroll-trial='true'] body,
+html[data-root-scroll-trial='true'] #root {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+}
+html[data-root-scroll-trial='true'] .assistant-shell.app-shell {
+  display: block;
+  height: auto;
+  min-height: 100dvh;
+  overflow: visible;
+  padding: 0;
+}
+html[data-root-scroll-trial='true'] .assistant-shell .main-surface,
+html[data-root-scroll-trial='true'] .chat,
+html[data-root-scroll-trial='true'] .message-feed {
+  display: block;
+  flex: none;
+  height: auto;
+  max-height: none;
+  overflow: visible;
+}
+html[data-root-scroll-trial='true'] .assistant-shell .main-surface {
+  display: flow-root;
+}
+html[data-root-scroll-trial='true'] .feed-motion-clip {
+  contain: none;
+  overflow: visible;
+}
+html[data-root-scroll-trial='true'] .assistant-shell .messenger-header,
+html[data-root-scroll-trial='true'] .assistant-shell .main-surface::before {
+  position: fixed;
+}
+html[data-root-scroll-trial='true'] .chat-footer {
+  position: relative;
+}
+@media (min-width: 768px) {
+  html[data-root-scroll-trial='true'] .assistant-shell.app-shell { padding-inline-start: 76px; }
+  html[data-root-scroll-trial='true'] .desktop-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: 76px;
+  }
+  html[data-root-scroll-trial='true'] .assistant-shell .messenger-header,
+  html[data-root-scroll-trial='true'] .assistant-shell .main-surface::before { inset-inline-start: 76px; }
+}

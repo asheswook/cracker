@@ -1,0 +1,10 @@
+ALTER TABLE semantic_contexts ADD CONSTRAINT semantic_context_workspace_identity UNIQUE(workspace_id,id);
+ALTER TABLE semantic_context_links DROP CONSTRAINT semantic_context_links_workspace_id_conversation_id_contex_fkey;
+ALTER TABLE semantic_context_links ADD CONSTRAINT semantic_context_link_workspace_context
+ FOREIGN KEY(workspace_id,context_id) REFERENCES semantic_contexts(workspace_id,id);
+ALTER TABLE semantic_context_notes DROP CONSTRAINT semantic_context_notes_workspace_id_conversation_id_contex_fkey;
+ALTER TABLE semantic_context_notes ADD CONSTRAINT semantic_context_note_workspace_context
+ FOREIGN KEY(workspace_id,context_id) REFERENCES semantic_contexts(workspace_id,id);
+ALTER TABLE semantic_context_notes ADD CONSTRAINT semantic_context_note_source_conversation
+ FOREIGN KEY(workspace_id,conversation_id,source_message_id) REFERENCES messages(workspace_id,conversation_id,id);
+CREATE INDEX semantic_context_workspace_recent ON semantic_contexts(workspace_id,source_sequence DESC,id);

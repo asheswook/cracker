@@ -1,0 +1,21 @@
+[Unit]
+Description=Autonomous Assistant VM daemon
+Requires=assistant-xvfb.service
+After=assistant-xvfb.service assistant-desktop.service
+Wants=assistant-desktop.service assistant-browser.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/autonomous-assistant
+Environment=PATH=%h/.bun/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=%h/.config/autonomous-assistant/daemon.env
+ExecStartPre=/usr/bin/env bun services/daemon/main.ts --preflight
+ExecStart=/usr/bin/env bun services/daemon/main.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+KillMode=control-group
+UMask=0077
+
+[Install]
+WantedBy=default.target

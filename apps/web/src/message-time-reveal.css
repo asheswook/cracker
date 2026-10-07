@@ -1,0 +1,55 @@
+.assistant-shell .message-column.time-reveal {
+  position: relative;
+  --message-time-rail: 96px;
+}
+.assistant-shell .time-reveal .message > :not(.message-time) {
+  translate: var(--message-time-offset, 0px) 0;
+}
+.assistant-shell .time-reveal .message-time {
+  inset: 12px 0 auto auto;
+  width: var(--message-time-rail);
+  height: auto;
+  padding: 0;
+  margin: 0;
+  overflow: visible;
+  clip-path: none;
+  text-align: right;
+  pointer-events: none;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted);
+  opacity: var(--message-time-opacity, 0);
+}
+.assistant-shell .messenger-header-start {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+.assistant-shell .messenger-header-start > .mobile-menu {
+  pointer-events: auto;
+}
+.assistant-shell .message-time-slot {
+  pointer-events: none;
+}
+.assistant-shell .message-time-slot:empty {
+  display: none;
+}
+.assistant-shell .message-time-slot,
+.assistant-shell .icon-button.message-time-toggle {
+  width: 44px;
+  height: 44px;
+}
+.assistant-shell .icon-button.message-time-toggle {
+  clip-path: inset(50%);
+  pointer-events: none;
+}
+.assistant-shell .message-time-toggle:focus-visible,
+.assistant-shell .message-time-toggle[aria-pressed="true"] {
+  clip-path: none;
+  pointer-events: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r3);
+  color: var(--ink);
+  background: var(--surface);
+}

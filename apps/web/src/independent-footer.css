@@ -1,0 +1,34 @@
+html[data-message-canvas='true'], html[data-message-canvas='true'] body, html[data-message-canvas='true'] #root {
+  background: var(--message-canvas);
+}
+html[data-footer-only='true'], html[data-footer-only='true'] body, html[data-footer-only='true'] #root {
+  height: 100%; min-height: 0; min-width: 0; overflow: hidden; background: transparent;
+}
+html[data-footer-only='true'] .footer-shell.app-shell {
+  display: block; height: 100%; min-height: 0; padding: 0; overflow: hidden; background: transparent;
+}
+html[data-footer-only='true'] .footer-pane.main-surface {
+  display: block; height: 100%; min-height: 0; border-radius: 0; box-shadow: none;
+  overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; background: transparent;
+}
+html[data-footer-only='true'] .footer-pane::before { display: none; }
+.footer-content { display: flex; flex-direction: column; gap: var(--s3); width: calc(100% - 40px); max-width: var(--message-column); margin: 0 auto; }
+.footer-content:not(:empty) { padding-block: var(--s3); }
+.footer-content .new-message { position: static; transform: none; align-self: center; min-height: 44px; }
+html[data-footer-floating='true'] .footer-content { width: 100%; padding: 0 0 var(--s6); }
+.footer-content .task-reason-body { max-height: none; overflow: visible; }
+.footer-content .draft-attachments { margin: 0; }
+.footer-content .draft-file { min-width: 0; }
+.footer-content .draft-file > span { overflow-wrap: anywhere; }
+.chat-footer.independent-footer-active > .new-message,
+.chat-footer.independent-footer-active > .archive-footnote,
+.chat-footer.independent-footer-active .composer-region > .task-inline,
+.chat-footer.independent-footer-active .composer-region > .error-notice,
+.chat-footer.independent-footer-active .attachment-store-recovery,
+.chat-footer.independent-footer-active .draft-attachments { display: none; }
+.settings-dialog > .editor-body {
+  min-height: 0;
+  padding: var(--s6);
+  overflow: auto;
+}
+.task-full-reason { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }

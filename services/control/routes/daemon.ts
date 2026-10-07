@@ -1,0 +1,75 @@
+import { Hono } from "hono";
+import { z } from "zod";
+import { DaemonEvent, DaemonPoll, Id, PriorWorkRequest } from "../../../packages/protocol";
+import type { AppEnv } from "../auth";
+import type { Database } from "../db";
+import { applyEvent } from "../repository/daemon-events";
+import { workContext, workMailbox, priorWork, taskSources } from "../repository/task-context";
+import { context, mailbox, poll } from "../repository/runs";
+import { enrollSchedule, ScheduleRequest } from "../repository/schedule-enrollment";
+import { resumeRun } from "../repository/resume";
+import {ComposingRequest} from "../../../packages/protocol/composing";
+import {updateComposing} from "../repository/composing";
+export function daemonRoutes(sql: Database, semanticEnabled = false) {
+  const app = new Hono<AppEnv>();
+  app.post("/composing",async c=>{
+    const event=ComposingRequest.parse(await c.req.json());
+    return c.json(await sql.begin(tx=>updateComposing(tx,c.get("principal"),event)));
+  });
+  app.post("/resume/:id", async (c) => {
+    const text = await c.req.text();
+    const request = z.object({ checkpoint_cursor: z.number().int().nonnegative().optional() }).parse(text ? JSON.parse(text) : {});
+    const assignment = await sql.begin(tx => resumeRun(tx, c.get("principal"), Id.parse(c.req.param("id")), request.checkpoint_cursor));
+    return c.json({ assignment: {...assignment, ...(semanticEnabled ? {semantic_context_enabled: true} : {})} });
+  });
+  app.get("/poll", async (c) => {
+    const run = Id.optional().parse(c.req.query("run_id"));
+    const view = z.enum(["full", "commands", "work"]).parse(c.req.query("view") ?? "full");
+    const result = DaemonPoll.parse(await sql.begin((tx) => poll(tx, c.get("principal"), run, view)));
+    if (semanticEnabled && result.assignment) result.assignment.semantic_context_enabled = true;
+    return c.json(result);
+  });
+  app.get("/context/:id", async (c) => {
+    const id = Id.parse(c.req.param("id")),
+      after = z.coerce
+        .number()
+        .int()
+        .min(0)
+        .parse(c.req.query("after") ?? 0);
+    const view = z.enum(["full", "mailbox", "work", "work_mailbox", "task_sources"]).parse(c.req.query("view") ?? "full");
+    if (view === "work") {
+      const assignment = await sql.begin(tx => workContext(tx,c.get("principal"),id));
+      return c.json({...assignment, ...(semanticEnabled ? {semantic_context_enabled: true} : {})});
+    }
+    if (view === "work_mailbox") return c.json(await sql.begin(tx => workMailbox(tx,c.get("principal"),id,after)));
+    if (view === "task_sources") return c.json(await sql.begin(tx => taskSources(tx,c.get("principal"),id,after)));
+    if (view === "mailbox")
+      return c.json(await sql.begin((tx) => mailbox(tx, c.get("principal"), { runId: id, after })));
+    const result = await sql.begin((tx) => context(tx, c.get("principal"), id, after));
+    return c.json({
+      messages: result.messages,
+      instructions: result.instructions,
+      persona: result.persona,
+      memory: result.memory,
+    });
+  });
+  app.post("/context/:id/prior-work", async c => {
+    const id=Id.parse(c.req.param("id")), request=PriorWorkRequest.parse(await c.req.json());
+    return c.json(await sql.begin(tx=>priorWork(tx,c.get("principal"),id,request)));
+  });
+  app.post("/schedules", async (c) =>
+    c.json({
+      schedule: await enrollSchedule(
+        sql,
+        c.get("principal"),
+        ScheduleRequest.parse(await c.req.json()),
+      ),
+    }),
+  );
+  app.post("/events", async (c) => {
+    const event = DaemonEvent.parse(await c.req.json());
+    await sql.begin((tx) => applyEvent(tx, c.get("principal"), event));
+    return c.json({ accepted: true });
+  });
+  return app;
+}

@@ -1,0 +1,40 @@
+.assistant-shell.app-shell,
+.assistant-shell.app-shell.has-inspector,
+.assistant-shell.app-shell.has-inspector.computer-open {
+  --inspector-standard-width: 390px;
+  --inspector-computer-min: 500px;
+  --inspector-chat-min: 380px;
+  --inspector-computer-share: .575;
+  position: relative;
+  grid-template-columns: 76px minmax(0, 1fr);
+}
+.assistant-shell > .main-surface {
+  margin-right: var(--inspector-space, 0px);
+}
+.inspector-dialog {
+  overflow: clip;
+}
+.inspector-dialog:not([data-inline]) .computer-inspector {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+.assistant-shell .inspector-dialog[data-inline] .inspector-shell {
+  position: absolute;
+  inset: var(--s3) var(--s3) var(--s3) auto;
+}
+.inspector-dialog::backdrop {
+  background: rgb(0 0 0 / calc(.18 * var(--inspector-progress, 0)));
+  backdrop-filter: blur(calc(4px * var(--inspector-progress, 0)));
+}
+@media (max-width: 1100px) {
+  .assistant-shell.has-inspector .main-surface { filter: none; }
+}
+@media (max-width: 767px) {
+  .assistant-shell.app-shell,
+  .assistant-shell.app-shell.has-inspector,
+  .assistant-shell.app-shell.has-inspector.computer-open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

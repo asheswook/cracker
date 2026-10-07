@@ -1,0 +1,88 @@
+.messenger-header .messenger-identity {
+  --identity-radius: 14px;
+  --identity-name-size: 16px;
+  --identity-status-size: 14px;
+  --identity-line-height: 20px;
+  --identity-name-weight: 500;
+  --identity-padding-block: 4px;
+  --identity-padding-inline: 10px;
+  --identity-character-overlap: 2px;
+  --identity-status-lines: 2;
+  --identity-outline-width: 1px;
+  gap: 0;
+  justify-content: flex-start;
+}
+.messenger-identity > .assistant-character { margin-bottom: calc(-1 * var(--identity-character-overlap)); }
+.messenger-identity .identity-working-label {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--identity-radius);
+  background: transparent;
+  overflow: visible;
+  font-size: var(--identity-name-size);
+  line-height: var(--identity-line-height);
+}
+.identity-working-label > .identity-label-surface {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  border-radius: var(--identity-radius);
+  background: var(--message-canvas);
+  box-shadow: 0 0 0 var(--identity-outline-width) var(--line);
+  pointer-events: none;
+}
+.identity-working-label > .identity-label-surface::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--message-received);
+  opacity: 0;
+  transition: opacity var(--identity-fade-duration);
+}
+.messenger-header .messenger-identity:hover .identity-working-label { background: transparent; }
+button.messenger-identity:hover .identity-label-surface::after { opacity: 1; }
+.identity-working-label > .identity-label-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: max-content;
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--identity-padding-block) var(--identity-padding-inline);
+  overflow: visible;
+  white-space: normal;
+}
+.identity-label-persona {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--identity-name-weight);
+}
+.identity-label-thinking {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--identity-status-lines);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  text-align: center;
+  text-wrap: balance;
+  font-size: var(--identity-status-size);
+  line-height: var(--identity-line-height);
+  color: var(--muted);
+}
+.identity-status { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) {
+  .identity-working-label > .identity-label-surface::after { transition: none; }
+}

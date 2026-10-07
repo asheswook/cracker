@@ -1,0 +1,4 @@
+# Copy to .dev.vars for Wrangler local development. Never commit filled values.
+EXTENSION_ENCRYPTION_KEY=
+SCREEN_TURN_KEY_ID=
+SCREEN_TURN_API_TOKEN=

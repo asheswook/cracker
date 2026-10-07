@@ -1,0 +1,67 @@
+.skill-workflow .settings-form-body {
+  gap: 20px;
+}
+.skill-workflow section {
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}
+.skill-workflow h3,
+.skill-workflow h4 {
+  margin: 0 0 12px;
+}
+.skill-workflow form,
+.workflow-check-form fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.workflow-check-form fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.workflow-document,
+.workflow-source {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.workflow-document {
+  max-height: 320px;
+  overflow: auto;
+  background: var(--surface-muted);
+  border-radius: 12px;
+  padding: 16px;
+  font-size: 13px;
+}
+.skill-workflow small {
+  overflow-wrap: anywhere;
+}
+.skill-workflow summary {
+  cursor: pointer;
+  padding-block: 10px;
+}
+.skill-execution {
+  border-top: 1px solid var(--line);
+  padding-block: 8px;
+}
+.skill-execution li {
+  margin-block: 12px;
+}
+.skill-execution li p {
+  white-space: pre-wrap;
+}
+.workflow-links,
+.workflow-section-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.workflow-section-heading {
+  justify-content: space-between;
+}
+.skill-workflow a {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+.skill-workflow { min-width: 0; overflow-wrap: anywhere; }

@@ -1,0 +1,185 @@
+.bubble.assistant.markdown-bubble {
+  min-inline-size: 0;
+  inline-size: 100%;
+}
+.markdown-message {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  container-type: inline-size;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.75;
+}
+.markdown-message :where(p, ul, ol, blockquote, hr, .markdown-code, .markdown-table-scroll) {
+  margin-block: 0 var(--s4);
+}
+.markdown-message > :last-child {
+  margin-block-end: 0;
+}
+.markdown-message :where(h1, h2, h3, h4, h5, h6) {
+  margin-block: var(--s6) var(--s3);
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: -0.02em;
+}
+.markdown-message > :first-child {
+  margin-block-start: 0;
+}
+.markdown-message h1 {
+  font-size: 1.5em;
+}
+.markdown-message h2 {
+  font-size: 1.3em;
+}
+.markdown-message :where(h3, h4, h5, h6) {
+  font-size: 1.1em;
+}
+.markdown-message :where(ul, ol) {
+  padding-inline-start: var(--s6);
+}
+.markdown-message li + li {
+  margin-block-start: var(--s1);
+}
+.markdown-message li > :where(ul, ol) {
+  margin-block: var(--s1);
+}
+.markdown-message li > p {
+  margin-block-end: var(--s2);
+}
+.markdown-message .contains-task-list {
+  list-style: none;
+  padding-inline-start: var(--s1);
+}
+.markdown-message .task-list-item > input {
+  margin-inline-end: var(--s2);
+  accent-color: var(--accent);
+}
+.markdown-message blockquote {
+  margin-inline: 0;
+  padding: var(--s2) var(--s4);
+  border-inline-start: 3px solid var(--line);
+  background: var(--surface-muted);
+  color: var(--muted);
+}
+.markdown-message blockquote > :last-child {
+  margin-block-end: 0;
+}
+.markdown-message a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.markdown-message hr {
+  border: 0;
+  border-block-start: 1px solid var(--line);
+}
+.markdown-message img {
+  max-inline-size: 100%;
+  block-size: auto;
+  border-radius: var(--s2);
+}
+.markdown-message code {
+  padding: 0.12em 0.35em;
+  border-radius: var(--s1);
+  background: var(--wash);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  word-break: normal;
+}
+.markdown-code {
+  min-inline-size: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--s3);
+  overflow: hidden;
+  background: var(--surface-muted);
+}
+.markdown-code-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-block-size: 40px;
+  padding-inline: var(--s4) var(--s2);
+  border-block-end: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+.markdown-code-toolbar button {
+  border: 0;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  min-block-size: 40px;
+  padding-inline: var(--s2);
+  border-radius: var(--s2);
+  color: var(--muted);
+}
+.markdown-code-toolbar button:hover {
+  color: var(--ink);
+  background: var(--wash);
+}
+.markdown-code pre {
+  max-inline-size: 100%;
+  margin: 0;
+  padding: var(--s4);
+  overflow: auto;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+  line-height: 1.65;
+  tab-size: 2;
+}
+.markdown-code pre code {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+}
+.markdown-table-scroll {
+  overflow-wrap: break-word;
+  max-inline-size: 100%;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--s3);
+}
+.markdown-table-scroll table {
+  inline-size: 100%;
+  min-inline-size: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.92em;
+}
+.markdown-table-scroll :where(th, td) {
+  min-inline-size: auto;
+  max-inline-size: min(24rem, 75cqi);
+  padding: var(--s3) var(--s4);
+  text-align: start;
+  word-break: keep-all;
+  vertical-align: top;
+  border-block-end: 1px solid var(--line);
+}
+.markdown-table-scroll th {
+  font-weight: 600;
+  background: var(--surface-muted);
+}
+.markdown-table-scroll :where(th, td) + :where(th, td) {
+  border-inline-start: 1px solid var(--line);
+}
+.markdown-table-scroll tbody tr:last-child td {
+  border-block-end: 0;
+}
+@container (max-width: 600px) {
+  .markdown-table-scroll :where(th, td) {
+    padding-inline: var(--s2);
+  }
+}
+.markdown-table-scroll:focus-visible,
+.markdown-code pre:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+@media (max-width: 600px) {
+  .markdown-code-toolbar button {
+    min-block-size: 44px;
+  }
+}
