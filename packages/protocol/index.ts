@@ -26,6 +26,7 @@ export const Artifact = z.object({
 });
 export const AssistantPhase = z.enum(["commentary", "final_answer"]);
 export const Message = z.object({
+  synthetic: z.boolean().optional(),
   task_status: z.object({task_id:Id,run_id:Id,state:z.enum(["failed","unknown"]),reason:z.string()}).optional(),
   id: Id,
   task_id: Id.nullable().optional(),
@@ -75,6 +76,7 @@ export const PriorWorkRequest = z.object({ task_id: Id.nullable(), before_task_i
 export const PriorWorkPage = z.object({ capsules: z.array(WorkCapsule).max(8), messages: z.array(Message).max(100), has_more: z.boolean(), next_before_task_id: Id.nullable(), next_after_sequence: z.number().int().nullable() });
 export const TaskSourcePage = z.object({ retention_context: RetentionContext.optional(), messages: z.array(Message).max(100), memory: z.array(z.object({ id: Id, text: z.string() })), next_after_sequence: z.number().int().nullable() });
 export const Assignment = z.object({
+  semantic_structure_mode: z.enum(['off','shadow','on']).optional(),
   semantic_context_enabled: z.boolean().optional(),
   task: Task,
   run_id: Id,
@@ -103,6 +105,9 @@ export const DaemonEvent = z.discriminatedUnion("kind", [
       message_id: Id.optional(),
       semantic_context_id: Id.optional(),
       semantic_source_message_id: Id.optional(),
+      response_to_message_id: Id.optional(),
+      applied_user_ids: z.array(Id).max(256).optional(),
+      output_kind: z.enum(['answer','refusal','artifact','progress']).optional(),
       content: z.string().max(100000),
       phase: AssistantPhase.nullish(),
       attachment_ids: z.array(Id).max(8).optional(),

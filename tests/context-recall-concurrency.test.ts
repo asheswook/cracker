@@ -5,7 +5,7 @@ import type { Principal } from '../services/control/auth';
 import { linkContext, prepareSemanticContext } from '../packages/context/store';
 import { createSemanticRetriever } from '../packages/context/recall';
 import { synchronizeContextIndex } from '../packages/context/recall-index';
-import type { ContextEmbed, ContextVectorIndex } from '../packages/context/recall-types';
+import type { ContextEmbed } from '../packages/context/recall-types';
 
 const {TEST_DATABASE_URL:url='postgres://assistant:assistant@127.0.0.1:55439/semantic_recall_concurrency_1007'}=process.env;
 const sql=createDatabase(url);
@@ -39,10 +39,9 @@ async function fixture(count:number) {
     const rank=text.startsWith('group ')?Number(text.slice(6))+1:0;
     return Array.from({length:1024},(_,i)=>i===0?1:i===1?rank/100:0);
   })});
-  const index:ContextVectorIndex={async upsert(){return {};},async deleteByIds(){return {};},async query(){return {matches:[]};}};
   const scope={workspace,conversation},input=await message('query');
-  await synchronizeContextIndex(sql,embed,index,scope,Number.MAX_SAFE_INTEGER,count);
-  return {topics,scope,embed,index,input};
+  await synchronizeContextIndex(sql,embed,scope,Number.MAX_SAFE_INTEGER,count);
+  return {topics,scope,embed,input};
 }
 
 function observedDatabase(before:(context:string)=>Promise<void>) {
@@ -69,7 +68,7 @@ test('overlaps four delayed group reads while preserving the first twelve ranked
   const f=await fixture(28),ready=Promise.withResolvers<void>(),release=Promise.withResolvers<void>();
   const observed=observedDatabase(async()=>{if(observed.started.length===4)ready.resolve();await release.promise;});
   // When retrieval runs, all four reads must enter before any is released.
-  const retrieving=createSemanticRetriever(observed.database,f.embed,f.index)(f.input,f.scope);
+  const retrieving=createSemanticRetriever(observed.database,f.embed)(f.input,f.scope);
   const timeout=setTimeout(()=>{ready.reject(new Error('four group reads did not overlap'));release.resolve();},2000);
   try {await ready.promise;} finally {clearTimeout(timeout);release.resolve();await retrieving;}
   const result=await retrieving;
@@ -86,7 +85,7 @@ test('skips stale groups and ignores a speculative error beyond the first twenty
   const ignored=new Set(f.topics.slice(25,28).map(topic=>topic.context_id));
   const observed=observedDatabase(async context=>{if(ignored.has(context))throw new Error('unreached group');});
   // When stale entries do not consume the valid-group budget.
-  const result=await createSemanticRetriever(observed.database,f.embed,f.index)(f.input,f.scope);
+  const result=await createSemanticRetriever(observed.database,f.embed)(f.input,f.scope);
   // Then lookup reaches group25, but consumes no errors beyond it.
   expect(result).toEqual(expected(f.topics.slice(1,13)));
   expect(observed.started).toEqual(f.topics.slice(0,28).map(topic=>topic.context_id));
@@ -101,20 +100,19 @@ test('propagates the earliest reached error even when a later group rejects firs
     if(context===second.context_id){later.resolve();throw new Error('second group');}
   });
   // When both failures settle.
-  const retrieving=createSemanticRetriever(observed.database,f.embed,f.index)(f.input,f.scope);
+  const retrieving=createSemanticRetriever(observed.database,f.embed)(f.input,f.scope);
   // Then iteration order, not completion order, chooses the error.
   await expect(retrieving).rejects.toThrow('first group');
 },20000);
 
 test('rejects freshly suppressed sources after index selection',async()=>{
-  // Given an indexed source suppressed at the external-query boundary.
+  // Given an indexed source suppressed after selection, before snapshot hydration.
   const f=await fixture(5),first=f.topics[0];if(!first)throw new Error('missing fixture');
-  const index:ContextVectorIndex={...f.index,async query(){
-    await sql`INSERT INTO assistant.memory_suppressions(workspace_id,source_message_id) VALUES(${f.scope.workspace},${first.message_id})`;
-    return {matches:[]};
-  }};
+  const observed=observedDatabase(async context=>{
+    if(context===first.context_id)await sql`INSERT INTO assistant.memory_suppressions(workspace_id,source_message_id) VALUES(${f.scope.workspace},${first.message_id})`;
+  });
   // When hydration reads retention again.
-  const result=await createSemanticRetriever(sql,f.embed,index)(f.input,f.scope);
+  const result=await createSemanticRetriever(observed.database,f.embed)(f.input,f.scope);
   // Then the stale indexed source is absent from returned references.
   expect(result).toEqual(expected(f.topics.slice(1)));
 },20000);
@@ -127,12 +125,12 @@ test('sorts validated scores only after selecting the first twenty-four valid gr
     const staleVector=Array.from({length:1024},(_,i)=>i===0?1:0);
     const validVector=Array.from({length:1024},(_,i)=>i===0?1:i===1?1-rank/100:0);
     await sql`INSERT INTO assistant.semantic_search_documents(id,workspace_id,conversation_id,context_id,kind,reference_id,source_sequence,input_hash,start_offset,end_offset,vector)
-      SELECT ${staleId},workspace_id,conversation_id,context_id,kind,reference_id,source_sequence,'stale',start_offset,end_offset,${JSON.stringify(staleVector)}::text::jsonb
+      SELECT ${staleId},workspace_id,conversation_id,context_id,kind,reference_id,source_sequence,'stale',start_offset,end_offset,${JSON.stringify(staleVector)}::vector
       FROM assistant.semantic_search_documents WHERE context_id=${topic.context_id} LIMIT 1`;
-    await sql`UPDATE assistant.semantic_search_documents SET vector=${JSON.stringify(validVector)}::text::jsonb WHERE context_id=${topic.context_id} AND id<>${staleId}`;
+    await sql`UPDATE assistant.semantic_search_documents SET vector=${JSON.stringify(validVector)}::vector WHERE context_id=${topic.context_id} AND id<>${staleId}`;
   }
   // When hydration validates hashes before scoring and applies the original group cutoff.
-  const result=await createSemanticRetriever(sql,f.embed,f.index)(f.input,f.scope);
+  const result=await createSemanticRetriever(sql,f.embed)(f.input,f.scope);
   // Then lower-ranked groups with better valid scores cannot displace the reached groups.
   expect(result).toEqual(expected(f.topics.slice(12,24).toReversed()));
 },20000);

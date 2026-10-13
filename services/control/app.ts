@@ -25,6 +25,7 @@ import { sessionRoutes } from "./routes/session";
 import { workSearchRoutes } from "./routes/work-search.ts";
 import { screenIceRoutes, type ScreenTurnSettings } from "./screen-ice";
 import { semanticContextRoutes, semanticContextClientRoutes } from "./routes/semantic-context";
+import { semanticStructureRoutes } from "./routes/semantic-structure";
 import type { SemanticClassifier, SemanticRetriever } from "../../packages/context/schema";
 export function createApp(
   sql: Database,
@@ -34,7 +35,8 @@ export function createApp(
     readonly extensionKey?: string;
     readonly notificationConfig?: PushConfig | NotificationConfig;
     readonly screenTurn?: ScreenTurnSettings;
-    readonly semanticContexts?: { readonly classify?: SemanticClassifier; readonly retrieve?: SemanticRetriever };
+  readonly semanticContexts?: { readonly classify?: SemanticClassifier; readonly retrieve?: SemanticRetriever };
+  readonly semanticStructureMode?: 'off'|'shadow'|'on';
   } = {},
 ) {
   const allowedOrigins = options.allowedOrigins ?? [];
@@ -122,10 +124,11 @@ export function createApp(
   app.route("/v1/session", sessionRoutes(sql));
   app.route("/v1/daemon/memory", memoryDaemonRoutes(sql));
   if (options.semanticContexts) {
-    app.route("/v1/daemon", semanticContextRoutes(sql, options.semanticContexts));
+  app.route("/v1/daemon", semanticContextRoutes(sql, options.semanticContexts));
     app.route("/v1", semanticContextClientRoutes(sql));
   }
-  app.route("/v1/daemon", daemonRoutes(sql, Boolean(options.semanticContexts)));
+  app.route("/v1/daemon", semanticStructureRoutes(sql));
+  app.route("/v1/daemon", daemonRoutes(sql, Boolean(options.semanticContexts), options.semanticStructureMode));
   app.route("/v1", clientRoutes(sql));
   app.notFound((c) => c.json({ error: { code: "not_found", message: "Route not found" } }, 404));
   app.onError((error, c) => {

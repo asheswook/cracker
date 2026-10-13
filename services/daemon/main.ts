@@ -35,6 +35,7 @@ const BaseConfig = z.object({
   RUNTIME_TIMING: z.enum(["true","false"]).default("false"),
   TOOL_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(3),
   AGENT_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(3),
+  SEMANTIC_REFERENCE_COMBINED_MAX_BYTES:z.coerce.number().int().min(49024).default(96000),
   SCREEN_ENABLED: z.enum(["true", "false"]).default("false"),
 });
 const ScreenEnvironment = z.object({
@@ -107,6 +108,7 @@ export async function main(): Promise<void> {
     tools,
     toolConcurrency:config.TOOL_CONCURRENCY,
     agentConcurrency:config.AGENT_CONCURRENCY,
+    semanticReferenceCombinedMaxBytes:config.SEMANTIC_REFERENCE_COMBINED_MAX_BYTES,
     inputBarrier:()=>tools.releaseDesktopInputs(),
     ...(config.RUNTIME_TIMING === "true" ? { onControlTiming:(event:ControlTiming)=>process.stdout.write(JSON.stringify({event:"runtime.control_timing",...event})+"\n"), onTiming: (event:RuntimeTiming)=>process.stdout.write(JSON.stringify({event:"runtime.timing",...event})+"\n") } : {}),
     releaseInput: async () => {

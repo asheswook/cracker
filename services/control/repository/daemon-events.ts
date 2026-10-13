@@ -9,6 +9,7 @@ import { recordEvent } from "./common";
 import { loadRun } from "./runs";
 import {clearComposing,clearDeliveredComposing} from "./composing";
 import { linkAssistantContext } from "../../../packages/context/store";
+import { validateResponseAttribution } from "../../../packages/context/structure-store";
 
 const terminal = ["cancelled", "succeeded", "failed"];
 function unreachable(value: never): never {
@@ -57,13 +58,19 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
         { workspace: principal.workspace_id, conversation: task.conversation_id },
         event.attachment_ids ?? [],
       );
+      // Attribution is independent of semantic feature flags and never creates exchanges.
+      await validateResponseAttribution(sql,{workspace:principal.workspace_id,conversation:task.conversation_id,task_id:run.task_id},event.response_to_message_id??null,event.applied_user_ids??[]);
       const inserted = z
         .object({ id: z.uuid() })
         .parse(
           (
-            await sql`INSERT INTO assistant.messages(id,workspace_id,conversation_id,task_id,role,content,phase) VALUES(COALESCE(${event.message_id ?? null}::uuid,gen_random_uuid()),${principal.workspace_id},${task.conversation_id},${run.task_id},'assistant',${event.content},${event.phase ?? null}) RETURNING id`
+            await sql`INSERT INTO assistant.messages(id,workspace_id,conversation_id,task_id,role,content,phase,response_to_message_id,applied_user_ids,output_kind) VALUES(COALESCE(${event.message_id ?? null}::uuid,gen_random_uuid()),${principal.workspace_id},${task.conversation_id},${run.task_id},'assistant',${event.content},${event.phase ?? null},${event.response_to_message_id??null},${sql.array(event.applied_user_ids??[])}::uuid[],${event.output_kind??null}) RETURNING id`
           )[0],
         );
+      if(event.response_to_message_id||event.applied_user_ids?.length) {
+        const message=z.object({sequence:z.coerce.number()}).parse((await sql`SELECT sequence FROM assistant.messages WHERE workspace_id=${principal.workspace_id} AND id=${inserted.id}`)[0]);
+        await validateResponseAttribution(sql,{workspace:principal.workspace_id,conversation:task.conversation_id,task_id:run.task_id},event.response_to_message_id??null,event.applied_user_ids??[],message.sequence);
+      }
       await bindAttachments(
         sql,
         {

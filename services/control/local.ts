@@ -8,13 +8,13 @@ import { createDatabase } from "./db";
 import { dispatchDueSchedules } from "./repository/schedules";
 import { quarantineStaleRuns } from "./repository/recovery";
 
-const config = z.object({ DATABASE_URL: z.string().url(), PORT: z.coerce.number().int().min(1).max(65535).default(8787) }).parse(process.env);
+const config = z.object({ DATABASE_URL: z.string().url(), PORT: z.coerce.number().int().min(1).max(65535).default(8787), SEMANTIC_STRUCTURE_MODE:z.enum(['off','shadow','on']).default('off') }).parse(process.env);
 const sql = createDatabase(config.DATABASE_URL);
 const artifactStore = new LocalArtifactStore(".local/artifacts");
 const extensionKey = process.env["EXTENSION_ENCRYPTION_KEY"];
 const push = notificationConfig(process.env);
 const screenTurn = { SCREEN_TURN_KEY_ID: process.env["SCREEN_TURN_KEY_ID"], SCREEN_TURN_API_TOKEN: process.env["SCREEN_TURN_API_TOKEN"] };
-const app = createApp(sql, { screenTurn, notificationConfig: push, artifactStore, ...(extensionKey ? { extensionKey } : {}), allowedOrigins: ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:4173", "http://127.0.0.1:4173"] });
+const app = createApp(sql, { semanticStructureMode:config.SEMANTIC_STRUCTURE_MODE, screenTurn, notificationConfig: push, artifactStore, ...(extensionKey ? { extensionKey } : {}), allowedOrigins: ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:4173", "http://127.0.0.1:4173"] });
 const server = Bun.serve({ hostname: "127.0.0.1", port: config.PORT, fetch: app.fetch });
 let scheduling = false;
 let lastCleanup = 0;

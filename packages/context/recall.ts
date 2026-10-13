@@ -2,22 +2,26 @@ import { z } from 'zod';
 import type { Database } from '../../services/control/db';
 import { contextSnapshot } from './store-read';
 import type { SemanticRetriever } from './schema';
-import { contextNamespace, contextDocumentHash, synchronizeContextIndex } from './recall-index';
-import { contextCosine, ContextRecallError, encodeContext, SearchDocument, type ContextEmbed, type ContextVectorIndex } from './recall-types';
+import { contextDocumentHash, synchronizeContextIndex } from './recall-index';
+import { contextCosine, ContextRecallError, encodeContext, SearchDocument, type ContextEmbed } from './recall-types';
 export { CONTEXT_EMBEDDING_MODEL, contextCosine, ContextRecallError, type ContextEmbed } from './recall-types';
-const Matches=z.object({matches:z.array(z.object({id:z.string(),score:z.number().finite()}))});
 
-export function createSemanticRetriever(sql:Database,embed:ContextEmbed,index:ContextVectorIndex):SemanticRetriever {
+export function createSemanticRetriever(sql:Database,embed:ContextEmbed):SemanticRetriever {
   return async(input,scope)=>{
     if(input.linked||!input.source.retention_allowed||input.retention_context.sources.length)return [];
-    const synchronization=await synchronizeContextIndex(sql,embed,index,scope,input.source.sequence);
+    const synchronization=await synchronizeContextIndex(sql,embed,scope,input.source.sequence);
     if(synchronization.pending)throw new ContextRecallError('index_pending');
     const text=[input.source.content.slice(0,12000),...input.source.attachments.map(file=>file.name)].join('\n');
     if(!text.trim())return [];
     const [vector]=await encodeContext(embed,[text]);if(!vector)throw new ContextRecallError('invalid_embeddings');
-    const matches=Matches.parse(await index.query(vector,{namespace:await contextNamespace(scope),topK:64,filter:{sequence:{$lte:input.source.sequence}},returnValues:false,returnMetadata:'none'}));
-    const matching=z.array(SearchDocument).parse(await sql`SELECT * FROM assistant.semantic_search_documents WHERE workspace_id=${scope.workspace} AND source_sequence<=${input.source.sequence} AND id=ANY(${sql.array(matches.matches.map(item=>item.id))}::text[])`);
-    const recent=z.array(SearchDocument).parse(await sql`SELECT * FROM assistant.semantic_search_documents WHERE workspace_id=${scope.workspace} AND source_sequence<=${input.source.sequence} AND updated_at>now()-interval '10 minutes' ORDER BY updated_at DESC,id LIMIT 128`);
+    const matching=await sql.begin(async tx=>{
+      // Filters run after ANN scanning. pgvector 0.8 iterates to fill the 64-hit budget;
+      // relaxed ordering is safe because we re-rank below. LOCAL avoids pooled-session leaks.
+      await tx`SET LOCAL hnsw.iterative_scan = relaxed_order`;
+      await tx`SET LOCAL hnsw.ef_search = 100`;
+      return z.array(SearchDocument).parse(await tx`SELECT *,vector::text::jsonb AS vector FROM assistant.semantic_search_documents WHERE workspace_id=${scope.workspace} AND source_sequence<=${input.source.sequence} ORDER BY vector <=> ${JSON.stringify(vector)}::vector LIMIT 64`);
+    });
+    const recent=z.array(SearchDocument).parse(await sql`SELECT *,vector::text::jsonb AS vector FROM assistant.semantic_search_documents WHERE workspace_id=${scope.workspace} AND source_sequence<=${input.source.sequence} AND updated_at>now()-interval '10 minutes' ORDER BY updated_at DESC,id LIMIT 128`);
     const unique=[...new Map([...matching,...recent].map(document=>[document.id,document])).values()];
     const ranked=unique.map(document=>({document,score:contextCosine(vector,document.vector)})).toSorted((a,b)=>b.score-a.score||a.document.id.localeCompare(b.document.id));
     const groups=new Map<string,typeof ranked>();

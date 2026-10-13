@@ -8,12 +8,6 @@ export const SearchDocument = z.object({
 });
 export type ContextEmbed = (texts: readonly string[], signal: AbortSignal) => Promise<unknown>;
 export type SearchScope = Readonly<{workspace:string;conversation:string}>;
-export type SearchVector = Readonly<{id:string;values:number[];namespace:string;metadata:Readonly<{sequence:number}>}>;
-export interface ContextVectorIndex {
-  upsert(vectors: SearchVector[]): Promise<unknown>;
-  deleteByIds(ids:string[]): Promise<unknown>;
-  query(vector:number[], options:{namespace:string;topK:number;filter:{sequence:{$lte:number}};returnValues:false;returnMetadata:'none'}): Promise<unknown>;
-}
 export class ContextRecallError extends Error {
   constructor(readonly code:'invalid_embeddings'|'index_pending') {super(code);this.name='ContextRecallError';}
 }

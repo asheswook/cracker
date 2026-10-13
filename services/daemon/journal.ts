@@ -7,18 +7,21 @@ import { completeToolBoundary } from "../../packages/provider/compaction.ts";
 import { NativeContextArchive } from "./native-context-archive.ts";
 import { DelegationJournal } from "./delegation-journal.ts";
 import { SemanticMetadataJobs } from "./semantic-context-queue.ts";
+import { StructureJobs } from './semantic-structure.ts';
 export class JournalError extends Error { constructor(readonly code: string) { super(code); this.name = "JournalError"; } }
 export class Journal {
   private readonly db: Database;
   readonly observations: ToolObservations;
   readonly children: DelegationJournal;
   readonly semantic: SemanticMetadataJobs;
+  readonly structure: StructureJobs;
   private readonly archive:NativeContextArchive;
   constructor(path: string) {
     this.db = new Database(path, { create: true });
     this.observations = new ToolObservations(this.db);
     this.children = new DelegationJournal(this.db);
     this.semantic = new SemanticMetadataJobs(this.db);
+    this.structure = new StructureJobs(this.db);
     this.archive=new NativeContextArchive(this.db);
     this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS checkpoints(run TEXT PRIMARY KEY,payload TEXT NOT NULL,watermark INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS actions(id TEXT PRIMARY KEY,run TEXT NOT NULL,state TEXT NOT NULL,result TEXT); CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,state TEXT NOT NULL); CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,event TEXT NOT NULL); CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS memory_jobs(run TEXT PRIMARY KEY,payload TEXT NOT NULL,retry_at INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS rejected_events(id TEXT PRIMARY KEY,event TEXT NOT NULL,reason TEXT NOT NULL);");
   }

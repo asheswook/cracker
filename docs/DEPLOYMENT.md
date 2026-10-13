@@ -2,7 +2,9 @@
 
 ## Cloudflare
 
-Create your own PostgreSQL database/Hyperdrive binding, R2 bucket and Vectorize index. Copy `wrangler.jsonc` to the ignored `wrangler.local.jsonc` and update its example identifiers and names. The all-zero Hyperdrive ID is deliberately not a real resource. The provision worker configuration also contains an example ID.
+Create your own PostgreSQL database/Hyperdrive binding and R2 bucket. Install pgvector 0.8 or newer on PostgreSQL and grant the migration role permission to `CREATE EXTENSION IF NOT EXISTS vector` (or have an administrator enable it first in `assistant` or `public`). Copy `wrangler.jsonc` to the ignored `wrangler.local.jsonc` and update its example identifiers and names. The all-zero Hyperdrive ID is deliberately not a real resource. The provision worker configuration also contains an example ID.
+
+Semantic recall uses PostgreSQL as its only vector store. Migration 045 converts existing JSON arrays in place to `vector(1024)` and builds a cosine HNSW index; allow time and an exclusive table lock for the conversion before deploying the new worker. The dimension matches the fixed Workers AI `@cf/baai/bge-m3` model and its validated output. Keep the Workers AI binding for embeddings and classification. The cron still embeds stale contexts using revision checks; it no longer delivers vectors to an external index.
 
 Apply the SQL migrations through a PostgreSQL connection before serving requests. Configure Worker secrets with Wrangler, including the extension encryption key, provider settings and optional notification/TURN settings appropriate to your deployment. The server code validates each enabled integration's configuration. Never paste secret values into a tracked configuration file.
 

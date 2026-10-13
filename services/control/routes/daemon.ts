@@ -11,7 +11,7 @@ import { resumeRun } from "../repository/resume";
 import {ComposingRequest} from "../../../packages/protocol/composing";
 import {updateComposing} from "../repository/composing";
 import { ComputerControlRequest, requestComputerControl } from "../repository/message-control";
-export function daemonRoutes(sql: Database, semanticEnabled = false) {
+export function daemonRoutes(sql: Database, semanticEnabled = false, structureMode:'off'|'shadow'|'on'='off') {
   const app = new Hono<AppEnv>();
   app.post("/computer-control", async c => {
     const request = ComputerControlRequest.parse(await c.req.json());
@@ -25,7 +25,7 @@ export function daemonRoutes(sql: Database, semanticEnabled = false) {
     const text = await c.req.text();
     const request = z.object({ checkpoint_cursor: z.number().int().nonnegative().optional(), desktop_control_scoped: z.boolean().default(false) }).parse(text ? JSON.parse(text) : {});
     const assignment = await sql.begin(tx => resumeRun(tx, c.get("principal"), Id.parse(c.req.param("id")), request.checkpoint_cursor, request.desktop_control_scoped));
-    return c.json({ assignment: {...assignment, ...(semanticEnabled ? {semantic_context_enabled: true} : {})} });
+    return c.json({ assignment: {...assignment, ...(semanticEnabled ? {semantic_context_enabled: true} : {}),semantic_structure_mode:structureMode} });
   });
   app.get("/poll", async (c) => {
     const run = Id.optional().parse(c.req.query("run_id"));
@@ -33,6 +33,7 @@ export function daemonRoutes(sql: Database, semanticEnabled = false) {
     const scoped = z.enum(["true", "false"]).optional().parse(c.req.query("desktop_control_scoped")) === "true";
     const result = DaemonPoll.parse(await sql.begin((tx) => poll(tx, c.get("principal"), run, view, scoped)));
     if (semanticEnabled && result.assignment) result.assignment.semantic_context_enabled = true;
+    if(result.assignment)result.assignment.semantic_structure_mode=structureMode;
     return c.json(result);
   });
   app.get("/context/:id", async (c) => {
@@ -45,7 +46,7 @@ export function daemonRoutes(sql: Database, semanticEnabled = false) {
     const view = z.enum(["full", "mailbox", "work", "work_mailbox", "task_sources"]).parse(c.req.query("view") ?? "full");
     if (view === "work") {
       const assignment = await sql.begin(tx => workContext(tx,c.get("principal"),id));
-      return c.json({...assignment, ...(semanticEnabled ? {semantic_context_enabled: true} : {})});
+      return c.json({...assignment, ...(semanticEnabled ? {semantic_context_enabled: true} : {}),semantic_structure_mode:structureMode});
     }
     if (view === "work_mailbox") return c.json(await sql.begin(tx => workMailbox(tx,c.get("principal"),id,after)));
     if (view === "task_sources") return c.json(await sql.begin(tx => taskSources(tx,c.get("principal"),id,after)));

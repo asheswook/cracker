@@ -14,6 +14,7 @@ import { createClefClassifier } from "../../packages/context/clef";
 import type { SemanticClassifier } from "../../packages/context/schema";
 import { CONTEXT_EMBEDDING_MODEL, createSemanticRetriever } from "../../packages/context/recall";
 import { synchronizeContextIndex } from "../../packages/context/recall-index";
+import { z } from 'zod';
 
 export { AssistantRoom, ScreenRoom };
 type Environment = {
@@ -30,7 +31,7 @@ type Environment = {
   readonly SCREEN_TURN_KEY_ID?: string;
   readonly SCREEN_TURN_API_TOKEN?: string;
   readonly AI?: Ai;
-  readonly CONTEXT_INDEX?: VectorizeIndex;
+  readonly SEMANTIC_STRUCTURE_MODE?: string;
 };
 
 function semanticClassifier(ai: Ai): SemanticClassifier {
@@ -126,13 +127,14 @@ export default {
       }
       const push=notificationConfig(env);
       const response = await createApp(sql, {
-        semanticContexts: env.AI && env.CONTEXT_INDEX ? {
+        semanticStructureMode: z.enum(['off','shadow','on']).default('off').parse(env.SEMANTIC_STRUCTURE_MODE),
+        semanticContexts: env.AI ? {
           classify: semanticClassifier(env.AI),
           retrieve: createSemanticRetriever(sql, (texts, signal) => {
             const ai = env.AI;
             if (!ai) throw new DomainError("context_embedding_unavailable", "Context search unavailable", 503);
             return ai.run(CONTEXT_EMBEDDING_MODEL, {text: [...texts], truncate_inputs: false}, {signal});
-          }, env.CONTEXT_INDEX),
+          }),
         } : {},
         screenTurn: { SCREEN_TURN_KEY_ID: env.SCREEN_TURN_KEY_ID, SCREEN_TURN_API_TOKEN: env.SCREEN_TURN_API_TOKEN },
         ...(push?{notificationConfig:push}:{}),
@@ -180,9 +182,9 @@ export default {
         await sql`UPDATE assistant.outbox SET delivered_at=now() WHERE id=${row.id}`;
       }
       await cleanupArtifacts(sql, createArtifactStore(env.ARTIFACTS));
-      if(env.AI&&env.CONTEXT_INDEX) {
+      if(env.AI) {
         const ai=env.AI;
-        try {await synchronizeContextIndex(sql,(texts,signal)=>ai.run(CONTEXT_EMBEDDING_MODEL,{text:[...texts],truncate_inputs:false},{signal}),env.CONTEXT_INDEX,undefined,Number.MAX_SAFE_INTEGER,8);}
+        try {await synchronizeContextIndex(sql,(texts,signal)=>ai.run(CONTEXT_EMBEDDING_MODEL,{text:[...texts],truncate_inputs:false},{signal}),undefined,Number.MAX_SAFE_INTEGER,8);}
         catch(error) {if(!(error instanceof Error))throw error;console.warn(JSON.stringify({event:'context.index_deferred',type:error.name}));}
       }
     } finally {

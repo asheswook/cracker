@@ -4,7 +4,11 @@ The product keeps one continuous assistant conversation. Execution tasks, semant
 
 ## Runtime
 
-The React web client uses the control API for authenticated state and durable messages. The Apple applications host the same interface with native bridges for input, navigation and notifications. Cloudflare Workers run the control service; Durable Objects coordinate live rooms and computer signaling. PostgreSQL holds authoritative product state, R2 stores files and Vectorize supplies bounded semantic retrieval candidates.
+The React web client uses the control API for authenticated state and durable messages. The Apple applications host the same interface with native bridges for input, navigation and notifications. Cloudflare Workers run the control service; Durable Objects coordinate live rooms and computer signaling. PostgreSQL holds authoritative product state and pgvector semantic retrieval candidates; R2 stores files.
+
+Semantic recall stores bge-m3 embeddings only in PostgreSQL as `vector(1024)`, with a cosine HNSW index and explicit workspace and source-sequence predicates. Search spans conversations within the workspace. Each query transaction sets pgvector 0.8 `hnsw.iterative_scan = relaxed_order` and `hnsw.ef_search = 100`: filtering happens after ANN scanning, so iterative scans seek more candidates rather than stopping at an underfilled initial scan (subject to pgvector scan limits). The existing cosine re-ranking corrects relaxed order. Recall keeps 64 ANN candidates, the 128-document recent tail, hash/retention revalidation, and top-12 context grouping without a minimum score. pgvector stores float32 values, so nearly tied scores can differ from the former JSON number representation.
+
+Documents and search state commit atomically under revision checks. The external-delivery outbox and namespace version are removed; revision/search-revision invalidation, through-sequence state, and scheduled synchronization remain necessary to embed changed contexts and remove revoked sources. No second vector store or delivery retry is needed.
 
 A dedicated Linux daemon leases work, connects to the selected model provider, runs tools and journals effects locally. Desktop capture and input use the same VM as shell/file tools. Uncertain external effects remain unknown rather than being blindly replayed. Scheduled work uses database state and Cloudflare cron dispatch; Temporal is not required.
 

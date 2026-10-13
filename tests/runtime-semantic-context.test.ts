@@ -17,6 +17,7 @@ import { ToolExecutor } from "../services/daemon/tools.ts";
 import { SemanticContexts } from "../services/daemon/semantic-context.ts";
 import type { SemanticCheckpoint } from "../services/daemon/semantic-context-state.ts";
 import { SemanticMetadataQueue } from "../services/daemon/semantic-context-queue.ts";
+import { SemanticStructure } from '../services/daemon/semantic-structure.ts';
 
 class CompletionJournal extends Journal {
   next = Promise.withResolvers<void>();
@@ -37,6 +38,38 @@ function lastJSON(input: ResponseInputItem[]): unknown {
   return JSON.parse(item.content);
 }
 const Packet = z.object({ kind: z.literal("semantic_context_reference"), context: SemanticContext.nullable() });
+test('on appends one structure frame per mailbox turn without changing the provider prefix',async()=>{
+ const snapshots:ResponseInputItem[][]=[];
+ const f=await fixture({structureMode:'on',main:async(input,db)=>{
+  snapshots.push(structuredClone(input.slice(0,-1))); // Non-native per-call clock is not a persisted frame.
+  if(snapshots.length===1)await db.message('Second independent mailbox question');
+  return response([answer('Fixture response')]);
+ }});
+ try{
+  await f.message('First independent mailbox question');await f.runtime.tick();await f.journal.next.promise;
+  expect(snapshots).toHaveLength(2);
+  const frames=(input:ResponseInputItem[])=>input.filter(item=>'content'in item&&typeof item.content==='string'&&item.content.startsWith('{"kind":"semantic_structure_reference"'));
+  expect(frames(snapshots[0]!)).toHaveLength(1);expect(frames(snapshots[1]!)).toHaveLength(2);
+  expect(snapshots[1]!.slice(0,snapshots[0]!.length)).toEqual(snapshots[0]!);
+ }finally{await f.close();}
+});
+for(const structureMode of ['shadow','on'] as const)test(`structure ${structureMode} preserves reference and appends only in on mode`,async()=>{
+ const inputs:ResponseInputItem[][]=[],packets:string[]=[];
+ const f=await fixture({structureMode,main:async input=>{inputs.push(input);for(const item of input)if('content'in item&&typeof item.content==='string'&&item.content.includes('"kind":"semantic_context_reference"'))packets.push(item.content);return response([answer('구조 검증 비공개 답변')]);}});
+ try{
+  const user=await f.message('구조 검증 비공개 질문');await f.runtime.tick();await f.journal.next.promise;await f.runtime.flush();
+  const before=JSON.stringify(inputs),queue=f.structureQueue();
+  for(let i=0;i<5;i++)await queue.process();
+    expect(JSON.stringify(inputs)).toBe(before);expect(packets).toHaveLength(1);expect(JSON.stringify(inputs)).not.toContain('semantic_structure_shadow');expect(JSON.stringify(inputs)).not.toContain('judge_w1b_structure');
+   const delivered=inputs.flat().filter(item=>'content'in item&&typeof item.content==='string'&&item.content.includes('"kind":"semantic_structure_reference"'));
+   expect(delivered).toHaveLength(structureMode==='on'?1:0);
+  expect(f.structureLogs).toHaveLength(1);expect(JSON.stringify(f.structureLogs)).not.toContain('비공개');
+  const messages=await f.sql`SELECT id,response_to_message_id,applied_user_ids FROM assistant.messages WHERE workspace_id=${f.workspace} AND conversation_id=${f.conversation} AND role='assistant'`;
+  expect(messages[0]?.['response_to_message_id']).toBe(user);expect(messages[0]?.['applied_user_ids']).toEqual([user]);
+  const members=await f.sql`SELECT message_id FROM assistant.semantic_exchange_members WHERE workspace_id=${f.workspace}`;expect(members.map(m=>m['message_id'])).toContain(messages[0]?.['id']);
+  const edges=await f.sql`SELECT status,method FROM assistant.semantic_exchange_edges WHERE workspace_id=${f.workspace}`;expect(edges).toHaveLength(1);expect(edges[0]?.['status']).toBe('provisional');expect(edges[0]?.['method']).toBe('llm');
+ }finally{await f.close();}
+});
 function activePacket(input: ResponseInputItem[]) {
   for (const item of input.toReversed()) {
     if (!("content" in item) || typeof item.content !== "string" || !item.content.startsWith("{")) continue;
@@ -52,7 +85,7 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
     await Bun.sleep(10);
   }
 }
-async function fixture(options: { readonly main: (input: ResponseInputItem[], fixture: Awaited<ReturnType<typeof databaseFixture>>) => Promise<Response>; readonly malformedRoute?: boolean; readonly beforeNotes?: (signal: AbortSignal) => Promise<void>; readonly dropNotesOnce?: boolean; readonly failPrepareOnce?: boolean; readonly staleLinkOnce?: boolean }) {
+async function fixture(options: { readonly structureMode?: 'shadow'|'on'; readonly main: (input: ResponseInputItem[], fixture: Awaited<ReturnType<typeof databaseFixture>>) => Promise<Response>; readonly malformedRoute?: boolean; readonly beforeNotes?: (signal: AbortSignal) => Promise<void>; readonly dropNotesOnce?: boolean; readonly failPrepareOnce?: boolean; readonly staleLinkOnce?: boolean }) {
   const data = await databaseFixture();
   const directory = await mkdtemp(join(tmpdir(), "semantic-runtime-"));
   const journal = new CompletionJournal(":memory:");
@@ -60,6 +93,7 @@ async function fixture(options: { readonly main: (input: ResponseInputItem[], fi
   const noteInputs: z.infer<typeof SemanticContext>[] = [];
   const provider: Provider = { respond: async (input, tools, signal) => {
     const name = tools.length === 1 && tools[0]?.type === "function" ? tools[0].name : undefined;
+      if(name==='judge_w1b_structure')return metadata(name,{anchor_exchange_id:null,relation:'new_topic',target:null,anchor_confidence:1,relation_confidence:1,subject_action:'new_root',subject_confidence:1,subject_name:'구조 검증',branch_from:null,return_region_id:null,return_evidence:null,references:[]});
     if (name === "assess_semantic_retention") {
       const context = RetentionContext.parse(lastJSON(input));
       return metadata(name, { decisions: context.sources.map(source => context.decisions.find(item => item.source_message_id === source.id) ?? { source_message_id: source.id, action: "inherit", quote: null }) });
@@ -79,7 +113,7 @@ async function fixture(options: { readonly main: (input: ResponseInputItem[], fi
     if (tools.length === 0) return response([answer(JSON.stringify({ schema_version: 1, claims: [] }))]);
     return options.main(input, data);
   } };
-  const app = createApp(data.sql, { semanticContexts: { classify: async prepared => {
+  const app = createApp(data.sql, { ...(options.structureMode?{semanticStructureMode:options.structureMode}:{}), semanticContexts: { classify: async prepared => {
     const title = prepared.source.content.startsWith("Calendar") ? "Calendar MCP" : "Library research";
     const context = prepared.candidates.find(item => item.title === title);
     return { context_id: context?.context_id ?? null, outcome: context ? "existing" : "new", scores: [], model: "wire-classifier" };
@@ -95,8 +129,10 @@ async function fixture(options: { readonly main: (input: ResponseInputItem[], fi
   const createRuntime = () => new Runtime({ controlUrl: server.url.href, token: data.token, journal, provider, tools: new ToolExecutor(), artifactRoot: directory });
   const contexts = (runId: string, checkpoint?: SemanticCheckpoint) => new SemanticContexts({ http: ky.create({ prefixUrl: server.url.href, headers: { authorization: `Bearer ${data.token}` }, retry: 0 }), runId, taskId: data.task, provider }, checkpoint);
   const metadataQueue = () => new SemanticMetadataQueue({ jobs: journal.semantic, http: ky.create({ prefixUrl: server.url.href, headers: { authorization: `Bearer ${data.token}` }, retry: 0 }), provider });
+  const structureLogs:unknown[]=[];
+  const structureQueue=()=>new SemanticStructure({jobs:journal.structure,http:ky.create({prefixUrl:server.url.href,headers:{authorization:`Bearer ${data.token}`},retry:0}),provider,log:record=>structureLogs.push(record)});
   const runtime = createRuntime();
-  return { ...data, noteInputs, runtime, createRuntime, contexts, metadataQueue, journal, routes: () => routes, close: async () => { await runtime.stop(); journal.close(); await server.stop(true); await data.sql`UPDATE assistant.credentials SET revoked_at=now() WHERE workspace_id=${data.workspace}`; await data.sql.end(); await rm(directory, { recursive: true, force: true }); } };
+  return { ...data, noteInputs, runtime, createRuntime, contexts, metadataQueue, structureQueue, structureLogs, journal, routes: () => routes, close: async () => { await runtime.stop(); journal.close(); await server.stop(true); await data.sql`UPDATE assistant.credentials SET revoked_at=now() WHERE workspace_id=${data.workspace}`; await data.sql.end(); await rm(directory, { recursive: true, force: true }); } };
 }
 async function databaseFixture() {
   const sql = createDatabase(process.env["TEST_DATABASE_URL"] ?? "postgres://assistant:assistant@127.0.0.1:55439/semantic_context_1006");
@@ -325,7 +361,7 @@ test('an old nonsemantic execution checkpoint replays deterministic commentary w
   await f.message('Payment research old checkpoint');await f.runtime.tick();await entered.promise;
   const run=f.journal.interrupted()[0];if(!run)throw new TypeError('No running fixture');const saved=f.journal.recoverable(run);if(!saved)throw new TypeError('No recoverable fixture checkpoint');
   const stopping=f.runtime.stop();release.resolve();await stopping;
-  const {semanticContext:_semantic,...legacy}=saved;f.journal.checkpoint(legacy);f.journal.suspend(run);
+   const {semanticContext:_semantic,appliedUserIds:_attribution,...legacy}=saved;f.journal.checkpoint(legacy);f.journal.suspend(run);
   const digest=new Bun.CryptoHasher('sha256').update(JSON.stringify([run,'commentary',text])).digest('hex'),event_id=`${digest.slice(0,8)}-${digest.slice(8,12)}-8${digest.slice(13,16)}-a${digest.slice(17,20)}-${digest.slice(20,32)}`;
   const {DaemonEvent}=await import('../packages/protocol/index.ts'),{applyEvent}=await import('../services/control/repository/daemon-events.ts');
   const prior=DaemonEvent.parse({kind:'message',event_id,run_id:run,content:text,phase:'commentary'});
