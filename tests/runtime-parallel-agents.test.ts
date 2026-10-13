@@ -168,32 +168,37 @@ for (const delegated of [false, true])
     }
   }, 10000);
 
-test("actual takeover drains parent and child inference before acknowledging user ownership", async () => {
+test("actual takeover keeps parent and child inference alive through completion", async () => {
   const dir = await mkdtemp(join(tmpdir(), "runtime-child-takeover-")),
-    journal = new Journal(join(dir, "journal.sqlite")),
+    journal = new ObservedJournal(join(dir, "journal.sqlite")),
     tools = new ToolExecutor(),
     childEntered = Promise.withResolvers<void>(),
-    parentEntered = Promise.withResolvers<void>();
+    parentEntered = Promise.withResolvers<void>(),
+    release = Promise.withResolvers<void>();
   let childStopped = false,
     parentStopped = false,
     leadCalls = 0;
   const provider: Provider = {
-    respond: async (_input, offered, signal) => {
+    respond: async (input, offered, signal) => {
       const lead = offered.some((tool) => tool.type === "function" && tool.name === "spawn_agent");
       if (lead && leadCalls++ === 0)
         return response([call("spawn_agent", "child", { task: "independent research" })]);
+      if (lead && leadCalls > 2) return response([message("verified child result")]);
       (lead ? parentEntered : childEntered).resolve();
-      return new Promise((_resolve, reject) => {
-        signal.addEventListener(
-          "abort",
-          () => {
-            if (lead) parentStopped = true;
-            else childStopped = true;
-            reject(new DOMException("aborted", "AbortError"));
-          },
-          { once: true },
-        );
-      });
+      const aborted = Promise.withResolvers<never>();
+      const onAbort = () => {
+        if (lead) parentStopped = true;
+        else childStopped = true;
+        aborted.reject(new DOMException("aborted", "AbortError"));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      try { await Promise.race([release.promise, aborted.promise]); }
+      finally { signal.removeEventListener("abort", onAbort); }
+      if (!lead) return response([message("child research completed")]);
+      const child = input.find(item => item.type === "function_call_output" && item.call_id === "child");
+      if (!child || child.type !== "function_call_output") throw new TypeError("Missing child spawn result");
+      const { agent_id } = z.object({ agent_id: z.string() }).parse(JSON.parse(String(child.output)));
+      return response([call("wait_agent", "wait", { agent_id, timeout_ms: 1000 })]);
     },
   };
   const server = Bun.serve({ port: 0, fetch: f.app.fetch }),
@@ -206,7 +211,7 @@ test("actual takeover drains parent and child inference before acknowledging use
       artifactRoot: dir,
     });
   try {
-    await f.newTask();
+    const { task } = await f.newTask();
     await runtime.tick();
     await Promise.all([childEntered.promise, parentEntered.promise]);
     const result = await f.request(`/v1/vms/${f.vm}/control`, f.client, {
@@ -215,13 +220,22 @@ test("actual takeover drains parent and child inference before acknowledging use
     });
     expect(result.status).toBe(200);
     await runtime.tick();
-    expect(childStopped).toBe(true);
-    expect(parentStopped).toBe(true);
+    expect(childStopped).toBe(false);
+    expect(parentStopped).toBe(false);
     expect(journal.control()).toBe("user");
     const commands =
       await f.sql`SELECT status FROM assistant.commands WHERE vm_id=${f.vm} AND kind='takeover'`;
     expect(commands.map((row) => row["status"])).toEqual(["applied"]);
+    release.resolve();
+    await journal.finished.promise;
+    await runtime.flush();
+    expect(childStopped).toBe(false);
+    expect(parentStopped).toBe(false);
+    expect((await f.sql`SELECT state FROM assistant.tasks WHERE id=${task.id}`).map(row => row["state"])).toEqual(["succeeded"]);
+    expect((await f.sql`SELECT id FROM assistant.runs WHERE task_id=${task.id}`)).toHaveLength(1);
+    expect((await f.sql`SELECT content FROM assistant.messages WHERE conversation_id=${task.conversation_id} AND role='assistant'`).map(row => row["content"])).toEqual(["verified child result"]);
   } finally {
+    release.resolve();
     await runtime.stop();
     await server.stop(true);
     journal.close();

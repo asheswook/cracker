@@ -13,6 +13,7 @@ export async function resumeRun(
   principal: Principal,
   runId: string,
   checkpointCursor?: number,
+  desktopControlScoped = false,
 ) {
   const vm = z
     .object({ control_state: z.string() })
@@ -30,7 +31,7 @@ export async function resumeRun(
     (await validationRecoveryInput(sql, run.id, checkpointCursor));
   if (!["running", "waiting", "paused"].includes(run.state) && !validationRecovery)
     throw new DomainError("resume_unavailable", "Run cannot resume from this state", 409);
-  if (vm.control_state !== "agent")
+  if (vm.control_state !== "agent" && !(desktopControlScoped && vm.control_state === "user"))
     throw new DomainError(
       "control_unavailable",
       "Computer control has not returned to the assistant",

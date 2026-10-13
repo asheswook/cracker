@@ -27,14 +27,14 @@ async function takeoverScenario(withEffect: boolean,cleanupFailure=false,kind:"t
     if (withEffect) return { id: "fixture", created_at: 0, output_text: "", error: null, incomplete_details: null, instructions: null, metadata: null, model: "fixture", object: "response", output: [{ type: "function_call", id: "tool", call_id: "call", name: "shell", arguments: JSON.stringify({ command: `printf effect > '${file}'; sleep 30` }) }], parallel_tool_calls: false, temperature: null, tool_choice: "auto", tools: [], top_p: null, status: "completed" };
     ready.resolve(); return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true }));
   } };
-  const journal = new Journal(":memory:"), runtime = new Runtime({ controlUrl: server.url.href, token: machine, journal, provider, tools: cleanupFailure?new CleanupFailure():new ToolExecutor() });
+  const journal = new Journal(":memory:"), runtime = new Runtime({ controlUrl: server.url.href, token: machine, journal, provider, tools: cleanupFailure && kind === "stop" ? new CleanupFailure() : new ToolExecutor(), ...(cleanupFailure && kind === "takeover" ? {inputBarrier: async () => {throw new TypeError("fixture input release failed");}} : {}) });
   try {
     await runtime.tick(); await ready.promise;
     const takeover = await app.request(kind==="stop"?`/v1/tasks/${task}/stop`:`/v1/vms/${vm}/control`, { method: "POST", headers: { Authorization: `Bearer ${client}`, "Content-Type": "application/json" }, body: JSON.stringify({ kind }) });
     if (takeover.status !== 200) throw new TypeError("Takeover request rejected");
     await runtime.tick();
     const paused = z.object({ state: z.string() }).parse((await sql`SELECT state FROM assistant.tasks WHERE id=${task}`)[0]).state;
-    if(kind==="stop"){expect(z.object({status:z.string()}).parse((await sql`SELECT status FROM assistant.commands WHERE task_id=${task} AND kind='stop'`)[0]).status).toBe("failed");return {paused,returned:paused};}
+    if(kind==="stop"){expect(z.object({status:z.string()}).parse((await sql`SELECT status FROM assistant.commands WHERE task_id=${task} AND kind='stop'`)[0]).status).toBe(cleanupFailure ? "failed" : "applied");return {paused,returned:paused};}
     if(cleanupFailure){expect(journal.control()).toBe("agent");expect(z.object({control_state:z.string()}).parse((await sql`SELECT control_state FROM assistant.vms WHERE id=${vm}`)[0]).control_state).toBe("unknown");}
     const returned = await app.request(`/v1/vms/${vm}/control`, { method: "POST", headers: { Authorization: `Bearer ${client}`, "Content-Type": "application/json" }, body: JSON.stringify({ kind: "return_control" }) });
     if (returned.status !== 200) throw new TypeError("Return request rejected");
@@ -43,20 +43,22 @@ async function takeoverScenario(withEffect: boolean,cleanupFailure=false,kind:"t
     return { paused, returned: z.object({ state: z.string() }).parse((await sql`SELECT state FROM assistant.tasks WHERE id=${task}`)[0]).state };
   } finally { watcher.close(); await runtime.stop(); journal.close(); await server.stop(true); await sql.end(); await rm(dir, { recursive: true }); }
 }
-test("provider-only takeover and return resumes the same checkpoint through actual PG control", async () => {
+test("provider-only takeover and return keeps the same run active through actual PG control", async () => {
   // Given / When: drive actual runtime, user takeover, and return through HTTP and PostgreSQL.
   const result = await takeoverScenario(false);
   // Then
-  expect(result).toEqual({ paused: "paused", returned: "running" });
+  expect(result).toEqual({ paused: "running", returned: "running" });
 });
-test("interrupted real shell effect stays unknown after return through actual PG control", async () => {
-  // Given / When: the same surface after a real side effect and process-group interruption.
+test("active real shell effect stays running after takeover and return through actual PG control", async () => {
+  // Given / When: desktop ownership changes while a real process is still active.
   const result = await takeoverScenario(true);
   // Then
-  expect(result).toEqual({ paused: "unknown", returned: "unknown" });
+  expect(result).toEqual({ paused: "running", returned: "running" });
 });
 
 test("takeover and return fail closed when desktop release is unconfirmed through real PG",async()=>{const result=await takeoverScenario(false,true);expect(result).toEqual({paused:"unknown",returned:"unknown"});});
+
+test("explicit stop still cancels provider work through actual PG control",async()=>{expect(await takeoverScenario(false,false,"stop")).toEqual({paused:"cancelled",returned:"cancelled"});});
 
 test("stop cannot acknowledge drained input after desktop cleanup failure",async()=>{expect(await takeoverScenario(false,true,"stop")).toEqual({paused:"unknown",returned:"unknown"});});
 

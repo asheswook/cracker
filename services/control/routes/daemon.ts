@@ -10,22 +10,28 @@ import { enrollSchedule, ScheduleRequest } from "../repository/schedule-enrollme
 import { resumeRun } from "../repository/resume";
 import {ComposingRequest} from "../../../packages/protocol/composing";
 import {updateComposing} from "../repository/composing";
+import { ComputerControlRequest, requestComputerControl } from "../repository/message-control";
 export function daemonRoutes(sql: Database, semanticEnabled = false) {
   const app = new Hono<AppEnv>();
+  app.post("/computer-control", async c => {
+    const request = ComputerControlRequest.parse(await c.req.json());
+    return c.json(await sql.begin(tx => requestComputerControl(tx, c.get("principal"), request)));
+  });
   app.post("/composing",async c=>{
     const event=ComposingRequest.parse(await c.req.json());
     return c.json(await sql.begin(tx=>updateComposing(tx,c.get("principal"),event)));
   });
   app.post("/resume/:id", async (c) => {
     const text = await c.req.text();
-    const request = z.object({ checkpoint_cursor: z.number().int().nonnegative().optional() }).parse(text ? JSON.parse(text) : {});
-    const assignment = await sql.begin(tx => resumeRun(tx, c.get("principal"), Id.parse(c.req.param("id")), request.checkpoint_cursor));
+    const request = z.object({ checkpoint_cursor: z.number().int().nonnegative().optional(), desktop_control_scoped: z.boolean().default(false) }).parse(text ? JSON.parse(text) : {});
+    const assignment = await sql.begin(tx => resumeRun(tx, c.get("principal"), Id.parse(c.req.param("id")), request.checkpoint_cursor, request.desktop_control_scoped));
     return c.json({ assignment: {...assignment, ...(semanticEnabled ? {semantic_context_enabled: true} : {})} });
   });
   app.get("/poll", async (c) => {
     const run = Id.optional().parse(c.req.query("run_id"));
     const view = z.enum(["full", "commands", "work"]).parse(c.req.query("view") ?? "full");
-    const result = DaemonPoll.parse(await sql.begin((tx) => poll(tx, c.get("principal"), run, view)));
+    const scoped = z.enum(["true", "false"]).optional().parse(c.req.query("desktop_control_scoped")) === "true";
+    const result = DaemonPoll.parse(await sql.begin((tx) => poll(tx, c.get("principal"), run, view, scoped)));
     if (semanticEnabled && result.assignment) result.assignment.semantic_context_enabled = true;
     return c.json(result);
   });

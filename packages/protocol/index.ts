@@ -121,6 +121,7 @@ export const DaemonEvent = z.discriminatedUnion("kind", [
     command_id: Id,
     status: z.enum(["applied", "failed"]),
     resume_safe: z.boolean().optional(),
+    execution_continues: z.boolean().optional(),
     detail: z.string().max(2000),
   }),
   z.object({ kind: z.literal("input_applied"), event_id: Id, run_id: Id, message_id: Id }),

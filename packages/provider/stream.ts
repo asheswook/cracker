@@ -1,5 +1,6 @@
 import type { Response, ResponseStreamEvent, ResponseOutputItem } from "openai/resources/responses/responses";
 import {ProviderError} from "./errors.ts";
+import { describeApiFailure, ProviderStreamError } from './api-failure.ts';
 export type ProviderResponseEvent =
   | {readonly type:"text_delta"|"text_done";readonly response_id:string;readonly item_id:string}
   | {readonly type:"response_done";readonly response_id:string};
@@ -24,7 +25,16 @@ export async function consumeResponse(stream: AsyncIterable<ResponseStreamEvent>
       const output_text = output.flatMap(item => item.type === "message" ? item.content.flatMap(content => content.type === "output_text" ? [content.text] : []) : []).join("");
       return { ...event.response, output, output_text };
     }
-    if (event.type === "response.failed" || event.type === "response.incomplete" || event.type === "error") throw new ProviderError("incomplete", "Provider did not complete the response");
+    if(event.type==='error')throw new ProviderStreamError({...describeApiFailure(event,event.message,null),event_type:event.type});
+    if(event.type==='response.failed'||event.type==='response.incomplete'){
+      const failure=describeApiFailure(event.response.error,event.response.error?.message??'',null);
+      if(event.type==='response.incomplete'){
+        const reason=event.response.incomplete_details?.reason;
+        const incomplete_reason=reason==='max_output_tokens'||reason==='content_filter'?reason:'unknown';
+        throw new ProviderStreamError({...failure,retryable:failure.retryable&&!reason,event_type:event.type,incomplete_reason});
+      }
+      throw new ProviderStreamError({...failure,event_type:event.type});
+    }
   }
   throw new ProviderError("incomplete", "Provider stream ended before response.completed");
   } finally {

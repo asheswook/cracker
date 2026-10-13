@@ -36,40 +36,7 @@ async function returned() {
 const vmState = async (vm = f.vm) => z.object({ control_state: z.string() }).parse((await f.sql`SELECT control_state FROM assistant.vms WHERE id=${vm}`)[0]).control_state;
 const poll = async () => DaemonPoll.parse(await (await f.request('/v1/daemon/poll', f.machine)).json());
 
-test('a new explicit send returns idle human control only after the normal daemon ACK', async () => {
-  // Given
-  const s = await setup(); await ack((await control('takeover')).id);
-  // When
-  const response = await s.send(), saved = Sent.parse(await response.json());
-  // Then
-  expect(response.status).toBe(200); expect(saved.task.state).toBe('queued');
-  const commands = await returned(); expect(commands).toHaveLength(1);
-  const command = commands[0]; if (!command) throw new TypeError('Missing return command');
-  expect(await vmState()).toBe('switching'); expect((await poll()).assignment).toBeNull();
-  await ack(command.id);
-  expect(await vmState()).toBe('agent'); expect((await poll()).assignment?.task.id).toBe(saved.task.id);
-});
-
-test('a paused same-conversation run resumes only after the auto-return ACK', async () => {
-  // Given
-  const s = await setup(); const first = Sent.parse(await (await s.send()).json());
-  const assigned = (await poll()).assignment; if (!assigned) throw new TypeError('Missing assignment');
-  await ack((await control('takeover')).id);
-  // When
-  const steering = await f.request(`/v1/conversations/${s.conversation}/messages`, f.client,
-    { content: 'Continue with this input', client_message_id: crypto.randomUUID() });
-  // Then
-  expect(steering.status).toBe(200);
-  const command = (await returned())[0]; if (!command) throw new TypeError('Missing return command');
-  expect((await f.request(`/v1/daemon/resume/${assigned.run_id}`, f.machine, {})).status).toBe(409);
-  await ack(command.id);
-  const resumed = await f.request(`/v1/daemon/resume/${assigned.run_id}`, f.machine, {});
-  expect(resumed.status).toBe(200);
-  expect(z.object({ assignment: z.object({ run_id: z.uuid(), task: Task }) }).parse(await resumed.json()).assignment)
-    .toMatchObject({ run_id: assigned.run_id, task: { id: first.task.id, state: 'running' } });
-});
-
-test('simultaneous retries persist one message and one pending auto-return', async () => {
+test('new sends and retries preserve human control without queuing a return', async () => {
   // Given
   const s = await setup(); await ack((await control('takeover')).id);
   // When
@@ -77,34 +44,23 @@ test('simultaneous retries persist one message and one pending auto-return', asy
   const saved = await Promise.all(responses.map(async response => { expect(response.status).toBe(200); return Sent.parse(await response.json()); }));
   // Then
   expect(new Set(saved.map(result => result.message.id)).size).toBe(1);
-  expect(await returned()).toHaveLength(1); expect(await vmState()).toBe('switching');
+  expect(saved[0]?.task.state).toBe('queued');
+  expect(await returned()).toHaveLength(0); expect(await vmState()).toBe('user');
+  expect((await poll()).assignment).toBeNull();
 });
 
-test('replaying a prior send after a newer human takeover never returns control again', async () => {
+test('steering a paused run does not implicitly return computer control', async () => {
   // Given
-  const s = await setup(); await ack((await control('takeover')).id);
-  const original = Sent.parse(await (await s.send()).json());
-  const command = (await returned())[0]; if (!command) throw new TypeError('Missing return command');
-  await ack(command.id); await ack((await control('takeover')).id);
+  const s = await setup(); await s.send();
+  const assigned = (await poll()).assignment; if (!assigned) throw new TypeError('Missing assignment');
+  await ack((await control('takeover')).id);
   // When
-  const replay = await s.send();
+  const response = await f.request(`/v1/conversations/${s.conversation}/messages`, f.client,
+    { content: 'Continue with this input', client_message_id: crypto.randomUUID() });
   // Then
-  expect(replay.status).toBe(200); expect(Sent.parse(await replay.json()).message.id).toBe(original.message.id);
-  expect(await vmState()).toBe('user'); expect(await returned()).toHaveLength(1);
-});
-
-test('failed auto-return remains unknown and neither retry nor new send fabricates recovery', async () => {
-  // Given
-  const s = await setup(); await ack((await control('takeover')).id); await s.send();
-  const command = (await returned())[0]; if (!command) throw new TypeError('Missing return command');
-  await ack(command.id, 'failed');
-  // When
-  expect((await s.send()).status).toBe(200);
-  expect((await f.request(`/v1/conversations/${s.conversation}/messages`, f.client,
-    { content: 'Another input', client_message_id: crypto.randomUUID() })).status).toBe(200);
-  // Then
-  expect(await vmState()).toBe('unknown'); expect(await returned()).toHaveLength(1);
-  expect((await returned())[0]?.status).toBe('failed'); expect((await poll()).assignment).toBeNull();
+  expect(response.status).toBe(200); expect(await returned()).toHaveLength(0);
+  expect(await vmState()).toBe('user');
+  expect((await f.request(`/v1/daemon/resume/${assigned.run_id}`, f.machine, {})).status).toBe(409);
 });
 
 for (const state of ['agent', 'unknown', 'switching'] as const) test(`send leaves ${state} control unchanged`, async () => {
@@ -206,7 +162,7 @@ test('an unassigned message does not choose among multiple user-controlled compu
   } finally { await f.sql`DELETE FROM assistant.vms WHERE id=${other}`; }
 });
 
-test('a message targets only its own paused run when the workspace has multiple computers', async () => {
+test('a message leaves every computer under human control with multiple computers', async () => {
   // Given
   const s = await setup(); await s.send(); await poll(); await ack((await control('takeover')).id);
   const other = crypto.randomUUID();
@@ -216,7 +172,7 @@ test('a message targets only its own paused run when the workspace has multiple 
     const response = await f.request(`/v1/conversations/${s.conversation}/messages`, f.client,
       { content: 'Continue exact work', client_message_id: crypto.randomUUID() });
     // Then
-    expect(response.status).toBe(200); expect((await returned()).map(command => command.vm_id)).toEqual([f.vm]);
+    expect(response.status).toBe(200); expect(await returned()).toHaveLength(0); expect(await vmState()).toBe('user');
     expect(await vmState(other)).toBe('user');
   } finally { await f.sql`DELETE FROM assistant.vms WHERE id=${other}`; }
 });
@@ -228,4 +184,29 @@ test('another workspace cannot send a message or change this computer control', 
   const response = await f.request(`/v1/conversations/${s.conversation}/messages`, f.alienToken, s.body);
   // Then
   expect(response.status).toBe(404); expect(await vmState()).toBe('user'); expect(await returned()).toHaveLength(0);
+});
+
+test('replaying a message after another takeover cannot return control', async () => {
+  // Given
+  const s = await setup(), original = Sent.parse(await (await s.send()).json());
+  await ack((await control('takeover')).id);
+  // When
+  const response = await s.send();
+  // Then
+  expect(Sent.parse(await response.json()).message.id).toBe(original.message.id);
+  expect(await vmState()).toBe('user'); expect(await returned()).toHaveLength(0);
+});
+
+test('failed explicit return stays unknown after retried and new messages', async () => {
+  // Given
+  const s = await setup(); await ack((await control('takeover')).id); await s.send();
+  const command = await control('return_control'); await ack(command.id, 'failed');
+  // When
+  const retry = await s.send();
+  const next = await f.request(`/v1/conversations/${s.conversation}/messages`, f.client,
+    { content: 'Another input', client_message_id: crypto.randomUUID() });
+  // Then
+  expect(retry.status).toBe(200); expect(next.status).toBe(200);
+  expect(await vmState()).toBe('unknown'); expect(await returned()).toHaveLength(1);
+  expect((await returned())[0]?.status).toBe('failed'); expect((await poll()).assignment).toBeNull();
 });

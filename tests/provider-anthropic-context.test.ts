@@ -166,7 +166,7 @@ test("capability lookup failure is not cached and identity mismatch does not res
   let attempts = 0;
   const f = fixture({
     capabilities: () =>
-      ++attempts === 1
+      ++attempts <= 3
         ? Response.json({ error: { type: "api_error", message: "fixture" } }, { status: 500 })
         : Response.json({
             id: "different-model",
@@ -184,7 +184,7 @@ test("capability lookup failure is not cached and identity mismatch does not res
       kind: "unsupported",
       reason: "model_identity_mismatch",
     });
-    expect(f.lookups()).toBe(2);
+    expect(f.lookups()).toBe(4);
   } finally {
     await f.close();
   }

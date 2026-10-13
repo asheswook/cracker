@@ -62,6 +62,7 @@ export async function poll(
   principal: Principal,
   runId: string | undefined,
   view: "full" | "commands" | "work" = "full",
+  desktopControlScoped = false,
 ) {
   const lockedVm = await sql`
     WITH locked AS MATERIALIZED (
@@ -104,7 +105,7 @@ export async function poll(
   if (runId) return { assignment: null, commands, messages: [] };
   if ((await sql`SELECT vm_id FROM assistant.chatgpt_accounts WHERE vm_id=${principal.vm_id} AND request_status IN ('pending','running') AND lease_until>now()`).length)
     return { assignment: null, commands, messages: [] };
-  if (vm.control_state !== "agent" || commands.length > 0)
+  if ((vm.control_state !== "agent" && !(desktopControlScoped && vm.control_state === "user")) || commands.length > 0)
     return { assignment: null, commands, messages: [] };
   const queued =
     await sql`SELECT * FROM assistant.tasks WHERE workspace_id=${principal.workspace_id} AND state='queued' AND NOT EXISTS(SELECT 1 FROM assistant.skill_executions e WHERE e.task_id=assistant.tasks.id AND e.vm_id<>${principal.vm_id}) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`;

@@ -85,7 +85,7 @@ for (const state of ["queued", "waiting", "pausing", "paused", "cancelling", "ca
   }
 }
 
-for (const state of ["user", "switching", "unknown"] as const) {
+for (const state of ["switching", "unknown"] as const) {
   test(`working clears when VM control is ${state}`, async () => {
     // Given
     const s = await setup();

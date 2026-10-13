@@ -136,8 +136,9 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
         throw new DomainError("stale_ack", "Command already acknowledged", 409);
       if (command.run_id) {
         const run = await loadRun(sql, principal, command.run_id);
-        await clearComposing(sql,run.id);
-        if (terminal.includes(run.state))
+        if (!(event.status === "applied" && event.execution_continues === true && command.kind !== "stop"))
+          await clearComposing(sql,run.id);
+        if (terminal.includes(run.state) && command.kind !== "return_control")
           throw new DomainError("stale_ack", "Command run already terminal", 409);
       }
       switch (command.kind) {
@@ -149,7 +150,7 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
           break;
         case "takeover":
           await sql`UPDATE assistant.vms SET control_state=${event.status === "applied" ? "user" : "unknown"} WHERE id=${principal.vm_id}`;
-          if (event.status === "applied") {
+          if (event.status === "applied" && event.execution_continues !== true) {
             if (event.resume_safe === true) {
               await sql`UPDATE assistant.tasks SET state='paused',updated_at=now() WHERE id IN (SELECT task_id FROM assistant.runs WHERE vm_id=${principal.vm_id} AND state IN ('running','waiting','pausing','paused')) AND state IN ('running','waiting','pausing','paused')`;
               await sql`UPDATE assistant.runs SET state='paused',updated_at=now() WHERE vm_id=${principal.vm_id} AND state IN ('running','waiting','pausing','paused')`;
@@ -165,7 +166,7 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
           break;
         case "return_control":
           await sql`UPDATE assistant.vms SET control_state=${event.status === "applied" ? "agent" : "unknown"} WHERE id=${principal.vm_id}`;
-          if (event.status === "applied" && event.resume_safe !== true) {
+          if (event.status === "applied" && event.resume_safe !== true && event.execution_continues !== true) {
             await sql`UPDATE assistant.tasks SET state='queued',updated_at=now() WHERE id IN (SELECT task_id FROM assistant.runs WHERE vm_id=${principal.vm_id} AND state='paused') AND state='paused'`;
             await sql`UPDATE assistant.runs SET state='succeeded',updated_at=now() WHERE vm_id=${principal.vm_id} AND state='paused' AND task_id IN (SELECT id FROM assistant.tasks WHERE state='queued')`;
           }

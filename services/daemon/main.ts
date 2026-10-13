@@ -86,6 +86,7 @@ export async function main(): Promise<void> {
     model: config.OPENAI_MODEL,
     transport: config.OPENAI_TRANSPORT,
     serviceTier: "default" as const,
+    onRetry: (decision: import('../../packages/provider/retry.ts').ProviderRetryDecision) => console.warn(JSON.stringify({event:'provider.retry',scope:'default_provider',...decision})),
     ...(config.OPENAI_REASONING_EFFORT ? { reasoningEffort: config.OPENAI_REASONING_EFFORT } : {}),
     ...(config.OPENAI_API_KEY ? { apiKey: config.OPENAI_API_KEY } : {}),
     ...(config.CHATGPT_TOKEN_FILE ? { tokenFile: config.CHATGPT_TOKEN_FILE } : {}),

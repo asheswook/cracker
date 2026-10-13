@@ -23,7 +23,7 @@ export async function workingState(sql: Query, workspace: string, conversation: 
     JOIN assistant.input_receipts i ON i.run_id=r.id AND i.message_id=m.id AND i.workspace_id=t.workspace_id
     WHERE t.workspace_id=${workspace} AND t.conversation_id=${conversation}
       AND t.state='running' AND r.state='running' AND i.applied_at IS NOT NULL
-      AND v.control_state='agent' AND v.last_seen_at>now()-interval '60 seconds'
+      AND v.control_state IN ('agent','user') AND v.last_seen_at>now()-interval '60 seconds'
       AND NOT EXISTS (
         SELECT 1 FROM assistant.commands cmd
         WHERE cmd.workspace_id=t.workspace_id AND cmd.vm_id=v.id AND cmd.status='pending'

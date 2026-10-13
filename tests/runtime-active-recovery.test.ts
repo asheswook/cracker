@@ -23,7 +23,7 @@ for(const mode of ["safe","pending_input","uncertain","validation_retry","valida
     const url=new URL(request.url);
     if(url.pathname==="/v1/daemon/extensions")return Response.json({skills:[],servers:[]});
     if(url.pathname==="/v1/daemon/poll")return Response.json({assignment:null,commands:[],messages:[],recovery_run_id:work.run_id});
-    if(url.pathname.startsWith("/v1/daemon/resume/")){resumeRequests++;if(mode==="validation_retry")expect(await request.json()).toEqual({checkpoint_cursor:1});return Response.json({assignment:work});}
+    if(url.pathname.startsWith("/v1/daemon/resume/")){resumeRequests++;if(mode==="validation_retry")expect(await request.json()).toEqual({checkpoint_cursor:1,desktop_control_scoped:true});return Response.json({assignment:work});}
     if(url.pathname==="/v1/daemon/events"){
       const event=DaemonEvent.parse(await request.json());
       if(mode==="pending_input"&&!rejected&&event.kind==="state"&&event.state==="succeeded"){rejected=true;return Response.json({error:{code:"pending_input"}},{status:409});}

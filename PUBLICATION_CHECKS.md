@@ -12,6 +12,19 @@ Prepared on 2026-10-07 for the initial source publication. The snapshot uses an 
 
 ## Observed checks
 
+### Remote MCP connection recovery (2026-10-13)
+
+- Actual socket-drop and expired-session regressions establish a new MCP session before the single safe retry. A failed mutation is not replayed; the next explicit call can use the new connection.
+- Parallel calls, shared initialization, individual cancellation, removal during reconnect, authentication rejection, changed annotations, notifications and retained-generation limits are covered by real HTTP/SSE tests. Development and public checkouts each passed 73 tests with 5 Linux-only skips and 305 assertions across 10 files. TypeScript passed in both checkouts.
+- The production daemon passed preflight after deploying the eight-file provider/MCP change; installed hashes match the frozen candidate. The existing stopped run resumed through the normal conversation endpoint, applied its new input and completed with a final assistant message. Its ten previously completed tool calls were not replayed.
+
+### Provider stream recovery (2026-10-13)
+
+- Real SDK HTTP200 error-frame reproductions failed before the fix and pass with bounded inference retries. Terminal response errors retain diagnostic metadata; permanent authentication, quota and incomplete-limit errors do not retry.
+- Public-checkout provider and runtime-provider suite: 221 passed, 0 failed, 671 assertions across 21 files; server TypeScript check passed.
+- A real runtime/SQLite/shell scenario confirms a completed shell effect executes once while the following failed inference retries with the identical request and completes the same run.
+- An isolated probe using the existing app OAuth/model injected one stream failure, retried once, and received a real response with 43 tokens. It executed no tools and persisted no conversation messages. Error logs expose allowlisted codes, validated request IDs and hashes, not remote prose or credentials.
+
 | Check | Result |
 | --- | --- |
 | Frozen dependency installation | Passed; pnpm10.33.2, lockfile unchanged |
@@ -48,6 +61,24 @@ Observed on the synchronized source:
 - GitHub CI includes the account and interrupted-run regression set.
 
 No production deployment, new signed Apple build or physical-device QA was performed as part of this Git synchronization.
+
+## Desktop ownership synchronization (2026-10-07)
+
+The source now separates desktop input ownership from task execution and adds explicit model requests for computer control. Related regression tests and CI coverage are included. Portable configuration, private-data exclusions and unrelated development changes are preserved.
+
+Observed on this public checkout: 157 tests passed with zero failures and 969 assertions across 20 files using real PostgreSQL and runtime HTTP/SQLite/shell fixtures. Root and control-service TypeScript checks passed. This synchronization does not change read-acknowledgement timing or claim a read-latency fix. Production execution under user ownership was observed separately; this Git synchronization does not deploy infrastructure or rebuild native applications.
+
+## Provider retry synchronization (2026-10-07)
+
+The source adds at most two retries for transient provider requests, abortable bounded backoff and Retry-After handling. Authentication, configuration, schema and signed context errors are excluded. Completed tools are outside the retry boundary. Failure and retry diagnostics retain fixed status/category fields without arbitrary upstream contents. CI includes the new regressions.
+
+Observed on this public checkout: 189 tests passed, zero failures and 656 assertions across 23 files; strict TypeScript, CI YAML parsing and whitespace checks passed. Same-run recovery after a completed tool is verified through local HTTP/SQLite fixtures without repeating that tool. Separate deployment/live-provider evidence remains private; this Git synchronization does not deploy services or rebuild applications.
+
+## MCP error continuation synchronization (2026-10-08)
+
+Thrown MCP/transport errors now become redacted tool results rather than terminating inference. Annotated read-only, non-destructive transient calls retry once; uncertain mutations and unannotated calls do not automatically replay. Parent cancellation propagates, ordinary remote error results are preserved, and transport errors retain the active offered tool catalogue. CI includes real MCP wire and Runtime/SQLite regressions for this behavior.
+
+Observed on this public checkout: 74 tests passed, zero failures, five Linux-only skips and 347 assertions across 12 files; strict TypeScript, CI YAML parsing, staged whitespace and staged-source secret checks passed. The new regression set contains 21 cases, including same-run continuation, healthy parallel siblings, cancellation and credential redaction. Seven unrelated existing full-suite failures were reproduced in the preceding unmodified public snapshot; this synchronization does not claim a full-suite pass. Private operational recovery, live model evidence and deployment state are excluded from the public commit.
 
 ## Limits
 

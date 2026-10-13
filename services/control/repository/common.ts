@@ -6,7 +6,6 @@ import {
 } from "../../../packages/artifacts/references";
 import { DomainError, Message, Task } from "../../../packages/protocol";
 import type { Query } from "../db";
-import { returnControlForMessage } from "./message-control";
 import { legacyAttentionTexts } from "../../../packages/notifications/attention-text.ts";
 import { replyPreview, replySource } from '../../../packages/context/store-reply';
 export async function conversation(sql: Query, workspace: string, id: string) {
@@ -73,7 +72,6 @@ export async function appendMessage(
     { workspace: input.workspace, conversation: input.conversation, message: message.id },
     attachments.map((file) => file.id),
   );
-  if (input.returnControl) await returnControlForMessage(sql, input.workspace, task.id);
   await recordEvent(sql, {
     workspace: input.workspace,
     kind: "message.created",

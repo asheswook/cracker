@@ -11,6 +11,9 @@ import { stdioTransport } from "./mcp-stdio.ts";
 import { httpTransport } from "./mcp-http.ts";
 import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { BuiltinBrowser } from "./builtin-browser";
+import { ComputerControl } from './computer-control';
+import { callMcp } from './mcp-call';
+import { McpHttpSession } from './mcp-session';
 
 export const toolDefinitions: Tool[] = [
   { type: "function", name: "shell", description: "Run bash in the dedicated Linux VM on the same filesystem as the desktop. Read/search/edit files, write and run Python for data, image or document processing, execute scripts and tests. Use python3 to run Python scripts. OUTPUT_DIR is the task output directory for publish_artifact. Blocks until exit; use shell_start for long or interactive commands. Broad autonomy; effects are journaled.", strict: true, parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"], additionalProperties: false } },
@@ -21,6 +24,10 @@ export const toolDefinitions: Tool[] = [
 
 export type ToolResult = { readonly text: string; readonly image?: string; readonly images?: readonly string[] };
 export class ToolExecutor {
+  private readonly control = new ComputerControl();
+  setDesktopOwner(owner: 'agent' | 'user'): void { this.control.setOwner(owner); }
+  async revokeDesktopInputs(): Promise<void> { await this.control.revoke(); }
+  desktopInputsReleased(): void { this.control.released(); }
   private browser: BuiltinBrowser | undefined;
   async enableBuiltinBrowser(): Promise<void> {
     const browser = new BuiltinBrowser();
@@ -33,6 +40,7 @@ export class ToolExecutor {
   private readonly desktop = new PersistentDesktop();
   async releaseDesktopInputs():Promise<void>{await this.browser?.close();await this.desktop.releaseInputs();}
   async resetDesktop(workspace?:string):Promise<void>{await this.desktop.reset(workspace);}
+  private readonly remoteSessions = new Map<Client,McpHttpSession>();
   private readonly connections = new Map<Client, string>();
   private readonly clients = new Map<string, { readonly client: Client; readonly name: string; readonly server: string; readonly readOnly:boolean }>();
   parallelRead(name:string):boolean{return this.clients.get(name)?.readOnly===true;}
@@ -58,17 +66,19 @@ export class ToolExecutor {
     await this.removeMcp(name);
     const client=new Client({name:"autonomous-assistant",version:"0.1.0"});
     this.connections.set(client,name);this.secrets.set(client,[...Object.values(secrets), ...(config.transport === "http" ? mcpUrlRedactions(config.url) : [])].filter(Boolean));this.health.set(name,false);
-    client.onclose=()=>{if(this.connections.has(client)){this.health.set(name,false);this.removeDefinitions(client);}};
-    client.onerror=()=>{if(this.connections.has(client)){this.health.set(name,false);this.removeDefinitions(client);}};
+    // Retain the offered catalogue during a run; idle reconciliation replaces it explicitly.
+    client.onclose=()=>{if(this.connections.has(client))this.health.set(name,false);};
+    client.onerror=()=>{if(this.connections.has(client))this.health.set(name,false);};
+    const changed=async()=>{
+      try{await this.refresh(client,name);}catch(error){if(!(error instanceof Error))throw error;if(this.connections.has(client)){this.health.set(name,false);this.removeDefinitions(client);}}
+    };
     try {
       switch(config.transport){
         case "stdio":await client.connect(stdioTransport({command:config.command,args:config.args,env:secrets,stderr:"ignore"}),{timeout:8000});break;
-        case "http":await client.connect(httpTransport(new URL(config.url),secrets),{timeout:8000});break;
+        case "http":await client.connect(httpTransport(new URL(config.url),secrets),{timeout:8000});this.remoteSessions.set(client,new McpHttpSession(client,{url:config.url,headers:secrets,health:connected=>{if(this.connections.has(client))this.health.set(name,connected);},changed,observe:event=>console.warn(JSON.stringify({...event,server:name}))}));break;
         default:assertNever(config);
       }
-      client.setNotificationHandler(ToolListChangedNotificationSchema,async()=>{
-        try{await this.refresh(client,name);}catch(error){if(!(error instanceof Error))throw error;if(this.connections.has(client)){this.health.set(name,false);this.removeDefinitions(client);}}
-      });
+      if(config.transport==="stdio")client.setNotificationHandler(ToolListChangedNotificationSchema,changed);
       await this.refresh(client,name);this.health.set(name,true);return this.mcpStatus(name).tool_count;
     }catch(error){await this.removeMcp(name);throw error;}
   }
@@ -76,27 +86,29 @@ export class ToolExecutor {
     for(const [name,entry] of this.clients){if(entry.client!==client)continue;this.clients.delete(name);const index=this.definitions.findIndex(tool=>tool.type==="function"&&tool.name===name);if(index>=0)this.definitions.splice(index,1);}
   }
   async removeMcp(name:string):Promise<void>{
-    for(const [client,server] of this.connections){if(server!==name)continue;this.connections.delete(client);this.removeDefinitions(client);this.secrets.delete(client);await client.close();}
+    for(const [client,server] of this.connections){if(server!==name)continue;this.connections.delete(client);this.removeDefinitions(client);this.secrets.delete(client);const session=this.remoteSessions.get(client);this.remoteSessions.delete(client);if(session)await session.close();else await client.close();}
     this.health.delete(name);
   }
   mcpStatus(name:string):{connected:boolean;tool_count:number}{return {connected:this.health.get(name)===true,tool_count:[...this.clients.values()].filter(entry=>entry.server===name).length};}
-  async pingMcp(name:string):Promise<void>{for(const [client,server] of this.connections)if(server===name)await client.ping({timeout:5000});}
-  private redact(value:unknown,client:Client):unknown{
-    if(typeof value==="string"){let text=value;for(const secret of this.secrets.get(client)??[])text=text.split(secret).join("[REDACTED]");return text;}
-    if(Array.isArray(value))return value.map(item=>this.redact(item,client));
-    if(value!==null&&typeof value==="object")return Object.fromEntries(Object.entries(value).map(([key,item])=>[z.string().parse(this.redact(key,client)),this.redact(item,client)]));
+  async pingMcp(name:string):Promise<void>{for(const [client,server] of this.connections)if(server===name)await (this.remoteSessions.get(client)?.run(new AbortController().signal,current=>current.ping({timeout:5000}))??client.ping({timeout:5000}));}
+  private redact(value:unknown,client:Client,secrets:readonly string[]=this.secrets.get(client)??[]):unknown{
+    if(typeof value==="string"){let text=value;for(const secret of secrets)text=text.split(secret).join("[REDACTED]");return text;}
+    if(Array.isArray(value))return value.map(item=>this.redact(item,client,secrets));
+    if(value!==null&&typeof value==="object")return Object.fromEntries(Object.entries(value).map(([key,item])=>[z.string().parse(this.redact(key,client,secrets)),this.redact(item,client,secrets)]));
     return value;
   }
   private async refresh(client: Client, server: string): Promise<void> {
-    let page = await client.listTools({}, {timeout:8000});
+    const list=(cursor?:string)=>this.remoteSessions.get(client)?.run(new AbortController().signal,current=>current.listTools(cursor?{cursor}:{},{timeout:8000}))??client.listTools(cursor?{cursor}:{},{timeout:8000});
+    let page = await list();
     const listed = [...page.tools], cursors = new Set<string>();
     while (page.nextCursor) {
       if (cursors.has(page.nextCursor)) throw new ShellError("mcp_pagination_cycle");
       cursors.add(page.nextCursor);
       if(listed.length>100)throw new ShellError("mcp_tool_limit");
-      page = await client.listTools({ cursor: page.nextCursor }, {timeout:8000});
+      page = await list(page.nextCursor);
       listed.push(...page.tools);
     }
+    this.remoteSessions.get(client)?.pin(listed);
     this.removeDefinitions(client);
     if(!this.connections.has(client))return;
     if(this.definitions.length+listed.length>100)throw new ShellError("mcp_tool_limit");
@@ -105,7 +117,7 @@ export class ToolExecutor {
       const suffix = Bun.hash(tool.name).toString(16);
       const name = `mcp_${server}_${z.string().parse(this.redact(tool.name,client)).replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 20)}_${suffix}`;
       if (this.clients.has(name)) throw new ShellError("mcp_tool_name_collision");
-      this.clients.set(name, { client, name: tool.name, server, readOnly:tool.annotations?.readOnlyHint===true });
+      this.clients.set(name, { client, name: tool.name, server, readOnly:tool.annotations?.readOnlyHint===true&&tool.annotations?.destructiveHint!==true });
       this.definitions.push({ type: "function", name, description: z.string().parse(this.redact(tool.description ?? tool.name,client)).slice(0,4000), strict: false, parameters: z.record(z.string(),z.unknown()).parse(this.redact(tool.inputSchema,client)) });
     }
   }
@@ -117,6 +129,19 @@ export class ToolExecutor {
   }
   async run(name: string, args: string, signal: AbortSignal): Promise<ToolResult> {
     signal.throwIfAborted();
+    if (this.browser?.has(name)) {
+      const readOnly = ['browser_snapshot', 'browser_take_screenshot', 'browser_console_messages', 'browser_network_requests'].includes(name) ||
+        name === 'browser_tabs' && z.object({ action: z.string() }).parse(JSON.parse(args)).action === 'list';
+      return this.control.run(!readOnly, signal, next => this.execute(name, args, next));
+    }
+    if (name === 'computer_exec') return this.control.run(true, signal, next => this.execute(name, args, next));
+    if (name === 'computer') {
+      const { action } = z.object({ action: z.string() }).parse(JSON.parse(args));
+      return this.control.run(action !== 'screenshot', signal, next => this.execute(name, args, next));
+    }
+    return this.execute(name, args, signal);
+  }
+  private async execute(name: string, args: string, signal: AbortSignal): Promise<ToolResult> {
     if (this.browser?.has(name)) return this.browser.run(name,args,signal);
     switch (name) {
       case "shell": return { text: await execute(["bash", "-lc", z.object({ command: z.string() }).parse(JSON.parse(args)).command], signal, this.workspace) };
@@ -127,8 +152,17 @@ export class ToolExecutor {
       default: {
         const target = this.clients.get(name);
         if (!target) throw new ShellError("unknown_tool");
-        const result = await target.client.callTool({ name: target.name, arguments: z.record(z.string(), z.unknown()).parse(JSON.parse(args)) }, undefined, { signal, timeout: 120000 });
-        const text=JSON.stringify(this.redact(result,target.client));
+        const redactions=this.secrets.get(target.client)??[];
+        const argumentsValue=z.record(z.string(), z.unknown()).parse(JSON.parse(args));
+        const response = await callMcp(async timeout => {
+          const call=(client:Client)=>client.callTool({name:target.name,arguments:argumentsValue},undefined,{signal,timeout});
+          const result=await (this.remoteSessions.get(target.client)?.run(signal,call)??call(target.client));
+          if(this.connections.has(target.client)&&!this.remoteSessions.has(target.client))this.health.set(target.server,true);
+          return result;
+        },{signal,readOnly:target.readOnly,redact:message=>z.string().parse(this.redact(message,target.client,redactions)),
+          observe:event=>console.warn(JSON.stringify({...event,server:target.server,tool_name:name}))});
+        if(!response.ok)return {text:response.text};
+        const text=JSON.stringify(this.redact(response.result,target.client,redactions));
         return { text: text.length<=100000?text:JSON.stringify({truncated:true,output:text.slice(0,100000)}) };
       }
     }

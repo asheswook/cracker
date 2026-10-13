@@ -42,6 +42,12 @@ jobs:
         run: bun test tests/context*.test.ts tests/semantic*.test.ts tests/runtime-semantic-context.test.ts tests/runtime-task-context.test.ts tests/control-unknown-queue.test.ts tests/extensions.test.ts
       - name: Account and interrupted-run regressions
         run: bun test tests/model-account*.test.ts tests/provider-account.test.ts tests/provider-local-login.test.ts tests/provider-lock.test.ts tests/model-settings.test.ts tests/control-validation-retry.test.ts tests/control-recovery.test.ts tests/runtime-active-recovery.test.ts tests/runtime-disconnect-followup.test.ts
+      - name: Desktop ownership and execution regressions
+        run: bun test tests/control-scoped.test.ts tests/control-send-return.test.ts tests/control-working.test.ts tests/control-composing.test.ts tests/control-reply-handoff.test.ts tests/control-pause.test.ts tests/control-poll-lock.test.ts tests/runtime-control.test.ts tests/runtime-computer-request.test.ts tests/computer-control.test.ts tests/runtime-takeover-effects.test.ts tests/runtime-background-checkpoint.test.ts tests/runtime-parallel-agents.test.ts tests/runtime-takeover-pg.test.ts
+      - name: Provider retry and diagnostic regressions
+        run: bun test tests/provider*.test.ts tests/runtime-anthropic-context.test.ts tests/runtime-provider-retry.test.ts tests/runtime-provider-diagnostic.test.ts tests/runtime-failure.test.ts
+      - name: MCP error continuation regressions
+        run: bun test tests/mcp-call-errors.test.ts tests/mcp-reconnect.test.ts tests/mcp-sse.test.ts tests/runtime-mcp-errors.test.ts
       - name: Scan source for secrets
         shell: bash
         run: |

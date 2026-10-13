@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { retryProvider, type ProviderRetryObserver } from "./retry.ts";
 import type { ResponseInputItem, Tool, Response } from "openai/resources/responses/responses";
 import { compactedInput } from "./compaction.ts";
 import { readCredential } from "./credentials.ts";
@@ -11,7 +12,7 @@ export type {ProviderResponseObserver,ProviderResponseEvent} from "./stream.ts";
 import {ResponseSocketPool} from "./websocket.ts";
 export {ProviderError} from "./errors.ts";
 export {consumeResponse} from "./stream.ts";
-export type ProviderConfig = { readonly mode: "api" | "chatgpt"; readonly transport?:"http"|"websocket"; readonly serviceTier?:"default"; readonly model: string; readonly apiKey?: string; readonly tokenFile?: string; readonly reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max" };
+export type ProviderConfig = { readonly onRetry?: ProviderRetryObserver; readonly mode: "api" | "chatgpt"; readonly transport?:"http"|"websocket"; readonly serviceTier?:"default"; readonly model: string; readonly apiKey?: string; readonly tokenFile?: string; readonly reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max" };
 export interface Provider {
   readonly nativeContext?: NativeContext;
   close?():void|Promise<void>;
@@ -27,15 +28,15 @@ export class OpenAIProvider implements Provider {
   private credentialIdentity:string|undefined;
   private closed=false;
   close():void{this.closed=true;this.sockets?.pool.close();for(const pool of this.retiredPools)pool.close();this.retiredPools.clear();}
-  constructor(private readonly config: ProviderConfig) {
+  constructor(private readonly config: ProviderConfig, private readonly client?: OpenAI) {
     if (!config.model.trim()) throw new ProviderError("configuration", "OPENAI_MODEL is required");
   }
   async respond(input: ResponseInputItem[], tools: Tool[], signal: AbortSignal,observer?:ProviderResponseObserver): Promise<Response> {
     if(this.closed)throw new ProviderError("configuration","Provider is closed");
-    if(this.config.transport!=="websocket")return this.respondOnce(input,tools,signal,observer);
+    if(this.config.transport!=="websocket")return retryProvider(() => this.respondOnce(input,tools,signal,observer), {signal,onRetry:this.config.onRetry});
     if(this.websocketFlights>=8)throw new ProviderError("configuration","WebSocket concurrent request limit reached");
     this.websocketFlights++;
-    try{return await this.respondOnce(input,tools,signal,observer);}
+    try{return await retryProvider(() => this.respondOnce(input,tools,signal,observer), {signal,onRetry:this.config.onRetry});}
     finally{this.websocketFlights--;for(const pool of this.retiredPools)if(pool.drained)this.retiredPools.delete(pool);}
   }
   private async credentialToken():Promise<string>{
@@ -57,17 +58,19 @@ export class OpenAIProvider implements Provider {
     return token;
   }
   async compact(input:ResponseInputItem[],signal:AbortSignal):Promise<ResponseInputItem[]>{
-    const token=await this.credentialToken();
-    signal.throwIfAborted();
-    if(this.closed)throw new ProviderError("configuration","Provider is closed");
-    const client=new OpenAI({apiKey:token,maxRetries:0,timeout:120000});
-    return compactedInput(await client.responses.compact({model:this.config.model,input,service_tier:"default"},{signal}));
+    return retryProvider(async () => {
+      const token=await this.credentialToken();
+      signal.throwIfAborted();
+      if(this.closed)throw new ProviderError("configuration","Provider is closed");
+      const client=this.client?.withOptions({maxRetries:0}) ?? new OpenAI({apiKey:token,maxRetries:0,timeout:120000});
+      return compactedInput(await client.responses.compact({model:this.config.model,input,service_tier:"default"},{signal}));
+    }, {signal,onRetry:this.config.onRetry});
   }
   private async respondOnce(input:ResponseInputItem[],tools:Tool[],signal:AbortSignal,observer?:ProviderResponseObserver):Promise<Response>{
     const token=await this.credentialToken();
     signal.throwIfAborted();
     if(this.closed)throw new ProviderError("configuration","Provider is closed");
-    const client = new OpenAI({ apiKey: token, maxRetries: 0, timeout: 120000 });
+    const client = this.client?.withOptions({maxRetries:0}) ?? new OpenAI({ apiKey: token, maxRetries: 0, timeout: 120000 });
     const body = { model: this.config.model, context_management:[{type:"compaction",compact_threshold:64000}], ...(this.config.serviceTier?{service_tier:this.config.serviceTier}:{}), ...(this.config.reasoningEffort ? { reasoning: { effort: this.config.reasoningEffort } } : {}), input, tools, parallel_tool_calls: true, store: false, stream: true, include: ["reasoning.encrypted_content"] } satisfies Parameters<typeof client.responses.create>[0];
     if(this.config.transport==="websocket"){
       if(!this.sockets||this.sockets.token!==token){
