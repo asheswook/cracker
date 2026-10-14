@@ -21,6 +21,9 @@ final class Harness {
     var delivering = false
     var callbacks: [(Bool) -> Void] = []
     var deliveries = 0
+    var conversation: String?
+    var pendingResultConversation: String?
+    var resultRevision = 0
 ${source.slice(start, end)}
     func dispatch(_ event: String, detail: [String: Any], completion: ((Bool) -> Void)? = nil) {
         if let completion { deliveries += 1; callbacks.append(completion) }
@@ -33,7 +36,7 @@ func check(_ condition: Bool, _ name: String) {
     print("\\(condition ? "PASS" : "FAIL"): \\(name)")
     if !condition { failures += 1 }
 }
-let url = URL(string: "https://example.test/?conversation=fixture")!
+let url = URL(string: "https://assistant.example.com/?conversation=11111111-1111-4111-8111-111111111111")!
 let stale = Harness()
 stale.ready(); stale.enqueueResult(url); stale.commit(); stale.ready()
 check(stale.deliveries == 1, "new ready waits for old in-flight callback")
@@ -54,9 +57,14 @@ let ordered = Harness()
 ordered.ready(); ordered.enqueueResult(url); ordered.enqueueResult(url)
 ordered.complete(true); ordered.complete(true)
 check(ordered.results.isEmpty && ordered.deliveries == 2, "normal queue drains sequentially")
+let invalid = Harness()
+invalid.enqueueResult(URL(string: "https://other.example/?conversation=11111111-1111-4111-8111-111111111111")!)
+check(invalid.results.isEmpty && invalid.resultRevision == 0, "foreign results cannot navigate native shell")
+check(ordered.pendingResultConversation == "11111111-1111-4111-8111-111111111111" && ordered.resultRevision == 0,
+      "notification navigation waits for the body to confirm its destination")
 exit(failures == 0 ? 0 : 1)
 `);
-const compile = Bun.spawn(['swiftc', `${directory}/main.swift`, '-o', `${directory}/result-lifecycle`], { stdout: 'inherit', stderr: 'inherit' });
+const compile = Bun.spawn(['swiftc', `${directory}/main.swift`, 'apps/apple/Sources/AppConfiguration.swift', '-o', `${directory}/result-lifecycle`], { stdout: 'inherit', stderr: 'inherit' });
 if (await compile.exited !== 0) process.exit(1);
 const run = Bun.spawn([`${directory}/result-lifecycle`], { stdout: 'inherit', stderr: 'inherit' });
 process.exit(await run.exited);

@@ -140,18 +140,23 @@
 .history-search {
   width: 100%;
   min-width: 0;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: var(--r2);
-  padding: var(--s3);
-  background: var(--surface);
+  padding: var(--s2) var(--s3);
+  min-height: 36px;
+  background: var(--wash);
   color: var(--ink);
+  font-size: var(--t-body);
 }
 .history-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: 2px;
+  display: block;
+}
+.history-list > li + li .history-link {
+  box-shadow: inset 0 0.5px 0 var(--line);
+  clip-path: none;
 }
 .history-link {
   width: 100%;
@@ -163,10 +168,10 @@
   text-align: left;
   border: 0;
   background: transparent;
-  padding: var(--s3) var(--s3) var(--s3) var(--s4);
-  border-radius: var(--r3);
+  padding: var(--s3) var(--s2) var(--s3) var(--s4);
+  border-radius: 0;
   color: var(--ink);
-  transition: background-color 150ms cubic-bezier(.4, 0, .2, 1);
+  transition: background-color 120ms var(--ease-spring);
 }
 .history-link:hover {
   background: var(--wash);
@@ -175,7 +180,8 @@
   background: var(--line);
 }
 .history-link > svg {
-  color: var(--faint);
+  color: var(--muted);
+  opacity: 0.6;
 }
 .history-text {
   min-width: 0;
@@ -194,7 +200,7 @@
   line-height: 22px;
 }
 .history-detail {
-  font-size: 13px;
+  font-size: var(--t-footnote);
   line-height: 18px;
   color: var(--muted);
 }

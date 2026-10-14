@@ -3,23 +3,26 @@ import WebKit
 
 @main
 struct AssistantApp: App {
+    @StateObject private var shell = WebShell()
     #if os(iOS)
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     #else
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     #endif
     var body: some Scene {
-        WindowGroup { ShellView() }
         #if os(macOS)
+        Window("Assistant", id: "assistant") { ShellView(shell: shell) }
         .defaultSize(width: 1120, height: 780)
         .commands { CommandGroup(replacing: .newItem) {} }
+        Settings { NativeSettingsView().tint(ShellStyle.accent) }
+        #else
+        WindowGroup { ShellView(shell: shell) }
         #endif
     }
 }
 
-struct ShellView: View {
-    @StateObject private var shell = WebShell()
-    @Environment(\.scenePhase) private var phase
+struct ConversationSurface: View {
+    @ObservedObject var shell: WebShell
     var body: some View {
         ZStack {
             if shell.failure == nil {
@@ -34,7 +37,7 @@ struct ShellView: View {
             if let failure = shell.failure {
                 VStack(spacing: 20) {
                     Image(systemName: "wifi.exclamationmark").font(.system(size: 38, weight: .light)).foregroundStyle(.secondary)
-                    Text("Assistant에 연결할 수 없습니다").font(.title3.weight(.semibold))
+                    Text("Assistant에 연결할 수 없어요").font(.title3.weight(.semibold))
                     Text(failure).font(.body).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 320)
                     Button("다시 연결", action: shell.retry).buttonStyle(.borderedProminent).controlSize(.large)
                 }
@@ -43,10 +46,7 @@ struct ShellView: View {
                 ProgressView("연결 중…").padding(22).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
             }
         }
-        #if os(macOS)
-        .frame(minWidth: 480, minHeight: 480)
-        #else
-        .background(Color("Canvas").ignoresSafeArea(.container))
+        #if os(iOS)
         .sheet(item: $shell.exportedFile) { file in ActivitySheet(url: file.url) }
         .onChange(of: shell.exportedFile?.id) { _, _ in shell.updateComposerPresentation() }
         .onChange(of: shell.downloadNotice) { _, _ in shell.updateComposerPresentation() }
@@ -54,17 +54,15 @@ struct ShellView: View {
         .alert("파일 다운로드", isPresented: Binding(get: { shell.downloadNotice != nil }, set: { if !$0 { shell.downloadNotice = nil } })) {
             Button("확인") { shell.downloadNotice = nil }
         } message: { Text(shell.downloadNotice ?? "") }
-        .onChange(of: phase) { _, newPhase in
-            if newPhase == .active { NotificationService.shared.refresh(registerIfGranted: true) }
-            #if os(iOS)
-            shell.composerSceneActive = newPhase == .active
-            shell.updateComposerPresentation()
-            #endif
-        }
     }
 }
 
 #if os(iOS)
+struct NativeWebView: UIViewRepresentable {
+    let webView: WKWebView
+    func makeUIView(context: Context) -> WKWebView { webView }
+    func updateUIView(_ view: WKWebView, context: Context) {}
+}
 struct ActivitySheet: UIViewControllerRepresentable {
     let url: URL
     func makeUIViewController(context: Context) -> UIActivityViewController {

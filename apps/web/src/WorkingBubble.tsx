@@ -70,18 +70,24 @@ export function WorkingBubble({
     );
     return () => clearTimeout(timer);
   }, [replyHandoff]);
+  // A message sent while the assistant is mid-task steers that task; it is read at the next step, so the
+  // assistant keeps working and the indicator must stay instead of vanishing until the message is read.
+  const steering = Boolean(
+    latestUser && task?.state === 'running' && composing && composing.task_id === task.id &&
+      !composing.input_message_ids.includes(latestUser.id),
+  );
   const contextValid =
     connected &&
     !pending &&
     task?.conversation_id === selected &&
     (task.state === 'running' || task.state === 'succeeded') &&
-    (!latestUser || (latestUser.conversation_id === selected && Boolean(latestUser.read_at)));
+    (!latestUser || (latestUser.conversation_id === selected && (Boolean(latestUser.read_at) || steering)));
   const active = Boolean(
     contextValid &&
       task?.state === 'running' &&
       composing &&
       task.id === composing.task_id &&
-      (!latestUser || composing.input_message_ids.includes(latestUser.id)) &&
+      (!latestUser || steering || composing.input_message_ids.includes(latestUser.id)) &&
       Date.parse(composing.expires_at) > Math.max(now, Date.now()),
   );
   const key =
@@ -116,7 +122,7 @@ export function WorkingBubble({
         contextValid &&
         reply.conversation === selected &&
         reply.task === task?.id &&
-        reply.input === (latestUser?.id ?? null),
+        (reply.input === (latestUser?.id ?? null) || steering),
     );
   const live = active && visible?.sourceKey === sourceKey;
   const replaced = Boolean(

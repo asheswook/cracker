@@ -13,11 +13,25 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
               origin.host == AppConfiguration.origin.host,
               AppConfiguration.matchesOrigin(scheme: origin.protocol, host: origin.host, port: origin.port),
               let currentURL = shell.webView.url, AppConfiguration.isAppURL(currentURL),
-              let body = message.body as? [String: Any], let method = body["method"] as? String else {
+              let body = message.body as? [String: Any] else {
             replyHandler(nil, "Native bridge is available only to the application main frame."); return
         }
+        // The v1 composer handshake also enables legacy chrome transports.
+        // Acknowledge their state without activating a second renderer: inline
+        // status/attachments remain in the body and SwiftUI owns the header.
+        if message.name == "assistantHeader" || message.name == "assistantFooter" {
+            guard shell.panel == nil, body["v"] as? Int == 1,
+                  let kind = body["kind"] as? String, ["state", "fallback", "active"].contains(kind) else {
+                replyHandler(["ok": false], nil); return
+            }
+            replyHandler(["ok": true], nil); return
+        }
+        guard let method = body["method"] as? String else { replyHandler(nil, "Invalid method."); return }
         let notifications = NotificationService.shared
         switch method {
+        case "shellState":
+            guard body["version"] as? Int == 1, body["authenticated"] is Bool else { replyHandler(nil, "Invalid shell state."); return }
+            shell.receiveShellState(body); replyHandler(NSNull(), nil)
         case "modelLoginCapabilities":
             #if os(macOS)
             replyHandler(["version": 1, "platform": "macos", "local": true], nil)
@@ -47,12 +61,12 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "openNotificationSettings": notifications.openSettings(); replyHandler(NSNull(), nil)
         case "ready": shell.ready(); replyHandler(NSNull(), nil)
         #if os(iOS)
-        case "panelTransition": shell.panelTransition.receive(body, reply: replyHandler)
+        case "panelTransition": replyHandler(["ok": false, "error": "native_container"], nil)
         case "hybridConnect":
             guard body["version"] as? Int == 1, let document = body["document"] as? String,
                   shell.connectHybrid(document: document) else { replyHandler(nil, "Invalid hybrid document."); return }
             replyHandler(["version": 1, "platform": "ios", "document": document,
-                          "composer": 1, "reader": 1, "header": 1, "footer": 1], nil)
+                           "composer": 1, "reader": 1, "header": 1, "footer": 1], nil)
         case "composerConnect":
             guard body["version"] as? Int == 1, let document = body["document"] as? String,
                   shell.connectComposer(document: document) else { replyHandler(nil, "Invalid composer document."); return }

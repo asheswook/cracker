@@ -21,7 +21,7 @@ test('only exact legacy system notices without metadata are suppressed', () => {
 test('scheduled notices stay verbatim and internal English error bodies are shown in user language', () => {
   const notice = '매일 한국시간 낮 12시쯤 새 보안공지를 확인한다.';
   expect(systemMessageContent({ ...message, content: notice })).toBe(notice);
-  expect(systemMessageContent({ ...message, content: status.reason })).toBe('모델 응답을 처리하지 못해 멈췄어요. 실행된 동작은 없어요. 다시 요청해 주세요.');
+  expect(systemMessageContent({ ...message, content: status.reason })).toBe('모델 응답을 처리하지 못해 멈췄어요. 실행된 동작은 없어요. 메시지를 보내면 이어서 해요.');
 });
 test('task status suppresses only system callouts and never user prose', () => {
   const reason = ' first line\n<script>alert(1)</script>\nlast line ';

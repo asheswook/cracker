@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "56828350FF699DF54B950D12"
+               BlueprintIdentifier = "EAC7DB2DC8BED949F753A87D"
                BuildableName = "Assistant.app"
                BlueprintName = "Assistant-macOS"
                ReferencedContainer = "container:Assistant.xcodeproj">
@@ -30,7 +30,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "56828350FF699DF54B950D12"
+            BlueprintIdentifier = "EAC7DB2DC8BED949F753A87D"
             BuildableName = "Assistant.app"
             BlueprintName = "Assistant-macOS"
             ReferencedContainer = "container:Assistant.xcodeproj">
@@ -53,7 +53,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "56828350FF699DF54B950D12"
+            BlueprintIdentifier = "EAC7DB2DC8BED949F753A87D"
             BuildableName = "Assistant.app"
             BlueprintName = "Assistant-macOS"
             ReferencedContainer = "container:Assistant.xcodeproj">
@@ -70,7 +70,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "56828350FF699DF54B950D12"
+            BlueprintIdentifier = "EAC7DB2DC8BED949F753A87D"
             BuildableName = "Assistant.app"
             BlueprintName = "Assistant-macOS"
             ReferencedContainer = "container:Assistant.xcodeproj">

@@ -26,3 +26,35 @@ The export plists under `Configuration` are templates; supply your team and prov
 After notarization, `ASSISTANT_DEVELOPMENT_TEAM=YOURTEAMID ASSISTANT_MACOS_BUNDLE_ID=com.example.assistant.macos bun scripts/package-macos.mjs /path/to/Assistant.app /path/to/Assistant.zip` verifies signing, the stapled ticket and Gatekeeper before packaging. It refuses to overwrite an existing archive.
 
 Unsigned builds and simulator checks do not establish APNs delivery or recipient installation. Validate these separately on your devices.
+# Native shell
+
+Navigation and presentation are owned by SwiftUI: macOS uses a sidebar/detail
+`NavigationSplitView`, trailing inspector, and a `Settings` scene; iOS uses a
+`NavigationStack` and medium/large sheets. The iOS composer remains UIKit and its
+`keyboardLayoutGuide` is the only keyboard avoidance owner. SwiftUI keyboard
+avoidance is disabled only on the conversation surface. System containers handle
+Reduce Motion; reader positioning does not add custom animations.
+
+The conversation WKWebView and optional computer/settings sheet WKWebViews share
+the default website data store and process pool. Lists use `URLSession` GETs with
+the web session cookies, no separate token persistence, cache, or redirects.
+The memory endpoint is `/v1/memory` (singular). Failures are shown inline.
+
+`window.__ASSISTANT_SHELL__` selects the version-1 body/panel adapter in the web
+app. `shellState` publishes authentication and selection; `__assistantShellCommand`
+selects a conversation and acknowledges it. **This app requires the matching web
+adapter from this revision.** An older deployed web app does not support native
+conversation selection. Do not deploy as part of local QA.
+
+Legacy v1 hybrid negotiation is retained for the existing native composer and
+reader. Header/footer packets are acknowledged but never activate independent
+renderers; inline status and attachment content stays in the conversation body.
+There are no independent header/footer WKWebViews or snapshot panel transitions.
+Legacy web protocol tests remain for browser/older-host compatibility; native
+container coverage is `Tests/ShellNavigation/NativeShellUITests.swift`.
+
+For read-only UI QA, install the unsigned simulator build using the default
+`com.example.assistant.ios` identifier and run that XCTest against a local web
+build with a read-only API proxy. The test opens the current conversation, focuses
+but does not type/send, opens a sheet, closes it, and edge-swipes back to the list.
+Do not use production send operations to validate haptics.

@@ -23,7 +23,6 @@ struct NativeComposerHost: UIViewControllerRepresentable {
 final class NativeComposerController: UIViewController, UITextViewDelegate, UITextPasteDelegate {
     typealias Deliver = ([String: Any], Bool, @escaping (Result<Any, Error>) -> Void) -> Void
     #if os(iOS)
-    private lazy var rootScrollTrial = NativeRootScrollTrial.enabled ? NativeRootScrollTrial(webView: webView) : nil
     private let attachmentPicker = NativeAttachmentPicker()
     @available(iOS 18.4, *)
     func chooseAttachment(_ parameters: WKOpenPanelParameters, completion: @escaping ([URL]?) -> Void) {
@@ -53,7 +52,6 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
     private var activeBottom: NSLayoutConstraint!
     private var inactiveBottom: NSLayoutConstraint!
     private var trayBottom: NSLayoutConstraint!
-    private var footerBottom: NSLayoutConstraint?
     private var overlayBottom: NSLayoutConstraint!
     private var overlayActive = false
     private var portraitConstraints: [NSLayoutConstraint] = []
@@ -163,15 +161,6 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
         #if os(iOS)
         #endif
         tray.isHidden = true
-        #if os(iOS)
-        if let footer = IndependentFooterController.lookup(webView) {
-            footer.attach(to: view, tray: tray)
-            inactiveBottom.isActive = false
-            footerBottom = webView.bottomAnchor.constraint(equalTo: footer.bottomAnchor)
-            footerBottom?.isActive = true
-        }
-        IndependentHeaderController.lookup(webView)?.attach(to: view, tray: tray)
-        #endif
         keyboardObserver = NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification,
                                                                    object: nil, queue: .main) { [weak self] notification in
             MainActor.assumeIsolated { self?.keyboardWillChange(notification) }
@@ -199,15 +188,7 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
         let baseGeometry = NativeKeyboardTransitionGeometry.resolve(host: view.bounds,
             safeBottom: view.safeAreaLayoutGuide.layoutFrame.maxY, keyboard: frame,
             trayHeight: tray.bounds.height, trayBottomConstant: trayBottom.constant, webTop: webView.frame.minY)
-        var targetHeight = overlayActive ? baseGeometry.viewportHeight : baseGeometry.height
-        var targetInset = overlayActive ? baseGeometry.bottomInset : 0
-        #if os(iOS)
-        if let footer = IndependentFooterController.lookup(webView) {
-            footer.prepare(available: baseGeometry.height)
-            if overlayActive { targetInset += footer.reservedHeight }
-            else { targetHeight -= footer.reservedHeight }
-        }
-        #endif
+        let targetHeight = overlayActive ? baseGeometry.viewportHeight : baseGeometry.height
         keyboardWasVisible = baseGeometry.docked
         var fromHeight = webView.bounds.height
         if abs(fromHeight - targetHeight) <= 0.5,
@@ -218,23 +199,10 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
                 safeBottom: view.safeAreaLayoutGuide.layoutFrame.maxY, keyboard: begin,
                 trayHeight: tray.bounds.height, trayBottomConstant: trayBottom.constant, webTop: webView.frame.minY)
             fromHeight = overlayActive ? fromGeometry.viewportHeight : fromGeometry.height
-            #if os(iOS)
-            if !overlayActive { fromHeight -= IndependentFooterController.lookup(webView)?.reservedHeight ?? 0 }
-            #endif
         }
         // Interactive zero-duration geometry remains owned entirely by UIKit; this is not a frame follower.
         guard seconds > 0, seconds <= 10, targetHeight > 0, webView.bounds.width > 0,
               abs(targetHeight - fromHeight) > 0.5 else { return }
-        #if os(iOS)
-        if let rootScrollTrial {
-            rootScrollTrial.keyboardTransition(toHeight: targetHeight, bottomInset: targetInset, duration: seconds, curve: curve, prepare: { [weak self] in
-                self?.prepareKeyboardTerminalLayout(docked: baseGeometry.docked, keyboardEndFrame: frame, duration: seconds)
-            }) { [weak self] in
-                self?.view.layoutIfNeeded()
-            }
-            return
-        }
-        #endif
         transition(["version": 1, "document": state.document, "session": state.session,
                     "transition": UUID().uuidString, "startTime": startedAt,
                     "duration": seconds * 1000, "curve": curve, "fromHeight": fromHeight,
@@ -355,30 +323,23 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
         }
         tray.isHidden = !visible
         view.setNeedsLayout()
-        IndependentHeaderController.lookup(webView)?.setComposerVisible(visible)
-        #if os(iOS)
-        if let footer = IndependentFooterController.lookup(webView) {
-            footer.setComposerVisible(visible)
-            return
-        }
-        #endif
         updateViewportConstraints()
     }
 
     private func applyTheme(_ theme: NativeComposerState.Theme) {
-        view.backgroundColor = color(theme.canvas)
-        webView.backgroundColor = color(theme.canvas)
-        webView.scrollView.backgroundColor = color(theme.canvas)
-        tray.backgroundColor = color(theme.surface)
-        tray.layer.borderColor = color(theme.ink).withAlphaComponent(0.09).cgColor
-        editor.textColor = color(theme.ink)
-        editor.tintColor = color(theme.accent)
-        placeholder.textColor = color(theme.muted)
-        attach.tintColor = color(theme.muted)
-        recovery.setTitleColor(color(theme.muted), for: .normal)
-        send.backgroundColor = color(theme.accent)
+        view.backgroundColor = .systemBackground
+        webView.backgroundColor = .systemBackground
+        webView.scrollView.backgroundColor = .systemBackground
+        tray.backgroundColor = .secondarySystemBackground
+        tray.layer.borderColor = UIColor.separator.cgColor
+        editor.textColor = .label
+        editor.tintColor = UIColor(red: 232/255, green: 99/255, blue: 10/255, alpha: 1)
+        placeholder.textColor = .secondaryLabel
+        attach.tintColor = .secondaryLabel
+        recovery.setTitleColor(.secondaryLabel, for: .normal)
+        send.backgroundColor = editor.tintColor
         send.tintColor = .white
-        editor.keyboardAppearance = (color(theme.canvas).cgColor.components?.first ?? 1) < 0.5 ? .dark : .light
+        editor.keyboardAppearance = .default
     }
 
     private func color(_ hex: String) -> UIColor {
@@ -506,7 +467,8 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
               editor.markedTextRange == nil, !pendingSends.contains(state.session), uncertainSends[state.session] == nil else { return }
         capture()
         guard let buffer = buffers[state.session], !buffer.composing,
-              buffer.text.utf16.count <= NativeComposerState.textLimit else { return }
+               buffer.text.utf16.count <= NativeComposerState.textLimit else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         issue(command("send", state: state, buffer: buffer), state: state)
     }
 
@@ -561,21 +523,20 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
     private func updateViewportConstraints() {
         let overlay = !tray.isHidden && NativeReaderBridge.lookup(webView)?.allowsComposerOverlay == true
         let desired: NSLayoutConstraint = overlay ? overlayBottom
-            : footerBottom ?? (tray.isHidden ? inactiveBottom : activeBottom)
+            : (tray.isHidden ? inactiveBottom : activeBottom)
         overlayActive = overlay
         if !editor.isFirstResponder && view.keyboardLayoutGuide.layoutFrame.minY >= view.safeAreaLayoutGuide.layoutFrame.maxY - 0.5 {
             keyboardWasVisible = false
         }
         overlayBottom.constant = overlay && !keyboardWasVisible
             ? max(0, view.bounds.maxY - view.safeAreaLayoutGuide.layoutFrame.maxY) : 0
-        for constraint in [activeBottom, inactiveBottom, footerBottom, overlayBottom].compactMap({ $0 })
+        for constraint in [activeBottom, inactiveBottom, overlayBottom].compactMap({ $0 })
             where constraint !== desired { constraint.isActive = false }
         desired.isActive = true
     }
 
     private func updateReaderInset() {
-        let footerHeight = IndependentFooterController.lookup(webView)?.reservedHeight ?? 0
-        let inset = overlayActive ? max(0, webView.frame.maxY - tray.frame.minY + footerHeight) : 0
+        let inset = overlayActive ? max(0, webView.frame.maxY - tray.frame.minY) : 0
         let scroll = webView.scrollView
         if abs(scroll.contentInset.bottom - inset) > 0.5 {
             var value = scroll.contentInset; value.bottom = inset; scroll.contentInset = value
@@ -598,11 +559,8 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
         resizeEditor()
         updateKeyboardAccessibility()
         #if os(iOS)
-        IndependentFooterController.lookup(webView)?.layout()
         updateReaderInset()
         NativeReaderBridge.lookup(webView)?.geometryChanged()
-        rootScrollTrial?.setActive(!tray.isHidden)
-        rootScrollTrial?.layout(trayHeight: tray.bounds.height)
         #endif
     }
     private func resizeEditor() {

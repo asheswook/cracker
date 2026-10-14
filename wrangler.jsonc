@@ -18,6 +18,13 @@
   "durable_objects": {"bindings": [{"name":"ROOMS","class_name":"AssistantRoom"},{"name":"SCREENS","class_name":"ScreenRoom"}]},
   "migrations": [{"tag":"v1","new_sqlite_classes":["AssistantRoom"]},{"tag":"v2","new_sqlite_classes":["ScreenRoom"]}],
   "triggers": {"crons":["* * * * *"]},
-  "observability": {"enabled":true},
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "redact_query_string": false,
+    "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": true, "persist": true },
+    "traces": { "enabled": true, "head_sampling_rate": 1, "persist": true },
+    "issues": { "enabled": true }
+  },
   "rules": [{"type":"Text","globs":["**/*.sql"],"fallthrough":true}]
 }

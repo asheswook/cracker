@@ -9,6 +9,7 @@ import {
 } from 'motion/react';
 import { panelTransition } from './panel-transition';
 import { useReducedMotion } from './useReducedMotion';
+import { useSwipeDismiss } from './useSwipeDismiss';
 import type { ReactNode } from 'react';
 export function InspectorHost({
   children,
@@ -65,8 +66,8 @@ export function InspectorHost({
   useEffect(() => {
     const covered = overlay && panelTransition()?.hasAcceptedCover(present ? 'panel' : 'chat') === true;
     const options = {
-      duration: covered || reduced ? 0 : present ? 0.3 : 0.22,
-      ease: present ? [0.19, 1, 0.22, 1] as const : [0.8, 0, 0.4, 1] as const,
+      duration: covered || reduced ? 0 : present ? 0.38 : 0.28,
+      ease: [0.32, 0.72, 0, 1] as const,
     };
     const space = animate(reservation, present && !overlay ? width + gap : 0, options);
     const size = animate(panelWidth, width, options);
@@ -113,8 +114,10 @@ export function InspectorHost({
       trigger?.focus({ preventScroll: true });
     };
   }, []);
+  const swipe = useSwipeDismiss({ progress, direction: 'right', enabled: overlay && present && !reduced, onDismiss: onClose });
   const content = (
     <Motion.aside
+      {...swipe}
       className={`inspector-shell ${computer ? 'computer-inspector' : ''}`}
       style={{
         opacity: progress,

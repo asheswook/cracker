@@ -4,7 +4,7 @@ import { dayDividers, conversationLabel } from '../apps/web/src/feed-labels';
 
 test('internal daemon reasons become actionable Korean copy and keep the raw text as detail', () => {
   const runtime = taskReason('Runtime/provider/tool failure; inspect protected local journal before resuming');
-  expect(runtime?.text).toBe('작업 중 문제가 생겨 멈췄어요. 이어서 하려면 다시 요청해 주세요.');
+  expect(runtime?.text).toBe('작업 중 문제가 생겨 멈췄어요. 메시지를 보내면 하던 곳부터 이어서 해요.');
   expect(runtime?.detail).toContain('Runtime/provider');
   expect(taskReason('Invalid provider response: invalid_tool_arguments; no calls from that response were executed')?.text).toContain('실행된 동작은 없어요');
   expect(taskReason('Something unexpected in English')?.text).toBe('작업 중 문제가 생겨 멈췄어요. 다시 요청해 주세요.');

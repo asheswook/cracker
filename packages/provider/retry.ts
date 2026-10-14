@@ -68,13 +68,14 @@ export async function retryProvider<T>(
     } catch (error) {
       options.signal.throwIfAborted();
       const failure = transient(error);
-      if (!failure || attempt >= 2) throw error;
+      if (!failure || attempt >= 5) throw error;
       const raw = failure.retryAfter?.trim();
       const seconds = raw && /^\d+(?:\.\d+)?$/.test(raw) ? Number(raw) : undefined;
       const retryAfter = seconds !== undefined ? seconds * 1000 : raw ? Date.parse(raw) - Date.now() : 0;
       const delayMs = Math.max(500 * 2 ** attempt * (0.5 + Math.random()), Number.isNaN(retryAfter) ? 0 : retryAfter);
-      // A server asking for longer than our total wait budget is never retried early.
-      if (delayMs > 10000 - waitedMs) throw error;
+      // A long task should ride out a brief provider outage instead of stopping; a server asking for longer
+      // than the total wait budget is never retried early.
+      if (delayMs > 45000 - waitedMs) throw error;
       const { reason, status, diagnostic } = failure;
       options.onRetry?.({ attempt: attempt + 1, delayMs, reason, ...(status === undefined ? {} : { status }), ...(diagnostic ? { diagnostic } : {}) });
       options.signal.throwIfAborted();

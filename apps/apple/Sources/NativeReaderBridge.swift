@@ -30,7 +30,6 @@ final class NativeReaderBridge: NSObject {
     var keyboardMoving: Bool { movementGate.keyboardMoving }
     var bound: Bool { session.bound }
     var allowsComposerOverlay: Bool { bound && !session.suspended && !external }
-    private var root: NativeRootScrollTrial? { webView.flatMap(NativeRootScrollTrial.lookup) }
 
     init(webView: WKWebView, configuration: WKWebViewConfiguration) {
         self.webView = webView
@@ -58,7 +57,6 @@ final class NativeReaderBridge: NSObject {
     deinit { NotificationCenter.default.removeObserver(self) }
     func reset() {
         session.reset(); geometryKey = []; geometry += 1
-        root?.readerState(mode: "reading", suspended: true)
         webView?.superview?.setNeedsLayout()
     }
     func setExternal(_ value: Bool) {
@@ -68,12 +66,10 @@ final class NativeReaderBridge: NSObject {
     func keyboardBegan() { movementGate.keyboardWill(); queueEvent() }
     func keyboardEnded() { geometryChanged(); queueEvent() }
     @objc private func keyboardWill(_ note: Notification) {
-        HybridLatestTrace.record(20)
         guard (note.userInfo?[UIResponder.keyboardIsLocalUserInfoKey] as? Bool) != false else { return }
         keyboardBegan()
     }
     @objc private func keyboardDid(_ note: Notification) {
-        HybridLatestTrace.record(21)
         guard (note.userInfo?[UIResponder.keyboardIsLocalUserInfoKey] as? Bool) != false else { return }
         movementGate.keyboardDid(); keyboardEnded()
     }
@@ -83,7 +79,7 @@ final class NativeReaderBridge: NSObject {
     }
     @objc private func panChanged(_ gesture: UIPanGestureRecognizer) {
         guard bound, !session.suspended, !external else { return }
-        if gesture.state == .began { session.userBegan(); root?.readerState(mode: "reading", suspended: session.suspended || external) }
+        if gesture.state == .began { session.userBegan() }
         queueEvent()
     }
     var presentationIdentity: [String] {
@@ -107,7 +103,6 @@ final class NativeReaderBridge: NSObject {
             abs(width - Double(scroll.bounds.width)) <= 1 && abs(content - Double(scroll.contentSize.height)) <= 1
     }
     private func updateRoot() {
-        root?.readerState(mode: session.mode, suspended: !bound || session.suspended || external)
         webView?.superview?.setNeedsLayout()
     }
     private func snapshot() -> [String: Any]? {
@@ -119,14 +114,14 @@ final class NativeReaderBridge: NSObject {
                 "revision": snapshotRevision, "mode": session.mode,
                 "offset": Double(scroll.contentOffset.y), "contentHeight": Double(scroll.contentSize.height),
                 "width": Double(scroll.bounds.width), "height": Double(scroll.bounds.height),
-                "headerHeight": Double(IndependentHeaderController.headerHeight(webView)),
+                "headerHeight": 0,
                 "bottomInset": Double(max(0, scroll.adjustedContentInset.bottom)),
                 "keyboardMoving": keyboardMoving, "suspended": session.suspended || external,
                 "dragging": scroll.isDragging || scroll.isDecelerating || scroll.panGestureRecognizer.state == .began || scroll.panGestureRecognizer.state == .changed]
     }
     func geometryChanged() {
-        guard let scroll = webView?.scrollView, let webView else { return }
-        let key = [Double(scroll.bounds.width), Double(scroll.bounds.height), Double(scroll.contentSize.height), Double(IndependentHeaderController.headerHeight(webView)),
+        guard let scroll = webView?.scrollView else { return }
+        let key = [Double(scroll.bounds.width), Double(scroll.bounds.height), Double(scroll.contentSize.height),
                    Double(scroll.adjustedContentInset.top), Double(scroll.adjustedContentInset.bottom)]
         guard key != geometryKey else { return }
         geometryKey = key; geometry += 1; queueEvent()
@@ -145,21 +140,16 @@ final class NativeReaderBridge: NSObject {
               origin.protocol == expected.scheme, origin.host == expected.host,
               AppConfiguration.matchesOrigin(scheme: origin.protocol, host: origin.host, port: origin.port),
               let webView, let url = webView.url, AppConfiguration.isAppURL(url),
-              let packet = NativeReaderPacket.parse(message.body), let root else {
+              let packet = NativeReaderPacket.parse(message.body) else {
             reply(["ok": false, "error": "unavailable"], nil); return
         }
         func finish(_ error: String? = nil) {
-            if packet.kind == "move" {
-                HybridLatestTrace.record(31, [error == nil ? 1 : 0,
-                    Double(["busy", "stale_geometry", "stale_interaction", "stale_navigation"].firstIndex(of: error ?? "") ?? -1)])
-            }
             var response: [String: Any] = ["ok": error == nil]
             if let error { response["error"] = error }
             if let snapshot = self.snapshot() { response["snapshot"] = snapshot }
             reply(response, nil)
         }
         if let error = session.error(for: packet) { finish(error); return }
-        if packet.kind == "move" { HybridLatestTrace.record(30, [movementGate.keyboardMoving ? 1 : 0, Double(geometry), Double(session.interaction)]) }
         if session.duplicate(packet) { finish(); return }
         if packet.kind == "release" { session.release(); updateRoot(); finish(); return }
         if packet.kind == "bind" {
@@ -180,8 +170,11 @@ final class NativeReaderBridge: NSObject {
                                          contentHeight: Double(scroll.contentSize.height)) else { finish("geometry_pending"); return }
         }
         session.accept(packet); updateRoot()
-        if packet.mode == "follow" { root.readerMove(to: maximumOffset) }
-        else if let offset = packet.offset { root.readerMove(to: min(maximumOffset, max(-Double(scroll.adjustedContentInset.top), offset))) }
+        if packet.mode == "follow" {
+            scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: maximumOffset), animated: false)
+        } else if let offset = packet.offset {
+            scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: min(maximumOffset, max(-Double(scroll.adjustedContentInset.top), offset))), animated: false)
+        }
         finish()
     }
 }

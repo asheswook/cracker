@@ -24,6 +24,7 @@ sources = project.main_group.new_group('Sources', 'Sources')
 refs = Dir[File.join(root, 'Sources/*.swift')].sort.map { |file| sources.new_file(File.basename(file)) }
 [['Assistant-iOS', :ios, '17.0', 'ios'], ['Assistant-macOS', :osx, '14.0', 'macos']].each do |name, platform, minimum, suffix|
   target = project.new_target(:application, name, platform, minimum)
+  target.product_reference.path = 'Assistant.app'
   refs.each { |ref| target.source_build_phase.add_file_reference(ref) }
   catalog = project.main_group.new_file("Assets/#{platform == :ios ? 'iOS' : 'macOS'}.xcassets")
   target.resources_build_phase.add_file_reference(catalog)

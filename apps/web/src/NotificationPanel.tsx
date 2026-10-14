@@ -126,16 +126,9 @@ export function NotificationPanel() {
     status?.configured && deviceConfigured && status.enabled && localSubscribed && permission === 'granted';
   return (
     <section className="notification-panel" aria-label="알림 설정">
-      <div className="section-intro">
-        <p>
-          새 메시지가 도착하면
-          <br />
-          <strong>이 기기로 알려드려요.</strong>
-        </p>
-        {active ? <Bell size={24} /> : <BellOff size={24} />}
-      </div>
       <p className="notification-description">
-        새 메시지를 보낸 이름과 내용을 알림에 표시해요. 알림을 누르면 해당 메시지로 이동해요.
+        {active ? <Bell size={15} aria-hidden="true" /> : <BellOff size={15} aria-hidden="true" />}
+        어시스턴트가 보낸 메시지를 이 기기에 알림으로 보여 줘요.
       </p>
       {status && (
         <label className="notification-preference">

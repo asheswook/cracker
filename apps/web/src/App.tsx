@@ -1,6 +1,7 @@
 import { ScreenSessionProvider } from './ScreenSessionProvider';
 import { useTaskErrorToasts } from './useTaskErrorToasts';
 import { panelTransition } from './panel-transition';
+import { useDrawerSwipe } from './useDrawerSwipe';
 import { useMenuPresentation } from './useMenuPresentation';
 import { useIndependentHeader } from './useIndependentHeader';
 import { HeaderTimeContext } from './header-time-context';
@@ -29,14 +30,28 @@ import type { Id } from './types';
 import { createWorkSession } from './work-session';
 import { useWorkNavigation } from './useWorkNavigation';
 import { useAssistantWorking } from './useAssistantWorking';
+import { nativeShellConfiguration, listenNativeShell, publishNativeShell } from './native-bridge';
 import './assistant.css';
 import './messenger.css';
 import './inspector-motion.css';
 import './inspector-loading.css';
+import './native-polish.css';
 const Inspector = lazy(() => import('./Inspector').then((module) => ({ default: module.Inspector })));
 const refreshAfterNotification = () => { void client.refresh(); };
 export function App() {
   const state = useClient();
+  const nativeShell = nativeShellConfiguration();
+  useEffect(() => listenNativeShell(async (conversation, message) => {
+    const current = client.snapshot();
+    if (current.phase !== 'ready' || !current.conversations.some(item => item.id === conversation)) return false;
+    setPanel(null); setMenu(false); setFocusTask(null); setFocusMessage(message ?? null);
+    await client.select(conversation as Id, message as Id | undefined);
+    const selected = client.snapshot();
+    return selected.selected === conversation && selected.syncedCursor !== null && !selected.error;
+  }), []);
+  useEffect(() => {
+    publishNativeShell(state.phase === 'ready', state.selected, state.assistantId);
+  }, [state.phase, state.selected, state.assistantId]);
   useTaskErrorToasts(state.workspace, state.phase === 'ready' && state.connected, state.tasks);
   useNotificationAttention(state.phase === 'ready' && state.connected && state.syncedCursor !== null, refreshAfterNotification, state.selected);
   const assistantWorking = useAssistantWorking(state);
@@ -85,6 +100,7 @@ export function App() {
     };
   }, []);
   useMenuPresentation(menu, dialog);
+  const menuSwipe = useDrawerSwipe(dialog, menu, () => closeMenu());
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
     const receive = (event: MessageEvent) => {
@@ -209,7 +225,7 @@ export function App() {
   const presence: Presence = !state.connected ? 'offline' : state.vms.length && !state.vms.some(vm => vm.online) ? 'computer-offline' : 'online';
   const independentHeader = useIndependentHeader({
     scope: `${state.workspace ?? 'none'}:${state.selected ?? 'none'}`,
-    visible: state.phase === 'ready' && !menu && !panel && !reserved,
+    visible: !nativeShell && state.phase === 'ready' && !menu && !panel && !reserved,
     props: { name: state.persona.name, appearance: state.appearance, connected: state.connected, presence,
       working: assistantWorking, computerOpen: panel === 'computer',
       archiveTitle: state.selected && state.selected !== state.assistantId ? archiveLabel : null },
@@ -227,18 +243,33 @@ export function App() {
   const archive = !!state.selected && state.selected !== state.assistantId;
   const title = archiveLabel;
 
+  // Native containers own panel presentation; reuse only the complex panel content.
+  if (nativeShell?.role === 'panel' && nativeShell.panel) return (
+    <ScreenSessionProvider workspace={state.workspace} vmId={state.vms[0]?.id} connected={state.connected}
+      visible={nativeShell.panel === 'computer'} controlAllowed={state.vms[0]?.control_state === 'user' && !state.control[state.vms[0].id]}>
+      <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
+        <PanelErrorBoundary onClose={() => {}}><Suspense fallback={<LoadingSkeleton label="불러오는 중…" />}>
+          <Inspector panel={nativeShell.panel} state={state} onClose={() => {}} onComputer={() => {}}
+            workSession={workSession} onTask={openTask} onSource={openSource} onArchive={id => { run(() => client.select(id)); }} />
+        </Suspense></PanelErrorBoundary>
+      </div>
+    </ScreenSessionProvider>
+  );
+
   return (
     <HeaderTimeContext.Provider value={independentHeader.registerTime}>
     <ScreenSessionProvider workspace={state.workspace} vmId={state.vms[0]?.id} connected={state.connected}
       visible={panel === 'computer' && !menu} controlAllowed={state.vms[0]?.control_state === 'user' && !state.control[state.vms[0].id]}>
     <div
       className={`app-shell assistant-shell ${independentHeader.active ? 'independent-header-active' : ''} ${reserved ? 'has-inspector' : ''} ${panel ? 'inspector-visible' : ''} ${reserved && wideInspector ? 'computer-open' : ''}`}
+      style={nativeShell ? { display: 'block', height: '100%', minHeight: 0 } : undefined}
     >
-      <div className="desktop-sidebar">{side}</div>
+      {!nativeShell && <div className="desktop-sidebar">{side}</div>}
       <dialog
         ref={dialog}
         aria-label="어시스턴트 메뉴"
         className="menu-dialog"
+        {...menuSwipe}
         onCancel={closeMenu}
         onClick={(e) => {
           if (e.target === e.currentTarget) closeMenu();
@@ -246,13 +277,13 @@ export function App() {
       >
         {side}
       </dialog>
-      <main className="main-surface">
-        {!independentHeader.active && <ConversationHeader name={state.persona.name} archiveTitle={archive ? title : undefined}
+      <main className="main-surface" style={nativeShell ? { height: '100%', margin: 0, border: 0, borderRadius: 0 } : undefined}>
+        {!nativeShell && !independentHeader.active && <ConversationHeader name={state.persona.name} archiveTitle={archive ? title : undefined}
           appearance={state.appearance} working={assistantWorking}
           presence={presence} computerOpen={panel === 'computer'} onMenu={openMenu}
           onSettings={() => selectPanel('settings')} onComputer={() => selectPanel('computer')}
           onTimeControlMount={setTimeControlRoot} />}
-        {archive && <ArchiveBanner onReturn={returnToAssistant} placeholder={independentHeader.active} />}
+        {!nativeShell && archive && <ArchiveBanner onReturn={returnToAssistant} placeholder={independentHeader.active} />}
         {headerError && (
           <div className="header-error">
             <ErrorNotice>{headerError}</ErrorNotice>

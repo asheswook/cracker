@@ -86,16 +86,14 @@ export function SchedulesPanel({ state, onTask }: {
     });
   return (
     <section className="schedules-panel" aria-label="예약된 일">
-      <div className="section-intro">
-        <p>필요한 순간에<br /><strong>먼저 시작하도록.</strong></p>
-        <IconButton label="예약 추가" aria-expanded={scheduling} onClick={() => setScheduling(value => !value)}><Plus size={20} /></IconButton>
+      <div className="panel-toolbar">
+        <div className="work-filters segmented" role="group" aria-label="예약 보기">
+          <button type="button" aria-pressed={!past} onClick={() => setPast(false)}>예정</button>
+          <button type="button" aria-pressed={past} onClick={() => setPast(true)}>지난 일</button>
+        </div>
+        <IconButton label="예약 추가" aria-expanded={scheduling} onClick={() => setScheduling(value => !value)}><Plus size={18} /></IconButton>
       </div>
       {scheduling && <ScheduleForm state={state} onDone={() => setScheduling(false)} />}
-      <p className="field-help">반복해서 맡길 일은 메시지로 알려 주세요. 등록된 일정과 결과를 여기서 확인할 수 있어요.</p>
-      <div className="work-filters">
-        <button type="button" aria-pressed={!past} onClick={() => setPast(false)}>예정된 일</button>
-        <button type="button" aria-pressed={past} onClick={() => setPast(true)}>지난 일</button>
-      </div>
       {actionError && <ErrorNotice>{actionError}</ErrorNotice>}
       {loadError && <div><ErrorNotice>{loadError}</ErrorNotice><Button onClick={() => setRefresh(value => value + 1)}>다시 불러오기</Button></div>}
       {!loaded && !loadError && <p className="field-help">예약을 불러오는 중…</p>}

@@ -48,3 +48,4 @@ Pods/
 *.zip
 .idea/
 .vscode/
+apps/web/vite.prodqa.config.ts

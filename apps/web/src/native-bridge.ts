@@ -33,14 +33,36 @@ export type NativeComposerMessage =
   | { readonly method: 'composerState'; readonly state: import('./native-composer').NativeComposerState }
   | { readonly method: 'composerHide'; readonly document: string; readonly session: string };
 type Method = 'getNotificationState' | 'requestNotifications' | 'openNotificationSettings' | 'ready';
+const ShellConfiguration = z.object({ version: z.literal(1), role: z.enum(['body', 'panel']), panel: z.enum(['computer', 'settings']).optional() });
+const ShellCommand = z.object({ version: z.literal(1), conversation: z.uuid(), message: z.uuid().optional() }).strict();
+export function nativeShellConfiguration() {
+  return ShellConfiguration.safeParse(window.__ASSISTANT_SHELL__).data;
+}
+export function listenNativeShell(select: (conversation: string, message?: string) => Promise<boolean>) {
+  if (!nativeShellConfiguration()) return () => {};
+  const handler = async (value: unknown) => {
+    const command = ShellCommand.safeParse(value);
+    if (!command.success) return { version: 1, accepted: false };
+    try { return { version: 1, accepted: await select(command.data.conversation, command.data.message) }; }
+    catch { return { version: 1, accepted: false }; }
+  };
+  window.__assistantShellCommand = handler;
+  return () => { if (window.__assistantShellCommand === handler) delete window.__assistantShellCommand; };
+}
+export function publishNativeShell(authenticated: boolean, conversation: string | null, assistant: string | null) {
+  if (!nativeShellConfiguration()) return;
+  void window.webkit?.messageHandlers?.assistantNative?.postMessage({ method: 'shellState', version: 1, authenticated, conversation, assistant }).catch(() => {});
+}
 declare global {
   interface Window {
+    readonly __ASSISTANT_SHELL__?: unknown;
+    __assistantShellCommand?: (value: unknown) => Promise<{ version: number; accepted: boolean }>;
     readonly webkit?: {
       readonly messageHandlers?: {
         readonly assistantFooter?: { postMessage(message: object): Promise<unknown> };
         readonly assistantReader?: { postMessage(message: import('./native-reader-protocol').ReaderPacket): Promise<unknown> };
         readonly assistantHeader?: { postMessage(message: object): Promise<unknown> };
-        readonly assistantNative?: { postMessage(message: { readonly method: Method } | { readonly method: 'getNotificationAttention'; readonly conversation_id: string | null } | NativeComposerMessage | import('./native-model-login').ModelLoginMessage | { readonly method: 'hybridConnect'; readonly version: 1; readonly document: string }): Promise<unknown> };
+        readonly assistantNative?: { postMessage(message: { readonly method: 'shellState'; readonly version: 1; readonly authenticated: boolean; readonly conversation: string | null; readonly assistant: string | null } | { readonly method: Method } | { readonly method: 'getNotificationAttention'; readonly conversation_id: string | null } | NativeComposerMessage | import('./native-model-login').ModelLoginMessage | { readonly method: 'hybridConnect'; readonly version: 1; readonly document: string }): Promise<unknown> };
       };
     };
   }

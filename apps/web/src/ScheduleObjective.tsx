@@ -7,20 +7,23 @@ export function ScheduleObjective({ objective, open, onToggle }: {
   readonly onToggle?: (open: boolean) => void;
 }) {
   const text = useRef<HTMLSpanElement>(null);
-  const [expandable, setExpandable] = useState(open ?? false);
+  const [long, setLong] = useState<string | null>(open ? objective : null);
+  const expandable = long === objective;
   useLayoutEffect(() => {
     const element = text.current;
     if (!element) return;
+    // Line height differs between the plain heading and the disclosure summary, so the threshold must only
+    // ever switch on (text longer than three lines); switching back off from the other wrapper would oscillate.
     const measure = () => {
       if (element.clientWidth === 0) return;
       const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight);
-      setExpandable(element.scrollHeight > lineHeight * 3 + 1);
+      if (element.scrollHeight > lineHeight * 3 + 1) setLong(objective);
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [objective, expandable]);
+  }, [objective]);
   const content = <span className="schedule-objective-text" ref={text}>{objective}</span>;
   if (!expandable) return <h3>{content}</h3>;
   return <details className="schedule-objective" open={open} onToggle={event => onToggle?.(event.currentTarget.open)}>

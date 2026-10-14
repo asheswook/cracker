@@ -548,8 +548,11 @@ export class Runtime {
           const execute=async():Promise<{readonly result:ToolResult;readonly actionId?:string}>=>{
           // A mailbox read immediately before every action makes steering visible between tools.
           const latest = Context.parse(await this.http.get(`v1/daemon/context/${assignment.run_id}`, { searchParams: { after: cursor, view: "work_mailbox" }, signal }).json());
-          if (latest.messages.some(m => m.role !== "assistant" && m.sequence > cursor)) {
-            return {result:{text:'Skipped: new user input arrived. Reconsider after reading the mailbox.'}};
+          // New input steers the work instead of discarding it: read-only lookups already chosen still run and
+          // their results stay usable; only actions with side effects wait until the model has read the new input.
+          const readOnly=this.config.tools.parallelRead(item.name)||item.name==='search_prior_work'||item.name==='retrieve_prior_work';
+          if (!readOnly && latest.messages.some(m => m.role !== "assistant" && m.sequence > cursor)) {
+            return {result:{text:'Not run yet: the user sent a new message. Read it, then decide whether this action is still wanted.'}};
           }
           if(!captureAllowed)return {result:{text:'Skipped before execution: inspect the previous two desktop captures before another batch.'}};
           if(item.name==='spawn_agent'&&this.config.tools.hasPendingShellSessions())return {result:{text:'Finish or close running shell sessions before spawning subagents.'}};
