@@ -36,21 +36,15 @@ export const AssistantNav = memo(function AssistantNav({
   return (
     <aside className="sidebar assistant-rail">
       <div className="brand-row">
-        <button
-          type="button"
-          className="rail-home"
-          aria-label={`${name}와 대화`}
-          title={`${name}와 대화`}
-          onClick={onHome}
-        >
+        <span className="rail-home" aria-hidden="true">
           <Mark />
-        </button>
+        </span>
         <IconButton label="메뉴 닫기" className="mobile-only" onClick={onClose}>
           <X size={18} />
         </IconButton>
       </div>
       <nav className="utility-nav" aria-label="어시스턴트">
-        <button type="button" title="메시지" aria-label="메시지" onClick={onHome}>
+        <button type="button" title={`${name}와 대화`} aria-label="메시지" aria-pressed={panel === null} onClick={onHome}>
           <MessageCircle size={20} />
           <span>메시지</span>
         </button>

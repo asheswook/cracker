@@ -27,7 +27,7 @@ html[data-header-only='true'] .assistant-shell .messenger-header,
 html[data-header-only='true'] .assistant-shell .main-surface::before { position: absolute; }
 
 html[data-header-only='true'] .main-surface { display: flow-root; }
-html[data-header-only='true'] .archive-banner { position: relative; z-index: 3; }
+html[data-header-only='true'] .archive-banner { position: relative; z-index: 3; left: auto; bottom: auto; translate: none; display: flex; justify-content: center; padding-bottom: var(--s2); }
 
 @media (max-height: 180px) {
   html:is([data-header-only='true'], [data-message-canvas='true']) .assistant-shell {

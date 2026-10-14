@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { errorToasts } from './error-toasts';
+import { taskReason } from './task-reason';
 import type { Task } from './types';
 
 export function useTaskErrorToasts(workspace: string | null, ready: boolean, tasks: readonly Task[]) {
@@ -13,7 +14,7 @@ export function useTaskErrorToasts(workspace: string | null, ready: boolean, tas
       for (const task of tasks) {
         if ((task.state === 'failed' || task.state === 'unknown') && task.reason?.trim()
           && previous.current.states.get(task.id) !== signatures.get(task.id)) {
-          errorToasts.show(task.reason, `task:${task.id}:${task.updated_at}`);
+          errorToasts.show(taskReason(task.reason)?.text ?? '', `task:${task.id}:${task.updated_at}`);
         }
       }
     }

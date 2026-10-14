@@ -1,5 +1,5 @@
 import { Monitor, PanelLeft } from 'lucide-react';
-import { IconButton, Status } from './primitives';
+import { IconButton, Status, type Presence } from './primitives';
 import { useLayoutEffect, useRef, type CSSProperties } from 'react';
 import { AnimatePresence, animate, m, useMotionValue, useTransform } from 'motion/react';
 import { AssistantCharacter } from './appearance/AssistantCharacter';
@@ -59,7 +59,7 @@ export function AssistantIdentity({ name, onOpen, appearance = defaultAppearance
             {working && <m.span key="working" className="identity-label-thinking"
               initial={{ opacity: reducedMotion ? 1 : 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               transition={{ ...identityTransition, duration: reducedMotion ? 0 : identityFadeDuration }}
-            >Thinking…</m.span>}
+            >생각 중…</m.span>}
           </AnimatePresence>
         </m.span>
       </span>
@@ -71,7 +71,7 @@ export function AssistantIdentity({ name, onOpen, appearance = defaultAppearance
 export function ConversationHeader({
   name,
   archiveTitle,
-  connected,
+  presence,
   computerOpen,
   onMenu,
   onSettings,
@@ -82,7 +82,7 @@ export function ConversationHeader({
 }: {
   readonly name: string;
   readonly archiveTitle: string | undefined;
-  readonly connected: boolean;
+  readonly presence: Presence;
   readonly computerOpen: boolean;
   readonly onMenu: () => void;
   readonly onSettings: () => void;
@@ -100,12 +100,15 @@ export function ConversationHeader({
         <div className="message-time-slot" ref={onTimeControlMount} />
       </div>
       {archiveTitle ? (
-        <span className="messenger-archive-title">{archiveTitle}</span>
+        <span className="messenger-archive-title">
+          <span className="archive-kicker">보관된 대화</span>
+          <span className="archive-name" title={archiveTitle}>{archiveTitle}</span>
+        </span>
       ) : (
         <AssistantIdentity name={name} onOpen={onSettings} appearance={appearance ?? defaultAppearance} working={working} />
       )}
       <div className="header-actions">
-        <Status connected={connected} />
+        <Status presence={presence} />
         <button
           type="button"
           className={`computer-trigger ${computerOpen ? 'active' : ''}`}

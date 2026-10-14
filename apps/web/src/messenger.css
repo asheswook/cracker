@@ -114,7 +114,31 @@
   white-space: nowrap;
 }
 .messenger-archive-title {
-  align-self: center;
+  justify-self: center;
+  align-self: start;
+  margin-top: var(--s1);
+  min-width: 0;
+  max-width: 100%;
+  display: grid;
+  justify-items: center;
+  gap: 0;
+  padding: 4px 14px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--message-canvas);
+  text-align: center;
+}
+.archive-kicker {
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--muted);
+}
+.archive-name {
+  max-width: 100%;
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -136,6 +160,8 @@
   gap: 0;
   margin-top: 16px;
   min-width: 0;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
 }
 .assistant-shell .message.same-speaker {
   margin-top: 4px;
@@ -273,11 +299,8 @@
   background: var(--message-received);
   border-radius: var(--message-radius);
 }
-.assistant-shell .archive-banner {
-  margin-top: var(--message-header-clearance);
-}
-.assistant-shell .archive-banner ~ .chat .message-column {
-  padding-top: 24px;
+.assistant-shell:has(.messenger-archive-title) {
+  --message-identity-height: 44px;
 }
 .assistant-shell .header-error {
   margin-top: var(--message-header-clearance);
@@ -329,7 +352,7 @@
 }
 @media (prefers-color-scheme: dark) {
   .assistant-shell, html[data-message-canvas='true'] {
-    --message-canvas: #0e0e0e;
+    --message-canvas: #141414;
     --message-ink: #ededed;
     --message-received: rgb(237 237 237 / 8%);
     --message-composer: #212121;
@@ -354,6 +377,11 @@
     transition: none;
   }
 }
+@media (prefers-color-scheme: dark) {
+  .assistant-shell .main-surface {
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 6%);
+  }
+}
 @media (prefers-contrast: more) {
   .assistant-shell .main-surface {
     --message-sent: #b34d00;
@@ -364,4 +392,19 @@
   .assistant-shell .main-surface {
     --message-secondary: #bfbfbf;
   }
+}
+.older-messages {
+  align-self: center;
+  min-height: 36px;
+  margin: 0 0 var(--s4);
+  padding: 0 var(--s4);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--message-canvas);
+  color: var(--muted);
+  font-size: 13px;
+}
+.older-messages:hover {
+  color: var(--ink);
+  background: var(--message-received);
 }

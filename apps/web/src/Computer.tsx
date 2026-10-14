@@ -217,10 +217,10 @@ export function Computer({ vms, connected }: { vms: Vm[]; connected: boolean }) 
           ? '제어권 적용 여부를 확인해 주세요'
           : ownership === 'user'
             ? enabled
-              ? '직접 제어 중입니다'
+              ? '직접 조작 중'
               : screen.live ? '이 기기에서는 화면을 보고 있어요' : '제어권이 있어요 · 화면 연결 대기'
             : ownership === 'agent'
-              ? '어시스턴트가 제어 중입니다'
+              ? '어시스턴트가 조작 중'
               : '제어 상태를 확인하고 있어요';
   const closeKeyboard = () => {
     keyboard.flush(); keyboard.field.current?.blur(); setKeyboardOpen(false);

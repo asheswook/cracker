@@ -3,7 +3,7 @@ import { AssistantAppearance } from './appearance/types';
 export const HeaderAction = z.enum(['menu', 'settings', 'computer', 'time-toggle', 'archive-return']);
 export type HeaderActionName = z.infer<typeof HeaderAction>;
 export const HeaderProps = z.object({
-  name: z.string().max(80), archiveTitle: z.string().max(200).nullable(), connected: z.boolean(),
+  name: z.string().max(80), archiveTitle: z.string().max(200).nullable(), connected: z.boolean(), presence: z.enum(['online', 'computer-offline', 'offline']).optional(),
   computerOpen: z.boolean(), working: z.boolean(), appearance: AssistantAppearance,
   scheme: z.enum(['light', 'dark']), time: z.object({ available: z.boolean(), pinned: z.boolean() }).strict(),
 }).strict();

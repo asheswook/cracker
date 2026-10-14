@@ -18,7 +18,8 @@ import type { Panel } from './AssistantNav';
 import { InspectorHost } from './InspectorHost';
 import { InspectorHeader } from './InspectorHeader';
 import { PanelErrorBoundary } from './PanelErrorBoundary';
-import { Mark, ErrorNotice } from './primitives';
+import { Mark, ErrorNotice, type Presence } from './primitives';
+import { conversationLabel } from './feed-labels';
 import { ConversationHeader } from './ConversationHeader';
 import { errorMessage } from './api';
 import { parseResultLink } from './result-link';
@@ -203,13 +204,15 @@ export function App() {
     setFocusTask(null); setFocusMessage(null); navigation.current++;
     replaceResultAddress(); run(() => client.create());
   };
+  const selectedConversation = state.conversations.find(conversation => conversation.id === state.selected);
+  const archiveLabel = selectedConversation ? conversationLabel(selectedConversation).title : '이전 대화';
+  const presence: Presence = !state.connected ? 'offline' : state.vms.length && !state.vms.some(vm => vm.online) ? 'computer-offline' : 'online';
   const independentHeader = useIndependentHeader({
     scope: `${state.workspace ?? 'none'}:${state.selected ?? 'none'}`,
     visible: state.phase === 'ready' && !menu && !panel && !reserved,
-    props: { name: state.persona.name, appearance: state.appearance, connected: state.connected,
+    props: { name: state.persona.name, appearance: state.appearance, connected: state.connected, presence,
       working: assistantWorking, computerOpen: panel === 'computer',
-      archiveTitle: state.selected && state.selected !== state.assistantId
-        ? state.conversations.find(conversation => conversation.id === state.selected)?.title ?? '이전 대화' : null },
+      archiveTitle: state.selected && state.selected !== state.assistantId ? archiveLabel : null },
   }, { menu: openMenu, settings: () => selectPanel('settings'), computer: () => selectPanel('computer'), 'archive-return': returnToAssistant });
   useEffect(() => () => panelTransition()?.cancel(), [state.workspace, state.selected]);
   const headerError = actionError || nativeRefreshError || independentHeader.error;
@@ -222,7 +225,7 @@ export function App() {
     );
   if (state.phase === 'login') return <Connect />;
   const archive = !!state.selected && state.selected !== state.assistantId;
-  const title = state.conversations.find((c) => c.id === state.selected)?.title ?? '이전 대화';
+  const title = archiveLabel;
 
   return (
     <HeaderTimeContext.Provider value={independentHeader.registerTime}>
@@ -246,7 +249,7 @@ export function App() {
       <main className="main-surface">
         {!independentHeader.active && <ConversationHeader name={state.persona.name} archiveTitle={archive ? title : undefined}
           appearance={state.appearance} working={assistantWorking}
-          connected={state.connected} computerOpen={panel === 'computer'} onMenu={openMenu}
+          presence={presence} computerOpen={panel === 'computer'} onMenu={openMenu}
           onSettings={() => selectPanel('settings')} onComputer={() => selectPanel('computer')}
           onTimeControlMount={setTimeControlRoot} />}
         {archive && <ArchiveBanner onReturn={returnToAssistant} placeholder={independentHeader.active} />}

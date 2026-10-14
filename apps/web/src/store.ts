@@ -72,6 +72,9 @@ export class ClientStore {
   private histories = new Map<Id, Message[]>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private messageTimer: ReturnType<typeof setInterval> | null = null;
+  private ticks = 0;
+  private expectingReplyUntil = 0;
+  private visibilityListener: (() => void) | null = null;
   private handoffTimer: ReturnType<typeof setTimeout> | null = null;
   private cacheTimer: ReturnType<typeof setTimeout> | null = null;
   private sessionRetry: ReturnType<typeof setTimeout> | null = null;
@@ -174,7 +177,16 @@ export class ClientStore {
     const epoch = this.epoch;
     await this.refresh();
     if (epoch !== this.epoch) return;
-    this.timer = setInterval(() => void this.refresh(), 3000);
+    this.timer = setInterval(() => {
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      const busy = Date.now() < this.expectingReplyUntil || this.value.tasks.some(task => ['queued', 'running', 'waiting', 'pausing', 'cancelling'].includes(task.state));
+      this.ticks = (this.ticks + 1) % 10;
+      if (hidden ? this.ticks === 0 : busy || this.ticks % 2 === 0) void this.refresh();
+    }, 3000);
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function' && !this.visibilityListener) {
+      this.visibilityListener = () => { if (document.visibilityState === 'visible') void this.refresh(); };
+      document.addEventListener('visibilitychange', this.visibilityListener);
+    }
     this.messageTimer = setInterval(() => void this.refreshActiveMessages(), 500);
   }
   async login(token: string) {
@@ -197,6 +209,8 @@ export class ClientStore {
     this.sessionRetry = null;
     this.sessionRequest = null;
     this.sessionAttempts = 0;
+    if (this.visibilityListener && typeof document !== 'undefined' && typeof document.removeEventListener === 'function') document.removeEventListener('visibilitychange', this.visibilityListener);
+    this.visibilityListener = null;
     if (this.timer) clearInterval(this.timer);
     if (this.messageTimer) clearInterval(this.messageTimer);
     this.timer = null;
@@ -339,7 +353,7 @@ export class ClientStore {
   private async refreshActiveMessages() {
     const id = this.value.selected;
     if (!id || this.value.phase !== 'ready' || (typeof document !== 'undefined' && document.visibilityState === 'hidden') ||
-      (!this.value.replyHandoff && !this.value.tasks.some(task => task.conversation_id === id && ['queued', 'running'].includes(task.state)))) return;
+      (!this.value.replyHandoff && Date.now() > this.expectingReplyUntil && !this.value.tasks.some(task => task.conversation_id === id && ['queued', 'running'].includes(task.state)))) return;
     const epoch = this.epoch, selection = this.selectionRevision;
     try {
       await this.sync(id);
@@ -449,7 +463,8 @@ export class ClientStore {
           attachment_ids: pending.attachments?.map((a) => a.id),
         },
       });
-      if (epoch === this.epoch) await this.sync(pending.conversation_id);
+      this.expectingReplyUntil = Date.now() + 15000;
+      if (epoch === this.epoch) { await this.sync(pending.conversation_id); void this.refresh(); }
     } catch (e) {
       if (epoch === this.epoch) {
         this.patch({

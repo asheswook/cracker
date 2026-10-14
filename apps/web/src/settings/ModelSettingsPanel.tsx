@@ -304,10 +304,7 @@ export function ModelSettingsPanel({ vms, onComputer }: { readonly vms: readonly
   const vm = vms.find((item) => item.id === selected) ?? vms[0];
   return (
     <div className="model-settings-panel">
-      <div className="settings-intro">
-        <h2>모델</h2>
-        <p>어시스턴트가 사용할 모델과 연결을 선택하세요.</p>
-      </div>
+      <p className="settings-intro">새로 시작하는 작업에 쓸 모델을 골라요.</p>
       {!vm ? (
         <Empty icon={<Monitor size={24} />} title="컴퓨터를 연결해 주세요">
           등록된 컴퓨터가 있어야 모델을 설정할 수 있어요.

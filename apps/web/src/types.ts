@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { ReplyHandoffState } from '../../../packages/protocol/composing';
 export const Id = z.string().uuid().brand<'Id'>();
 export type Id = z.infer<typeof Id>;
-export const Conversation = z.object({ id: Id, title: z.string(), created_at: z.string() });
+export const Conversation = z.object({ id: Id, title: z.string(), created_at: z.string(), preview: z.string().nullable().optional(), last_message_at: z.string().nullable().optional(), message_count: z.number().int().optional() });
 export type Conversation = z.infer<typeof Conversation>;
 export const Persona = z.object({ name: z.string(), role: z.string(), style: z.string() });
 export type Persona = z.infer<typeof Persona>;
@@ -50,6 +50,7 @@ export const Vm = z.object({
   name: z.string(),
   last_seen_at: z.string().nullable(),
   control_state: z.enum(['agent', 'user', 'switching', 'unknown']),
+  online: z.boolean().default(true),
 });
 export type Vm = z.infer<typeof Vm>;
 export const Schedule = z.object({

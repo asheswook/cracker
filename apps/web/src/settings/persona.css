@@ -31,14 +31,15 @@
   box-shadow: var(--shadow-float);
 }
 .onboarding-heading {
-  display: flex;
-  gap: 16px;
-  align-items: center;
+  display: grid;
+  gap: 4px;
+  margin-bottom: 20px;
 }
 .onboarding-heading h1 {
-  margin: 4px 0 0;
-  font-size: 26px;
-  letter-spacing: -0.04em;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
 .onboarding-heading .eyebrow {
   font-size: 11px;
@@ -47,8 +48,9 @@
 .onboarding-intro {
   font-size: 14px;
   color: var(--muted);
-  line-height: 1.65;
-  margin: 20px 0;
+  line-height: 1.6;
+  margin: 0;
+  word-break: keep-all;
 }
 .persona-onboarding fieldset {
   border: 0;
@@ -129,7 +131,7 @@
     padding: 20px;
   }
   .onboarding-heading h1 {
-    font-size: 20px;
+    font-size: 17px;
   }
 }
 .persona-onboarding textarea {

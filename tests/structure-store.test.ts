@@ -223,5 +223,5 @@ test('a user reply target becomes a confirmed explicit anchor that automatic edg
  const corpus=await readStructureCorpus(sql,f.principal,f.run,reply);
  expect(corpus.edges.find(e=>e.child_exchange_id===child.id&&e.role==='primary')?.target_exchange_id).toBe(parent.id);
  const plain=await f.message('답글 아님'),plainExchange=await ensureExchange(sql,f.actor,plain);
- expect((await sql`SELECT count(*)::int n FROM assistant.semantic_exchange_edges WHERE workspace_id=${f.workspace} AND child_exchange_id=${plainExchange.id}`)[0]?.n).toBe(0);
+ expect((await sql`SELECT count(*)::int n FROM assistant.semantic_exchange_edges WHERE workspace_id=${f.workspace} AND child_exchange_id=${plainExchange.id}`)[0]?.['n']).toBe(0);
 });

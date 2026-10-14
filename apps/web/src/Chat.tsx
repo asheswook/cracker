@@ -8,7 +8,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { useReducedMotion } from './useReducedMotion';
 import { newTailMessageKeys } from './messageArrivals';
 import type { MessageArrivalSnapshot } from './messageArrivals';
-import { ArrowUp, Globe, Code2, Files } from 'lucide-react';
+import { ArrowUp } from 'lucide-react';
 import { LatestButton } from './LatestButton';
 import { useComposerPaste } from './useComposerPaste';
 import { AttachmentPicker, DraftAttachments, draftAttachmentViews } from './Attachments';
@@ -19,7 +19,7 @@ import { COMPOSER_TEXT_LIMIT, type ComposerDraft } from './native-composer';
 import { isNativeApp, nativeNotificationState, NativeBridgeError } from './native-bridge';
 import type { Message, Pending, Id, Task, Vm,ReplyComposing, ReplyHandoff } from './types';
 import { client } from './store';
-import { Mark, IconButton, ErrorNotice, Button } from './primitives';
+import { IconButton, ErrorNotice, Button } from './primitives';
 type ReadingPosition = Readonly<{
   top: number;
   message: string | null;
@@ -28,11 +28,6 @@ type ReadingPosition = Readonly<{
   cursor: number | null;
   unread: boolean;
 }>;
-const suggestions = [
-  { icon: Globe, text: '자료를 찾아 정리해 줘' },
-  { icon: Code2, text: '함께 코드 살펴보기' },
-  { icon: Files, text: '반복되는 일 맡기기' },
-];
 export const Chat = memo(function Chat({
   messages,
   syncedCursor,
@@ -71,6 +66,8 @@ export const Chat = memo(function Chat({
   const files = useAttachmentDrafts(client.snapshot().workspace, selected);
   const [addingFiles, setAddingFiles] = useState(false);
   const [nativeMac, setNativeMac] = useState(false);
+  const [finePointer] = useState(() => typeof matchMedia === 'function' && matchMedia('(hover: hover) and (pointer: fine)').matches);
+  const enterSends = nativeMac || (finePointer && !isNativeApp());
   useEffect(() => {
     let alive = true;
     if (isNativeApp()) void nativeNotificationState()
@@ -504,30 +501,8 @@ export const Chat = memo(function Chat({
             </div>
           ) : count === 0 ? (
             <div className="welcome">
-              <Mark />
-              <div className="eyebrow">{assistantName}</div>
-              <h1>{readOnly ? '저장된 메시지가 없어요' : '편하게 이야기해 주세요'}</h1>
-              <p>
-                해야 할 일부터, 문득 떠오른 생각까지.
-                <br />
-                편하게 이야기해 주세요.
-              </p>
-              {!readOnly && (
-                <div className="suggestions">
-                  {suggestions.map(({ icon: Icon, text }) => (
-                    <button
-                      key={text}
-                      onClick={() => {
-                        setDraft(text);
-                        focusEditor();
-                      }}
-                    >
-                      <Icon size={16} />
-                      {text}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <h1>{readOnly ? '이 대화에는 메시지가 없어요' : `${assistantName}에게 무엇이든 맡겨 보세요`}</h1>
+              {!readOnly && <p>조사, 정리, 반복 업무까지. 하던 일은 맡긴 일에서 이어서 볼 수 있어요.</p>}
             </div>
           ) : (
             <MessageList
@@ -537,6 +512,7 @@ export const Chat = memo(function Chat({
               arrivals={arrivals}
               assistantName={assistantName}
               timeControlRoot={timeControlRoot}
+              keep={focusMessage ?? focusTask ?? null}
             />
           )}
           {!readOnly && <WorkingBubble
@@ -567,7 +543,7 @@ export const Chat = memo(function Chat({
         )}
         {readOnly ? (
           <p className="archive-footnote">
-            기록은 그대로 보관돼요. 새 메시지는 어시스턴트 대화에서 보낼 수 있어요.
+            보관된 대화예요. 이어서 말하려면 지금 대화로 돌아가세요.
           </p>
         ) : (
           <div className="composer-region">
@@ -600,17 +576,17 @@ export const Chat = memo(function Chat({
                   ref={input}
                   disabled={!selected}
                   aria-label="메시지"
-                  aria-description={nativeMac
-                    ? 'Enter로 전송하고 Shift+Enter로 줄바꿈합니다. 진행 중에도 메시지를 보낼 수 있어요.'
-                    : 'Enter로 줄바꿈하고 전송 버튼으로 메시지를 보냅니다. 진행 중에도 메시지를 보낼 수 있어요.'}
-                  enterKeyHint={nativeMac ? 'send' : 'enter'}
+                  aria-description={enterSends
+                    ? 'Enter로 보내고 Shift+Enter로 줄을 바꿔요. 작업 중에도 보낼 수 있어요.'
+                    : '전송 버튼으로 보내요. 작업 중에도 보낼 수 있어요.'}
+                  enterKeyHint={enterSends ? 'send' : 'enter'}
                   placeholder={`${assistantName}에게 메시지 보내기`}
                   value={draft}
                   rows={1}
                   onChange={(e) => setDraft(e.target.value)}
                   onPaste={paste}
                   onKeyDown={(event) => {
-                    if (!nativeMac || event.defaultPrevented || event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey
+                    if (!enterSends || event.defaultPrevented || event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey
                       || composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
                     event.preventDefault();
                     if (!event.repeat) void send();

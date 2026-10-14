@@ -41,7 +41,7 @@ function Source({ hit, session }: { readonly hit: Hit; readonly session: WorkSes
     <summary>원문 보기</summary>
     {loading && <p role="status">원문을 불러오는 중…</p>}
     {error && <div role="alert"><p>{error}</p><Button className="small-button" onClick={() => setRetry(value => value + 1)}>원문 다시 시도</Button></div>}
-    {source && <p className="search-source">{source.message.content || '텍스트 없이 첨부된 파일입니다.'}</p>}
+    {source && <p className="search-source">{source.message.content || '텍스트 없이 파일만 보냈어요.'}</p>}
   </details>;
 }
 
@@ -108,7 +108,7 @@ export function WorkSearch({ query, filter, onSource, session: suppliedSession }
         }} />
       <small className="search-conversation">{hit.conversation_title}</small>
       <p className="search-source search-excerpt">{hit.snippet}</p>
-      {hit.file_text_truncated && <small>파일 앞부분에서 찾은 내용입니다.</small>}
+      {hit.file_text_truncated && <small>파일 앞부분에서 찾았어요.</small>}
       <Source hit={hit} session={session} />
       <div className="work-actions">
         <WorkOpenAction onOpen={() => onSource(Id.parse(hit.conversation_id), Id.parse(hit.source_message_id))}>메시지 보기</WorkOpenAction>

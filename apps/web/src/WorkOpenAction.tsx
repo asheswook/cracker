@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUpRight } from 'lucide-react';
 import { Button } from './primitives';
 import { errorMessage } from './api';
 
@@ -21,8 +20,8 @@ export function WorkOpenAction({ onOpen, children }: {
     } finally { if (mounted.current) setBusy(false); }
   };
   return <div className="work-open-action">
-    <Button className="small-button" busy={busy} onClick={() => void open()}>
-      <ArrowUpRight size={13} />{busy ? '불러오는 중…' : error ? `${children} 다시 시도` : children}
+    <Button className="link-button" busy={busy} onClick={() => void open()}>
+      {busy ? '여는 중…' : error ? `${children} 다시 시도` : children}
     </Button>
     {error && <p role="alert">{error}</p>}
   </div>;

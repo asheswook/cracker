@@ -35,7 +35,7 @@ import { ResponseAttribution } from './response-attribution.ts';
 const Context = z.object({ messages: z.array(Message) });
 function utcInstruction():string{return `Current UTC time: ${new Date().toISOString()}. Resolve relative future scheduling from this current time unless the user explicitly specifies a source-time anchor. Use the user timezone if known; otherwise ask when local wall-clock interpretation matters.`;}
 export type ControlTiming={readonly phase:"tick"|"extensions"|"preflush"|"poll"|"command"|"local_barrier"|"event_delivery"|"postflush";readonly command_id?:string;readonly event_kind?:DaemonEvent["kind"];readonly started_at:string;readonly duration_ms:number;readonly outcome:"completed"|"failed"};
-export type RuntimeTiming = { readonly kind:"provider"|"tool"; readonly run_id:string; readonly tool_name?:string; readonly input_image_count?:number; readonly output_count?:number; readonly duration_ms:number; readonly outcome:"completed"|"failed" };
+export type RuntimeTiming = { readonly kind:"provider"|"tool"|"semantic_select"|"structure_reference"; readonly run_id:string; readonly tool_name?:string; readonly input_image_count?:number; readonly output_count?:number; readonly duration_ms:number; readonly outcome:"completed"|"failed" };
 const DesktopFailureCode=z.enum(["desktop_busy","desktop_session_unbound","desktop_linux_required","desktop_session_closed","desktop_output_limit","desktop_protocol_invalid","desktop_worker_failed","desktop_worker_exited","desktop_worker_missing","desktop_write_failed","desktop_aborted","desktop_timeout","desktop_cleanup_failed","desktop_termination_failed","desktop_termination_unconfirmed","desktop_input_release_failed","desktop_directory_cleanup_failed","desktop_input_barrier_failed","desktop_guardian_failed","desktop_guardian_start_timeout","desktop_guardian_protocol_invalid","desktop_guardian_cleanup_timeout","desktop_guardian_termination_failed"]);
 export type RuntimeFailure=Partial<InfrastructureFailure>&{readonly event:"runtime.failure";readonly run_id:string;readonly type:"desktop"|"validation"|"syntax"|"runtime"|"unexpected";readonly code:string;readonly validation?:ToolArgumentDiagnostic;readonly repair?:{readonly attempt:number;readonly outcome:"regenerating"|"exhausted"}};
 export function runtimeFailure(runId:string,error:unknown):RuntimeFailure{
@@ -333,12 +333,12 @@ export class Runtime {
         const appendStructure=async(reference:ResponseInputItem|null)=>{
           const existing=reference&&'content'in reference&&typeof reference.content==='string'?reference.content:null;
           this.config.journal.structure.packet(assignment,messageId,existing);
-          if(assignment.semantic_structure_mode==='on')input.push(await this.structureQueue.reference(assignment.run_id,messageId,existing,signal,this.config.semanticReferenceCombinedMaxBytes));
+          if(assignment.semantic_structure_mode==='on'){const started=performance.now();input.push(await this.structureQueue.reference(assignment.run_id,messageId,existing,signal,this.config.semanticReferenceCombinedMaxBytes));this.config.onTiming?.({kind:'structure_reference',run_id:assignment.run_id,duration_ms:Math.round(performance.now()-started),outcome:'completed'});}
         };
         if (!semantic) {await appendStructure(null);return;}
         let reference:ResponseInputItem;
         for (let attempt = 0; ; attempt++) {
-          try { reference=await semantic.select(messageId, signal);break; }
+          try { const started=performance.now(); reference=await semantic.select(messageId, signal); this.config.onTiming?.({kind:'semantic_select',run_id:assignment.run_id,duration_ms:Math.round(performance.now()-started),outcome:'completed'}); break; }
           catch (error) {
             if (signal.aborted || !(error instanceof Error)) throw error;
             const diagnostic = await semanticMetadataDiagnostic(error);

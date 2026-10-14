@@ -1,4 +1,4 @@
-import { memo, useContext, useLayoutEffect, useMemo, useRef } from 'react';
+import { memo, useContext, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { MessageTimeControl } from './MessageTimeControl';
 import { HeaderTimeContext } from './header-time-context';
 import { AnimatePresence, m as Motion } from 'motion/react';
@@ -9,6 +9,7 @@ import { Attachments } from './Attachments';
 import { MessageBubble } from './MessageBubble';
 import { SystemEvent } from './SystemEvent';
 import { systemMessageContent } from './system-message';
+import { dayDividers } from './feed-labels';
 import { client } from './store';
 import { useMessageTimeReveal } from './useMessageTimeReveal';
 import './message-time-reveal.css';
@@ -22,6 +23,7 @@ const dayFormatter = new Intl.DateTimeFormat('ko-KR', {
 function changedDay(current: string, previous: string | undefined): boolean {
   return !previous || new Date(current).toDateString() !== new Date(previous).toDateString();
 }
+const INITIAL_WINDOW = 120;
 function DayDivider({ date }: { readonly date: string }) {
   return (
     <div className="day-divider">
@@ -36,6 +38,7 @@ export const MessageList = memo(function MessageList({
   arrivals,
   assistantName = 'Assistant',
   timeControlRoot = null,
+  keep = null,
 }: {
   messages: Message[];
   pending: Pending[];
@@ -43,6 +46,7 @@ export const MessageList = memo(function MessageList({
   arrivals: ReadonlySet<string>;
   assistantName?: string;
   timeControlRoot?: HTMLElement | null;
+  keep?: string | null;
 }) {
   const times = useMessageTimeReveal(reduced, messages[0]?.conversation_id ?? pending[0]?.conversation_id);
   const registerTime = useContext(HeaderTimeContext);
@@ -53,7 +57,20 @@ export const MessageList = memo(function MessageList({
     return () => registerTime?.(null);
   }, [registerTime, times.pinned, messages.length]);
   const latestUserId = [...messages].reverse().find((message) => message.role === 'user')?.id;
-  const visibleMessages = useMemo(() => messages.filter(message => systemMessageContent(message) !== null), [messages]);
+  const conversation = messages[0]?.conversation_id ?? null;
+  const [windowed, setWindowed] = useState({ conversation, size: INITIAL_WINDOW });
+  const size = windowed.conversation === conversation ? windowed.size : INITIAL_WINDOW;
+  const shown = useMemo(() => messages.filter(message => systemMessageContent(message) !== null), [messages]);
+  const keepIndex = keep ? shown.findIndex(message => message.id === keep || message.task_id === keep) : -1;
+  const start = Math.max(0, Math.min(shown.length - size, keepIndex >= 0 ? keepIndex - 20 : shown.length));
+  const visibleMessages = useMemo(() => shown.slice(start), [shown, start]);
+  const hidden = start;
+  const dividers = useMemo(() => {
+    const all = new Set(dayDividers(shown));
+    const first = shown[start];
+    if (first) all.add(first.id);
+    return all;
+  }, [shown, start]);
   return (
     <Motion.div
       ref={times.ref}
@@ -62,6 +79,11 @@ export const MessageList = memo(function MessageList({
         if (event.key === 'Escape') times.close();
       }}
     >
+      {hidden > 0 && (
+        <button type="button" className="older-messages" onClick={() => setWindowed({ conversation, size: size + 200 })}>
+          이전 메시지 {hidden.toLocaleString('ko-KR')}개 더 보기
+        </button>
+      )}
       {messages.length > 0 && timeControlRoot && createPortal(
           <MessageTimeControl pinned={times.pinned} onToggle={times.toggle} />,
           timeControlRoot,
@@ -72,7 +94,7 @@ export const MessageList = memo(function MessageList({
             const systemContent = systemMessageContent(m);
             if (systemContent === null) return [];
             const previous = visibleMessages[index - 1];
-            const newDay = changedDay(m.created_at, previous?.created_at);
+            const newDay = dividers.has(m.id);
             return [
               ...(newDay ? [<DayDivider key={`day-${m.id}`} date={m.created_at} />] : []),
               <Motion.article

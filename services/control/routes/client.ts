@@ -31,9 +31,13 @@ export function clientRoutes(sql: Database) {
   app.get("/conversations", async (c) =>
     c.json({
       conversations: z
-        .array(Conversation)
+        .array(Conversation.extend({ preview: z.string().nullable(), last_message_at: z.string().nullable(), message_count: z.coerce.number().int() }))
         .parse(
-          await sql`SELECT * FROM assistant.conversations WHERE workspace_id=${c.get("principal").workspace_id} ORDER BY created_at`,
+          await sql`SELECT c.*,
+            (SELECT left(regexp_replace(m.content,'\s+',' ','g'),120) FROM assistant.messages m WHERE m.workspace_id=c.workspace_id AND m.conversation_id=c.id AND m.role='user' AND btrim(m.content)<>'' ORDER BY m.sequence LIMIT 1) AS preview,
+            (SELECT max(m.created_at) FROM assistant.messages m WHERE m.workspace_id=c.workspace_id AND m.conversation_id=c.id AND m.role IN ('user','assistant')) AS last_message_at,
+            (SELECT count(*) FROM assistant.messages m WHERE m.workspace_id=c.workspace_id AND m.conversation_id=c.id AND m.role IN ('user','assistant')) AS message_count
+            FROM assistant.conversations c WHERE c.workspace_id=${c.get("principal").workspace_id} ORDER BY c.created_at`,
         ),
     }),
   );
@@ -149,10 +153,11 @@ export function clientRoutes(sql: Database) {
             name: z.string(),
             last_seen_at: z.string().nullable(),
             control_state: z.enum(["agent", "user", "switching", "unknown"]),
+            online: z.boolean(),
           }),
         )
         .parse(
-          await sql`SELECT * FROM assistant.vms WHERE workspace_id=${c.get("principal").workspace_id}`,
+          await sql`SELECT *,COALESCE(last_seen_at>now()-interval '45 seconds',false) AS online FROM assistant.vms WHERE workspace_id=${c.get("principal").workspace_id} ORDER BY last_seen_at DESC NULLS LAST,id`,
         ),
     }),
   );

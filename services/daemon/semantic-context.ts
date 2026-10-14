@@ -25,16 +25,27 @@ export class SemanticContexts {
   private path(action: string): string { return `${this.scope.endpoint ?? `v1/daemon/context/${this.scope.runId}/semantic`}/${action}`; }
   async select(messageId: string, signal: AbortSignal): Promise<ResponseInputItem> {
     const primary = await this.index(messageId, signal);
-    return this.reference(primary, signal, messageId);
+    const started = performance.now();
+    const reference = await this.reference(primary, signal, messageId);
+    if (process.env["RUNTIME_TIMING"] === "true") console.info(JSON.stringify({ event: "semantic.timing", step: "reference", ms: Math.round(performance.now() - started) }));
+    return reference;
   }
   async index(messageId: string, signal: AbortSignal): Promise<z.infer<typeof SemanticContext> | null> {
     const { reference: _reference, ...withoutReference } = this.state; this.state = withoutReference;
     const request = { message_id: messageId, mode: this.scope.mode ?? "live" };
+    const lap = (step: string, started: number) => { if (process.env["RUNTIME_TIMING"] === "true") console.info(JSON.stringify({ event: "semantic.timing", step, ms: Math.round(performance.now() - started) })); };
+    let t = performance.now();
     let prepared = PrepareResult.parse(await this.scope.http.post(this.path("prepare"), { json: request, signal }).json());
+    lap("prepare", t);
     while (prepared.retention_context.sources.length) {
+      t = performance.now();
       const assessment = await this.model.retention(prepared.retention_context, signal);
+      lap("retention_model", t);
+      t = performance.now();
       SemanticRetentionResult.parse(await this.scope.http.post(this.path("retention"), { json: { ...request, assessment }, signal }).json());
+      lap("retention_record", t); t = performance.now();
       prepared = PrepareResult.parse(await this.scope.http.post(this.path("prepare"), { json: request, signal }).json());
+      lap("prepare_again", t);
     }
     if (prepared.decision?.model === "retrieval-unavailable") throw new SemanticIndexError("retrieval_unavailable");
     const { final_cursor: _final, ...previous } = this.state;
@@ -55,7 +66,9 @@ export class SemanticContexts {
       if (suggested) choice = { kind: "existing", context_id: suggested.context_id, expected_context_revision: suggested.revision };
       else {
         try {
+          t = performance.now();
           const result = await this.model.route(prepared, signal);
+          lap("route_model", t);
           const existing = prepared.candidates.find(candidate => candidate.context_id === result.context_id);
           choice = existing ? { kind: "existing", context_id: existing.context_id, expected_context_revision: existing.revision } : { kind: "new", title: result.title, scope: result.scope };
           status = result.confirmed && prepared.decision?.outcome !== "uncertain" ? "confirmed" : "provisional";
@@ -72,11 +85,13 @@ export class SemanticContexts {
       }
       const retrieval = choice.kind === "existing" ? prepared.candidates.find(candidate => candidate.context_id === choice.context_id)?.retrieval : undefined;
       if (choice.kind === "existing" && retrieval) { this.rememberNotes(choice.context_id, retrieval.note_ids); this.scope.persist?.(); }
+      t = performance.now();
       const result = LinkResult.parse(await this.scope.http.post(this.path("link"), { json: {
         operation_id: crypto.randomUUID(), message_id: messageId, mode: this.scope.mode ?? "live", source_sha256: prepared.source.sha256,
         expected_link_revision: prepared.linked?.revision ?? 0, choice, status, evidence: [{ message_id: messageId, quote }],
         ...retrieval,
       }, signal }).json());
+      lap("link", t);
       context = result.context; selectionStatus = result.link.status;
     }
     this.state = { ...this.state, reference: { message_id: messageId, source_sha256: prepared.source.sha256, primary_retrieval: context.retrieval, primary_context_id: context.context_id, selection: { status: selectionStatus, uncertain: prepared.decision?.outcome === "uncertain" || selectionStatus !== "confirmed" }, alternatives: secondaryReferenceContexts(prepared.candidates, context.context_id).map(candidate => ({ context_id: candidate.context_id, ...candidate.retrieval })) } };

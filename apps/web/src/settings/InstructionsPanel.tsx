@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pencil, FileText, RefreshCw } from 'lucide-react';
+import { Pencil, RefreshCw } from 'lucide-react';
 import { errorMessage } from '../api';
 import { LoadingSkeleton } from '../LoadingSkeleton';
 import { Button, ErrorNotice } from '../primitives';
@@ -42,11 +42,7 @@ export function InstructionsPanel() {
   }, [load]);
   return (
     <section className="instructions-panel">
-      <div className="settings-intro">
-        <FileText size={22} />
-        <h2>페르소나</h2>
-        <p>어떤 방식으로 함께 일할지 알려 주세요.</p>
-      </div>
+      <p className="settings-intro">이름과 말투, 일하는 방식을 정해요.</p>
       {error && (
         <>
           <ErrorNotice>{error}</ErrorNotice>

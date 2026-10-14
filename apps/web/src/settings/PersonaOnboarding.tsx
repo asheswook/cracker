@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { HTTPError } from 'ky';
-import { ArrowUpRight, Check } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { read, http, errorMessage } from '../api';
 import { client } from '../store';
-import { Button, ErrorNotice, Mark } from '../primitives';
+import { Button, ErrorNotice } from '../primitives';
 import { Instructions, Persona } from './types';
 import type { Id } from '../types';
 import './persona.css';
@@ -139,7 +139,7 @@ export function PersonaOnboarding({ workspace }: { readonly workspace: Id }) {
   if (dismissed)
     return (
       <button className="onboarding-resume" onClick={() => persist(draft, false)}>
-        어시스턴트 소개 이어서 설정하기 <ArrowUpRight size={14} />
+        어시스턴트 설정 이어서 하기
       </button>
     );
   const skip = async () => {
@@ -181,17 +181,9 @@ export function PersonaOnboarding({ workspace }: { readonly workspace: Id }) {
   return (
     <section ref={formRegion} className="persona-onboarding" aria-label="어시스턴트 소개">
       <div className="onboarding-heading">
-        <Mark />
-        <div>
-          <span className="eyebrow">처음 만나는 나의 어시스턴트</span>
-          <h1>어떻게 함께할까요?</h1>
-        </div>
+        <h1>어시스턴트 설정</h1>
+        <p className="onboarding-intro">이름과 말투를 정해 주세요. 나중에 설정에서 바꿀 수 있어요.</p>
       </div>
-      <p className="onboarding-intro">
-        이름과 일하는 방식을 정해 주세요.
-        <br />
-        언제든 설정에서 바꿀 수 있어요.
-      </p>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -254,10 +246,10 @@ export function PersonaOnboarding({ workspace }: { readonly workspace: Id }) {
         {stale && !latest && <Button type="button" busy={busy} onClick={() => void compare()}>최신 설정과 비교</Button>}
         <footer>
           <Button type="button" disabled={busy || stale} onClick={() => void skip()}>
-            나중에 할게요
+            나중에
           </Button>
           <Button type="submit" className="primary" busy={busy} disabled={stale || !draft.name.trim()}>
-            함께 시작하기 <ArrowUpRight size={15} />
+            저장
           </Button>
         </footer>
       </form>

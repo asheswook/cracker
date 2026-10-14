@@ -6,6 +6,7 @@ import { WorkSearch } from './WorkSearch';
 import { compareNewestCreated } from './recent-order';
 import { ScheduleObjective } from './ScheduleObjective';
 import { TaskStatus } from './TaskStatus';
+import { taskReason } from './task-reason';
 import { WorkOpenAction } from './WorkOpenAction';
 import { createWorkSession } from './work-session';
 import type { WorkFilter, WorkSession } from './work-session';
@@ -117,7 +118,7 @@ export function WorkPanel({
               </div>
               <ScheduleObjective objective={task.objective} open={session.disclosures.has(task.id)} onToggle={open => { if (open) session.disclosures.add(task.id); else session.disclosures.delete(task.id); }} />
               <TaskStatus task={task} />
-              {task.reason && task.state !== 'failed' && task.state !== 'unknown' && <p>{task.reason}</p>}
+              {task.state === 'cancelled' && taskReason(task.reason) && <p className="task-note">{taskReason(task.reason)?.text}</p>}
               <div className="work-actions">
                 {task.state === 'succeeded' && <WorkOpenAction onOpen={() => onOpen(task, undefined, 'reply')}>답변 보기</WorkOpenAction>}
                 <WorkOpenAction onOpen={() => onOpen(task, undefined, 'request')}>요청 보기</WorkOpenAction>

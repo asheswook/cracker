@@ -35,11 +35,18 @@ export function Mark({ small = false }: { small?: boolean }) {
     </span>
   );
 }
-export function Status({ connected }: { connected: boolean }) {
+export type Presence = 'online' | 'computer-offline' | 'offline';
+const presenceLabel: Record<Presence, string> = { online: '연결됨', 'computer-offline': '컴퓨터 꺼짐', offline: '연결 끊김' };
+const presenceTitle: Record<Presence, string> = {
+  online: '어시스턴트 컴퓨터가 응답하고 있어요.',
+  'computer-offline': '어시스턴트 컴퓨터가 응답하지 않아요. 보낸 메시지는 컴퓨터가 켜지면 처리돼요.',
+  offline: '서버에 연결하지 못했어요. 네트워크를 확인해 주세요.',
+};
+export function Status({ presence }: { presence: Presence }) {
   return (
-    <span className={`status ${connected ? 'online' : ''}`}>
+    <span className={`status ${presence}`} role="status" title={presenceTitle[presence]}>
       <i />
-      {connected ? '연결됨' : '연결 확인 중'}
+      {presenceLabel[presence]}
     </span>
   );
 }
@@ -82,8 +89,8 @@ export function Showcase() {
       <p>실제 컴포넌트 상태 · 개발 전용</p>
       <div className="showcase-row">
         <Mark />
-        <Status connected />
-        <Status connected={false} />
+        <Status presence="online" />
+        <Status presence="offline" />
       </div>
       <div className="showcase-row">
         <Button className="primary">
