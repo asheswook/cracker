@@ -2,6 +2,7 @@ import { negotiateHybrid } from './native-hybrid';
 import { LazyMotion } from 'motion/react';
 import { createRoot } from 'react-dom/client';
 import { features } from './motionFeatures';
+import './tokens.css';
 import './styles.css';
 import './mobile-forms.css';
 const root = document.getElementById('root');

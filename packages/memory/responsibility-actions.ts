@@ -14,8 +14,8 @@ export async function dispatchActions(tx: Transaction, principal: Principal): Pr
       continue;
     }
     if ((await tx`SELECT id FROM assistant.tasks WHERE workspace_id=${principal.workspace_id} AND conversation_id=${row.conversation_id} AND state NOT IN ('cancelled','succeeded','failed') LIMIT 1`)[0]) continue;
-    const task = z.object({ id: z.uuid() }).parse((await tx`INSERT INTO assistant.tasks(workspace_id,conversation_id,objective,state) VALUES(${principal.workspace_id},${row.conversation_id},${row.action_objective},'queued') RETURNING id`)[0]);
-    const message=z.object({id:z.uuid()}).parse((await tx`INSERT INTO assistant.messages(workspace_id,conversation_id,task_id,role,content) VALUES(${principal.workspace_id},${row.conversation_id},${task.id},'system',${row.action_objective}) RETURNING id`)[0]);
+    const task = z.object({ id: z.uuid() }).parse((await tx`INSERT INTO assistant.tasks(workspace_id,conversation_id,objective,state,origin) VALUES(${principal.workspace_id},${row.conversation_id},${row.action_objective},'queued','responsibility') RETURNING id`)[0]);
+    const message=z.object({id:z.uuid()}).parse((await tx`INSERT INTO assistant.messages(workspace_id,conversation_id,task_id,role,content,origin) VALUES(${principal.workspace_id},${row.conversation_id},${task.id},'system',${row.action_objective},'responsibility') RETURNING id`)[0]);
     if(row.skill_id&&row.skill_revision)await bindSkill(tx,{workspace:principal.workspace_id,task:task.id,message:message.id,skill:row.skill_id,revision:row.skill_revision,kind:'scheduled'});
     await tx`UPDATE assistant.responsibility_actions SET state='dispatched',task_id=${task.id},dispatched_at=now() WHERE id=${row.action_id}`;
     await recordEvent(tx, { workspace: principal.workspace_id, kind: "responsibility.dispatched", payload: JSON.stringify({ responsibility_id: row.id, action_id: row.action_id, task_id: task.id }) });

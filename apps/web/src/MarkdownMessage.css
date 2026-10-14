@@ -101,7 +101,7 @@
   padding-inline: var(--s4) var(--s2);
   border-block-end: 1px solid var(--line);
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t-caption);
 }
 .markdown-code-toolbar button {
   border: 0;

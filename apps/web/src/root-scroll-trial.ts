@@ -1,4 +1,5 @@
 import { hybridEnabled } from './native-hybrid';
+import { nativeShellConfiguration } from './native-bridge';
 import './root-scroll-trial.css';
 let active = false;
 let retired = false;
@@ -8,7 +9,9 @@ export function retireRootReader(owner: 'header' | 'footer') {
   setRootScrollActive(false);
 }
 export function rootReaderAvailable() {
-  return !retired && hybridEnabled()
+  // Under the native shell the page keeps its own scroller: WebKit offsets fixed headers when the root
+  // scroll view carries the composer inset, which hides the persona header.
+  return !retired && hybridEnabled() && !nativeShellConfiguration()
     && Boolean(window.webkit?.messageHandlers?.assistantReader);
 }
 export function isRootScrollActive() { return active; }

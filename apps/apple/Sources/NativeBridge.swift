@@ -29,6 +29,18 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
         guard let method = body["method"] as? String else { replyHandler(nil, "Invalid method."); return }
         let notifications = NotificationService.shared
         switch method {
+        case "shellPanel":
+            guard body["version"] as? Int == 1, shell.panel == nil, let name = body["panel"] as? String,
+                  let panel = ShellPanel(webName: name) else { replyHandler(["accepted": false], nil); return }
+            shell.panelRequest = panel
+            replyHandler(["accepted": true], nil)
+        case "shellOpen":
+            guard body["version"] as? Int == 1, shell.panel != nil,
+                  let conversation = body["conversation"] as? String, UUID(uuidString: conversation) != nil,
+                  let target = WebShell.body else { replyHandler(["accepted": false], nil); return }
+            let message = (body["message"] as? String).flatMap { UUID(uuidString: $0) == nil ? nil : $0 }
+            target.openRequest = ShellOpenRequest(conversation: conversation, message: message)
+            replyHandler(["accepted": true], nil)
         case "shellState":
             guard body["version"] as? Int == 1, body["authenticated"] is Bool else { replyHandler(nil, "Invalid shell state."); return }
             shell.receiveShellState(body); replyHandler(NSNull(), nil)

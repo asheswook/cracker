@@ -51,8 +51,8 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
         throw new DomainError("stale_run", "Run cannot emit messages", 409);
       await clearDeliveredComposing(sql,run.id,event.event_id);
       const task = z
-        .object({ conversation_id: z.uuid() })
-        .parse((await sql`SELECT conversation_id FROM assistant.tasks WHERE id=${run.task_id}`)[0]);
+        .object({ conversation_id: z.uuid(), origin: z.enum(["user", "schedule", "responsibility"]) })
+        .parse((await sql`SELECT conversation_id,origin FROM assistant.tasks WHERE id=${run.task_id}`)[0]);
       const attachments = await attachmentReferences(
         sql,
         { workspace: principal.workspace_id, conversation: task.conversation_id },
@@ -64,7 +64,7 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
         .object({ id: z.uuid() })
         .parse(
           (
-            await sql`INSERT INTO assistant.messages(id,workspace_id,conversation_id,task_id,role,content,phase,response_to_message_id,applied_user_ids,output_kind) VALUES(COALESCE(${event.message_id ?? null}::uuid,gen_random_uuid()),${principal.workspace_id},${task.conversation_id},${run.task_id},'assistant',${event.content},${event.phase ?? null},${event.response_to_message_id??null},${sql.array(event.applied_user_ids??[])}::uuid[],${event.output_kind??null}) RETURNING id`
+            await sql`INSERT INTO assistant.messages(id,workspace_id,conversation_id,task_id,role,content,phase,response_to_message_id,applied_user_ids,output_kind,origin) VALUES(COALESCE(${event.message_id ?? null}::uuid,gen_random_uuid()),${principal.workspace_id},${task.conversation_id},${run.task_id},'assistant',${event.content},${event.phase ?? null},${event.response_to_message_id??null},${sql.array(event.applied_user_ids??[])}::uuid[],${event.output_kind??null},${task.origin}) RETURNING id`
           )[0],
         );
       if(event.response_to_message_id||event.applied_user_ids?.length) {

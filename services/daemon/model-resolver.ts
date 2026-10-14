@@ -4,6 +4,7 @@ import { ModelAccess, type ModelBinding, type ModelSelection } from "../../packa
 import { OpenAIProvider, ProviderError, type Provider, type ProviderConfig } from "../../packages/provider/index.ts";
 import { AnthropicProvider } from "../../packages/provider/anthropic.ts";
 import type { ProviderRetryObserver } from '../../packages/provider/retry.ts';
+import { SubscriptionProxy } from "./subscription-proxy.ts";
 
 export type ProviderLease = { readonly provider: Provider; release(): Promise<void> };
 export interface RunModelResolver {
@@ -15,16 +16,20 @@ export type ModelConnections = {
   readonly defaultConfig: ProviderConfig;
   readonly anthropicKey?: string;
   readonly http: KyInstance;
+  readonly subscription?: SubscriptionProxy;
 };
 export class ModelResolver implements RunModelResolver {
-  constructor(private readonly connections: ModelConnections) {}
+  private readonly subscription: SubscriptionProxy;
+  constructor(private readonly connections: ModelConnections) { this.subscription = connections.subscription ?? new SubscriptionProxy(); }
   async advertise(): Promise<void> {
     const config = this.connections.defaultConfig;
-    const selection: ModelSelection = { provider: config.mode === "chatgpt" ? "chatgpt" : "openai", model: config.model, reasoning_effort: config.reasoningEffort ?? null };
+    const selection: ModelSelection = { provider: config.mode === "proxy" ? "subscription" : config.mode === "chatgpt" ? "chatgpt" : "openai", model: config.model, reasoning_effort: config.reasoningEffort ?? null };
     const available: ModelSelection["provider"][] = [];
     if (config.tokenFile && existsSync(config.tokenFile)) available.push("chatgpt");
     if (config.apiKey) available.push("openai");
     if (this.connections.anthropicKey) available.push("anthropic");
+    const catalogue = await this.subscription.listModels().catch(() => []);
+    if (catalogue.length) available.push("subscription");
     await this.connections.http.post("v1/daemon/model-settings/defaults", { json: { selection, available } });
   }
   async forRun(runId: string, signal: AbortSignal, expected?: ModelBinding): Promise<ProviderLease> {
@@ -36,12 +41,15 @@ export class ModelResolver implements RunModelResolver {
   async current(signal: AbortSignal): Promise<ProviderLease> {
     return this.open(ModelAccess.parse(await this.connections.http.get("v1/daemon/model-settings/current", { signal }).json()));
   }
-  private open(access: ModelAccess, runId?: string): ProviderLease {
+  private async open(access: ModelAccess, runId?: string): Promise<ProviderLease> {
     if (!access.binding) return { provider: this.connections.defaultProvider, release: async () => {} };
     const config = this.connections.defaultConfig, selection = access.binding.selection;
     const onRetry:ProviderRetryObserver=decision=>console.warn(JSON.stringify({event:'provider.retry',...(runId?{run_id:runId}:{}),provider:selection.provider,...decision}));
     let provider: Provider;
     switch (selection.provider) {
+      case "subscription":
+        provider = new OpenAIProvider({ mode: "proxy", baseURL: this.subscription.baseURL, apiKey: await this.subscription.clientKey(), model: selection.model, transport: "http", onRetry, ...(selection.reasoning_effort ? { reasoningEffort: selection.reasoning_effort } : {}) });
+        break;
       case "chatgpt":
         if (!config.tokenFile) throw new ProviderError("configuration", "Connect a ChatGPT account on this computer first");
         provider = new OpenAIProvider({ mode: "chatgpt", model: selection.model, tokenFile: config.tokenFile, transport: config.transport ?? "http", serviceTier: "default", onRetry, ...(selection.reasoning_effort ? { reasoningEffort: selection.reasoning_effort } : {}) });

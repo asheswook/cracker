@@ -1,0 +1,17 @@
+[Unit]
+Description=CLIProxyAPI subscription proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/cliproxyapi
+ExecStart=%h/.local/share/cliproxyapi/cli-proxy-api -config %h/.config/autonomous-assistant/cliproxy/config.yaml
+Restart=always
+RestartSec=5
+UMask=0077
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=default.target

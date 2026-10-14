@@ -3,7 +3,7 @@ import { MessageTimeControl } from './MessageTimeControl';
 import { HeaderTimeContext } from './header-time-context';
 import { AnimatePresence, m as Motion } from 'motion/react';
 import { createPortal } from 'react-dom';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Repeat2 } from 'lucide-react';
 import type { Message, Pending } from './types';
 import { Attachments } from './Attachments';
 import { MessageBubble } from './MessageBubble';
@@ -13,6 +13,8 @@ import { dayDividers } from './feed-labels';
 import { client } from './store';
 import { useMessageTimeReveal } from './useMessageTimeReveal';
 import './message-time-reveal.css';
+import { backgroundCaptions, isBackgroundMessage } from './background-message';
+import './background-message.css';
 
 const dayFormatter = new Intl.DateTimeFormat('ko-KR', {
   year: 'numeric',
@@ -64,6 +66,7 @@ export const MessageList = memo(function MessageList({
   const keepIndex = keep ? shown.findIndex(message => message.id === keep || message.task_id === keep) : -1;
   const start = Math.max(0, Math.min(shown.length - size, keepIndex >= 0 ? keepIndex - 20 : shown.length));
   const visibleMessages = useMemo(() => shown.slice(start), [shown, start]);
+  const captions = useMemo(() => backgroundCaptions(visibleMessages), [visibleMessages]);
   const hidden = start;
   const dividers = useMemo(() => {
     const all = new Set(dayDividers(shown));
@@ -101,7 +104,7 @@ export const MessageList = memo(function MessageList({
                 key={m.client_message_id ?? m.id}
                 id={`message-${m.id}`}
                 data-task-id={m.task_id ?? undefined}
-                className={`message ${m.role} ${!newDay && previous?.role === m.role ? 'same-speaker' : 'new-speaker'}`}
+                className={`message ${m.role} ${isBackgroundMessage(m) ? 'background-work' : ''} ${!newDay && previous?.role === m.role ? 'same-speaker' : 'new-speaker'}`}
                 aria-label={
                   m.role === 'system' ? '시스템 알림' : m.role === 'assistant' ? assistantName : '내 메시지'
                 }
@@ -110,6 +113,7 @@ export const MessageList = memo(function MessageList({
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: reduced ? 0 : 0.2, ease: [0.32, 0.72, 0, 1] }}
               >
+                {captions.has(m.id) && <div className="background-work-caption"><Repeat2 size={12} aria-hidden="true" />자동 작업</div>}
                 {m.role === 'system' ? (
                   <SystemEvent>{systemContent}</SystemEvent>
                 ) : (

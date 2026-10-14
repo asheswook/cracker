@@ -13,11 +13,14 @@ import { LoadingSkeleton } from '../LoadingSkeleton';
 import type { Vm } from '../types';
 import './ModelSettingsPanel.css';
 import { ChatgptAccountPanel } from './ChatgptAccountPanel';
+import { SubscriptionAccountPanel } from './SubscriptionAccountPanel';
+import { SubscriptionModel } from '../../../../packages/models/subscription-schema';
 
 const providers = [
   { id: 'chatgpt', label: 'ChatGPT 계정' },
   { id: 'openai', label: 'OpenAI API' },
   { id: 'anthropic', label: 'Claude API' },
+  { id: 'subscription', label: '구독 계정' },
 ] as const;
 const gptModels = ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-luna'] as const;
 const claudeModels = ['claude-opus-5-5', 'claude-sonnet-5-5'] as const;
@@ -36,6 +39,7 @@ function ModelEditor({ vm, onComputer }: { readonly vm: Vm; readonly onComputer?
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [subscriptionModels, setSubscriptionModels] = useState<z.infer<typeof SubscriptionModel>[]>([]);
   const load = useCallback(async () => {
     operation.current?.abort();
     const controller = new AbortController();
@@ -65,9 +69,10 @@ function ModelEditor({ vm, onComputer }: { readonly vm: Vm; readonly onComputer?
   }, [load]);
   const available = saved?.defaults?.available.includes(selection.provider) ?? false;
   const stored = saved?.saved_credentials.includes(selection.provider) ?? false;
-  const keyRequired = selection.provider !== 'chatgpt' && !available && !stored;
+  const usesKey = selection.provider === 'openai' || selection.provider === 'anthropic';
+  const keyRequired = usesKey && !available && !stored;
   const needsAccount = selection.provider === 'chatgpt' && !available;
-  const valid = ModelSelection.safeParse(selection).success;
+  const valid = ModelSelection.safeParse(selection).success && (selection.provider !== 'subscription' || subscriptionModels.some(model => model.id === selection.model));
   const current = saved?.binding?.selection;
   const refreshConnections = async () => {
     setSaved(ModelSettings.parse(await http.get('/v1/model-settings', { searchParams: { vm_id: vm.id } }).json()));
@@ -84,7 +89,7 @@ function ModelEditor({ vm, onComputer }: { readonly vm: Vm; readonly onComputer?
       vm_id: vm.id,
       expected_revision_id: saved.binding?.revision_id ?? null,
       selection,
-      ...(selection.provider !== 'chatgpt' && apiKey.trim() ? { api_key: apiKey.trim() } : {}),
+      ...(usesKey && apiKey.trim() ? { api_key: apiKey.trim() } : {}),
     });
     const controller = new AbortController();
     operation.current?.abort();
@@ -147,6 +152,7 @@ function ModelEditor({ vm, onComputer }: { readonly vm: Vm; readonly onComputer?
             </div>
           )}
           {selection.provider === 'chatgpt' && <ChatgptAccountPanel vmId={vm.id} onComputer={onComputer} onChanged={refreshConnections} />}
+          {selection.provider === 'subscription' && <SubscriptionAccountPanel vmId={vm.id} onModels={setSubscriptionModels} onChanged={refreshConnections} onComputer={onComputer} />}
           <form
             className="model-settings-form"
             aria-busy={saving}
@@ -167,7 +173,7 @@ function ModelEditor({ vm, onComputer }: { readonly vm: Vm; readonly onComputer?
                       ? saved.binding.selection
                       : {
                           provider,
-                          model: provider === 'anthropic' ? claudeModels[0] : gptModels[0],
+                          model: provider === 'subscription' ? '' : provider === 'anthropic' ? claudeModels[0] : gptModels[0],
                           reasoning_effort: null,
                         },
                   );
@@ -192,13 +198,19 @@ function ModelEditor({ vm, onComputer }: { readonly vm: Vm; readonly onComputer?
                   ? '이 제공자의 API 키가 저장되어 있어요.'
                   : available
                     ? '이 컴퓨터에 설정된 연결을 사용할 수 있어요.'
-                    : selection.provider === 'chatgpt'
+                     : selection.provider === 'subscription'
+                       ? '위에서 구독 계정을 연결해 주세요.'
+                     : selection.provider === 'chatgpt'
                       ? '이 컴퓨터에서 ChatGPT 계정을 먼저 연결해 주세요.'
                       : '사용할 API 키를 입력해 주세요.'}{' '}
                 연결 성공 여부는 실제 요청에서 확인돼요.
               </p>
               <label htmlFor={`${id}-model`}>모델 ID</label>
-              <input
+              {selection.provider === 'subscription' ? <select id={`${id}-model`} value={selection.model} required disabled={!subscriptionModels.length} onChange={event => { setSelection({ ...selection, model: event.target.value }); setNotice(''); }}>
+                <option value="">모델 선택</option>
+                {selection.model && !subscriptionModels.some(model => model.id === selection.model) && <option value={selection.model} disabled>{selection.model} · 목록에 없음</option>}
+                {subscriptionModels.map(model => <option key={model.id} value={model.id}>{model.id}</option>)}
+              </select> : <><input
                 id={`${id}-model`}
                 list={`${id}-models`}
                 value={selection.model}
@@ -221,6 +233,7 @@ function ModelEditor({ vm, onComputer }: { readonly vm: Vm; readonly onComputer?
                 목록에서 고르거나 {selection.provider === 'anthropic' ? 'claude-' : 'gpt-'}로 시작하는 정확한
                 모델 ID를 입력하세요.
               </p>
+              </>}
               {selection.provider === 'anthropic' ? (
                 <p className="model-field-help">Claude의 기본 사고 설정을 사용해요.</p>
               ) : (
@@ -244,7 +257,7 @@ function ModelEditor({ vm, onComputer }: { readonly vm: Vm; readonly onComputer?
                   </select>
                 </>
               )}
-              {selection.provider !== 'chatgpt' && (
+              {usesKey && (
                 <>
                   <label htmlFor={`${id}-key`}>{keyRequired ? 'API 키' : '새 API 키 (선택)'}</label>
                   <input

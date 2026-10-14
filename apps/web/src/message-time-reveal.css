@@ -15,7 +15,7 @@
   clip-path: none;
   text-align: right;
   pointer-events: none;
-  font-size: 12px;
+  font-size: var(--t-caption);
   line-height: 16px;
   color: var(--muted);
   opacity: var(--message-time-opacity, 0);

@@ -9,6 +9,7 @@ export async function enqueueMessageNotification(
     await sql`INSERT INTO assistant.notification_intents(id,workspace_id,run_id,task_id,conversation_id,message_id,outcome)
     SELECT m.id,m.workspace_id,${message.runId ?? null},m.task_id,m.conversation_id,m.id,'message'
     FROM assistant.messages m WHERE m.id=${message.id} AND m.workspace_id=${workspace} AND m.role IN ('assistant','system')
+    AND (m.origin='user' OR m.notify=true)
     AND EXISTS(SELECT 1 FROM assistant.push_subscriptions s WHERE s.workspace_id=${workspace} AND s.enabled)
     ON CONFLICT DO NOTHING RETURNING id`;
   if (!rows.length) return;

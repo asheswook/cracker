@@ -47,6 +47,12 @@ export function ExtensionCard({
             ? new URL(item.config.url).origin + new URL(item.config.url).pathname
             : `${item.config.command} · stdio`}
       </p>
+      {'description' in item && item.agent_authored && (
+        <div className="field-help">
+          <small>어시스턴트가 만듦</small>
+          {item.source_excerpt && <p>{item.source_excerpt}</p>}
+        </div>
+      )}
       {archived ? (
         <p className="field-help">보관됨 · 일반 사용 꺼짐 · 버전과 실행 기록 보존</p>
       ) : (

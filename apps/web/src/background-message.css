@@ -1,0 +1,15 @@
+.message.background-work > .bubble {
+  opacity: 0.72;
+}
+.background-work-caption {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  margin-bottom: var(--s1);
+  color: var(--message-secondary);
+  font-size: var(--t-micro);
+}
+.message.background-work > .system-event {
+  opacity: 0.72;
+  font-size: var(--t-caption);
+}

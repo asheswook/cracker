@@ -12,7 +12,7 @@ export type {ProviderResponseObserver,ProviderResponseEvent} from "./stream.ts";
 import {ResponseSocketPool} from "./websocket.ts";
 export {ProviderError} from "./errors.ts";
 export {consumeResponse} from "./stream.ts";
-export type ProviderConfig = { readonly onRetry?: ProviderRetryObserver; readonly mode: "api" | "chatgpt"; readonly transport?:"http"|"websocket"; readonly serviceTier?:"default"; readonly model: string; readonly apiKey?: string; readonly tokenFile?: string; readonly reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max" };
+export type ProviderConfig = { readonly onRetry?: ProviderRetryObserver; readonly mode: "api" | "chatgpt" | "proxy"; readonly baseURL?: string; readonly transport?:"http"|"websocket"; readonly serviceTier?:"default"; readonly model: string; readonly apiKey?: string; readonly tokenFile?: string; readonly reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max" };
 export interface Provider {
   readonly nativeContext?: NativeContext;
   close?():void|Promise<void>;
@@ -33,7 +33,7 @@ export class OpenAIProvider implements Provider {
   }
   async respond(input: ResponseInputItem[], tools: Tool[], signal: AbortSignal,observer?:ProviderResponseObserver): Promise<Response> {
     if(this.closed)throw new ProviderError("configuration","Provider is closed");
-    if(this.config.transport!=="websocket")return retryProvider(() => this.respondOnce(input,tools,signal,observer), {signal,onRetry:this.config.onRetry});
+    if(this.config.mode==="proxy"||this.config.transport!=="websocket")return retryProvider(() => this.respondOnce(input,tools,signal,observer), {signal,onRetry:this.config.onRetry});
     if(this.websocketFlights>=8)throw new ProviderError("configuration","WebSocket concurrent request limit reached");
     this.websocketFlights++;
     try{return await retryProvider(() => this.respondOnce(input,tools,signal,observer), {signal,onRetry:this.config.onRetry});}
@@ -42,6 +42,10 @@ export class OpenAIProvider implements Provider {
   private async credentialToken():Promise<string>{
     let token: string;
     switch (this.config.mode) {
+      case "proxy": {
+        if (!this.config.apiKey || !this.config.baseURL) throw new ProviderError("configuration", "Proxy mode requires a client key and baseURL");
+        token = this.config.apiKey; break;
+      }
       case "api": {
         if (!this.config.apiKey) throw new ProviderError("configuration", "API mode requires OPENAI_API_KEY");
         token = this.config.apiKey; break;
@@ -58,6 +62,7 @@ export class OpenAIProvider implements Provider {
     return token;
   }
   async compact(input:ResponseInputItem[],signal:AbortSignal):Promise<ResponseInputItem[]>{
+    if(this.config.mode==="proxy")throw new ProviderError("configuration","Proxy mode does not support standalone compaction");
     return retryProvider(async () => {
       const token=await this.credentialToken();
       signal.throwIfAborted();
@@ -70,9 +75,9 @@ export class OpenAIProvider implements Provider {
     const token=await this.credentialToken();
     signal.throwIfAborted();
     if(this.closed)throw new ProviderError("configuration","Provider is closed");
-    const client = this.client?.withOptions({maxRetries:0}) ?? new OpenAI({ apiKey: token, maxRetries: 0, timeout: 120000 });
+    const client = this.client?.withOptions({maxRetries:0}) ?? new OpenAI({ apiKey: token, maxRetries: 0, timeout: 120000, ...(this.config.mode==="proxy"?{baseURL:this.config.baseURL}:{}) });
     const body = { model: this.config.model, context_management:[{type:"compaction",compact_threshold:64000}], ...(this.config.serviceTier?{service_tier:this.config.serviceTier}:{}), ...(this.config.reasoningEffort ? { reasoning: { effort: this.config.reasoningEffort } } : {}), input, tools, parallel_tool_calls: true, store: false, stream: true, include: ["reasoning.encrypted_content"] } satisfies Parameters<typeof client.responses.create>[0];
-    if(this.config.transport==="websocket"){
+    if(this.config.mode!=="proxy"&&this.config.transport==="websocket"){
       if(!this.sockets||this.sockets.token!==token){
         if(this.sockets){this.sockets.pool.retire();if(!this.sockets.pool.drained)this.retiredPools.add(this.sockets.pool);}
         this.sockets={token,pool:new ResponseSocketPool(client,{lane:this.config.mode==="chatgpt"?"implicit":"named"})};

@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "341B4FBE6149B7B2F2F9AAAC"
+               BlueprintIdentifier = "023D97B7DAF2F97DA9A915BE"
                BuildableName = "Assistant.app"
                BlueprintName = "Assistant-iOS"
                ReferencedContainer = "container:Assistant.xcodeproj">
@@ -30,7 +30,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "341B4FBE6149B7B2F2F9AAAC"
+            BlueprintIdentifier = "023D97B7DAF2F97DA9A915BE"
             BuildableName = "Assistant.app"
             BlueprintName = "Assistant-iOS"
             ReferencedContainer = "container:Assistant.xcodeproj">
@@ -53,7 +53,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "341B4FBE6149B7B2F2F9AAAC"
+            BlueprintIdentifier = "023D97B7DAF2F97DA9A915BE"
             BuildableName = "Assistant.app"
             BlueprintName = "Assistant-iOS"
             ReferencedContainer = "container:Assistant.xcodeproj">
@@ -70,7 +70,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "341B4FBE6149B7B2F2F9AAAC"
+            BlueprintIdentifier = "023D97B7DAF2F97DA9A915BE"
             BuildableName = "Assistant.app"
             BlueprintName = "Assistant-iOS"
             ReferencedContainer = "container:Assistant.xcodeproj">

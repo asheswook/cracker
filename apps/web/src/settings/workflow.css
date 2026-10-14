@@ -29,9 +29,9 @@
   max-height: 320px;
   overflow: auto;
   background: var(--surface-muted);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   padding: 16px;
-  font-size: 13px;
+  font-size: var(--t-footnote);
 }
 .skill-workflow small {
   overflow-wrap: anywhere;

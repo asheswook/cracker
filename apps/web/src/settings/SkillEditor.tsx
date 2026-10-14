@@ -81,7 +81,7 @@ export function SkillEditor({
             <input
               autoFocus
               required
-              maxLength={64}
+              maxLength={80}
               value={draft.name}
               onChange={(e) => setDraft({ ...draft, name: e.target.value })}
               placeholder="예: 문서 검토"

@@ -26,6 +26,8 @@ export const Skill = z.object({
   content: z.string(),
   enabled: z.boolean(),
   archived_at: z.string().nullable().optional(),
+  agent_authored: z.boolean().optional(),
+  source_excerpt: z.string().nullable().optional(),
   ...observed,
 });
 export type Skill = z.infer<typeof Skill>;

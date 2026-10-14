@@ -6,7 +6,7 @@
 .loading-skeleton-status {
   margin: 0 0 var(--s5);
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--t-footnote);
   line-height: 1.65;
 }
 .loading-skeleton-geometry {

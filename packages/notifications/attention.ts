@@ -54,6 +54,7 @@ export async function publishAttentionMessage(
       )[0],
     );
   await sql`INSERT INTO assistant.notification_attention_messages(run_id,state,message_id) VALUES(${run.id},${run.state},${message.id})`;
+  await sql`UPDATE assistant.messages SET notify=true WHERE id=${message.id} AND workspace_id=${workspace}`;
   await enqueueMessageNotification(sql, workspace, { id: message.id, runId: run.id });
   if (!equivalent)
     await recordEvent(sql, {

@@ -79,7 +79,9 @@ export function ConversationHeader({
   onTimeControlMount,
   appearance,
   working = false,
+  native = false,
 }: {
+  readonly native?: boolean;
   readonly name: string;
   readonly archiveTitle: string | undefined;
   readonly presence: Presence;
@@ -92,7 +94,10 @@ export function ConversationHeader({
   readonly working?: boolean;
 }) {
   return (
-    <header className="conversation-header messenger-header">
+    <header className="conversation-header messenger-header" data-native-shell={native || undefined}>
+      <div className="messenger-header-backdrop" aria-hidden="true">
+        <span /><span /><span /><span /><span /><span />
+      </div>
       <div className="messenger-header-start">
         <IconButton label="메뉴 열기" className="mobile-menu" onClick={onMenu}>
           <PanelLeft size={19} />

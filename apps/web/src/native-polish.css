@@ -62,13 +62,13 @@
   display: inline-flex;
   gap: 2px;
   padding: 2px;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   background: var(--wash);
 }
 .inspector-body .work-filters button {
   min-height: 28px;
   padding: 0 var(--s3);
-  border-radius: 7px;
+  border-radius: var(--r-xs);
   font-size: var(--t-footnote);
   font-weight: 500;
   color: var(--ink);
@@ -150,7 +150,7 @@
   background: transparent;
   color: var(--ink);
   font-size: var(--t-footnote);
-  border-radius: 8px;
+  border-radius: var(--r-xs);
 }
 .computer-trigger:hover,
 .computer-trigger.active {
@@ -174,7 +174,7 @@
   min-height: 36px;
   padding: var(--s2) var(--s3);
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--r-sm);
   background: var(--wash);
   font-size: var(--t-body);
 }
@@ -246,7 +246,7 @@
   min-height: 36px;
   padding: var(--s2) var(--s3);
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--r-sm);
   background: var(--wash);
   font-size: var(--t-body);
 }
@@ -299,7 +299,329 @@
   }
 }
 
-.assistant-shell .main-surface::before {
-  height: calc(var(--message-header-clearance) + var(--s2));
-  background: linear-gradient(to bottom, var(--message-canvas) 55%, color-mix(in srgb, var(--message-canvas) 70%, transparent) 80%, transparent);
+.native-panel-root .inspector-body {
+  padding: var(--s3) var(--s4) calc(var(--s6) + env(safe-area-inset-bottom));
+  overflow: visible;
+}
+
+.messenger-header[data-native-shell] .messenger-header-start,
+.messenger-header[data-native-shell] .header-actions {
+  visibility: hidden;
+}
+.assistant-shell:has(.messenger-header[data-native-shell]) .main-surface::before {
+  position: fixed;
+  z-index: 2;
+}
+.messenger-header[data-native-shell] {
+  position: fixed;
+  z-index: 3;
+}
+.assistant-shell:has(.messenger-header[data-native-shell]) .main-surface::before {
+  inset: 0 0 auto;
+}
+
+.inspector-body :is(input:not([type=checkbox], [type=radio], [type=range], [type=color]), select, textarea),
+.settings-dialog :is(input:not([type=checkbox], [type=radio], [type=range], [type=color]), select, textarea) {
+  min-height: 44px;
+  padding: var(--s2) var(--s3);
+  border: 0;
+  border-radius: var(--r-sm);
+  background-color: var(--wash);
+  color: var(--ink);
+  font-size: var(--t-body);
+  box-shadow: none;
+}
+.inspector-body textarea,
+.settings-dialog textarea {
+  padding-block: var(--s3);
+  line-height: var(--lh-text);
+}
+.inspector-body select,
+.settings-dialog select {
+  appearance: none;
+  padding-inline-end: var(--s8);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23878787' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3 4.5 3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--s3) center;
+  background-size: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  .inspector-body .settings-tabs button[aria-selected="true"] {
+    background: rgb(255 255 255 / 14%);
+    box-shadow: none;
+  }
+}
+.inspector-body :is(input, select, textarea):focus-visible,
+.settings-dialog :is(input, select, textarea):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 0;
+}
+.inspector-body .settings-tabs {
+  padding: 2px;
+  gap: 2px;
+  border-radius: 9px;
+  background: var(--wash);
+}
+.inspector-body .settings-tabs button {
+  padding: 6px var(--s1);
+  border-radius: 7px;
+  color: var(--ink);
+  font-weight: 500;
+}
+.inspector-body .settings-tabs button[aria-selected="true"] {
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%), 0 0 0 0.5px var(--line);
+}
+.inspector-body .settings-section-heading h2 {
+  font-size: var(--t-title);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.inspector-body :is(.field-help, .model-field-help, .settings-intro) {
+  font-size: var(--t-caption);
+  line-height: var(--lh-text);
+}
+
+.inspector-body .extension-list {
+  gap: 0;
+  background: var(--surface-muted);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.inspector-body .extension-card {
+  padding: var(--s3) var(--s4);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.inspector-body .extension-card + .extension-card {
+  box-shadow: inset 0 0.5px 0 var(--line);
+}
+.inspector-body .extension-card h3 {
+  font-size: var(--t-body);
+  font-weight: 600;
+}
+.inspector-body :is(.extension-actions, .model-account-actions) {
+  gap: var(--s4);
+  margin-top: var(--s2);
+}
+.inspector-body :is(.extension-actions, .model-account-actions) > .button:not(.primary, .danger) {
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--t-footnote);
+  font-weight: 500;
+}
+.inspector-body :is(.extension-actions, .model-account-actions) > .button svg {
+  display: none;
+}
+.inspector-body .model-account {
+  border-radius: var(--r-lg);
+}
+
+:root {
+  accent-color: var(--accent);
+}
+.inspector-body input[type="checkbox"]:not(.extension-toggle input) {
+  appearance: none;
+  flex: none;
+  position: relative;
+  width: 40px;
+  height: 24px;
+  margin: 0;
+  border-radius: var(--r-full);
+  background: color-mix(in srgb, var(--ink) 16%, transparent);
+  cursor: pointer;
+  transition: background-color var(--dur-base) var(--ease-standard);
+}
+.inspector-body input[type="checkbox"]:not(.extension-toggle input)::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 20%);
+  transition: transform var(--dur-base) var(--ease-spring);
+}
+.inspector-body input[type="checkbox"]:not(.extension-toggle input):checked {
+  background: var(--accent);
+}
+.inspector-body input[type="checkbox"]:not(.extension-toggle input):checked::after {
+  transform: translateX(16px);
+}
+.inspector-body .extension-toggle span {
+  background: color-mix(in srgb, var(--ink) 16%, transparent);
+}
+
+html:has(.native-panel-root),
+html:has(.native-panel-root) body {
+  background: transparent;
+}
+.native-panel-root {
+  background: transparent;
+}
+.native-panel-root .settings-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.native-panel-root:not([data-ready]) > * {
+  visibility: hidden;
+}
+.native-composer .feed-content {
+  padding-bottom: calc(var(--native-composer-inset, 0px) + var(--s3));
+}
+.assistant-shell .native-composer .chat-footer {
+  position: absolute;
+  inset: auto 0 var(--native-composer-inset, 0px);
+  pointer-events: none;
+  background: transparent;
+}
+.assistant-shell .native-composer .chat-footer > * {
+  pointer-events: auto;
+}
+.assistant-shell .native-composer .composer-region {
+  padding-bottom: var(--s2);
+}
+html:not([data-root-scroll-trial]) .assistant-shell .chat:not(.native-composer) .chat-footer {
+  position: absolute;
+  inset: auto 0 0;
+  pointer-events: none;
+}
+html:not([data-root-scroll-trial]) .assistant-shell .chat:not(.native-composer) .chat-footer > * {
+  pointer-events: auto;
+}
+html:not([data-root-scroll-trial]) .assistant-shell .chat:not(.native-composer) .feed-content {
+  padding-bottom: calc(var(--chat-footer-height, 0px) + var(--s3));
+}
+.assistant-shell .messenger-composer {
+  background: color-mix(in srgb, var(--message-composer) 78%, transparent);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  backdrop-filter: saturate(180%) blur(24px);
+}
+.assistant-shell .chat[data-dropping] .messenger-composer {
+  box-shadow: 0 0 0 2px var(--accent), 0 8px 32px rgb(0 0 0 / 12%);
+  transition: box-shadow var(--dur-base) var(--ease-standard);
+}
+.assistant-shell .chat[data-dropping] .message-feed {
+  opacity: 0.6;
+  transition: opacity var(--dur-base) var(--ease-standard);
+}
+@media (max-width: 600px) {
+  .assistant-shell .message-column,
+  .assistant-shell .working-message {
+    width: calc(100% - 2 * var(--s3));
+  }
+  .assistant-shell .message .bubble {
+    max-width: 82%;
+    padding: 8px 14px;
+  }
+  .assistant-shell .message .bubble:has(.markdown-message ul, .markdown-message ol, .markdown-message h2, .markdown-message h3) {
+    max-width: 92%;
+  }
+  .assistant-shell .composer-region {
+    width: calc(100% - 2 * var(--s3));
+  }
+}
+@media (max-width: 600px) {
+  .assistant-shell .markdown-message :where(ul, ol) {
+    padding-inline-start: var(--s5);
+  }
+}
+
+/* Native sheet: grouped-list rhythm (16pt margins, 8pt label gap, 24pt between groups, inset cards). */
+.native-panel-root .inspector-body {
+  padding: var(--s2) var(--s4) calc(var(--s8) + env(safe-area-inset-bottom));
+}
+.native-panel-root .settings-tabs {
+  margin: 0 calc(-1 * var(--s4)) var(--s4);
+  padding: var(--s2) var(--s4);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--message-canvas, var(--canvas)) 82%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+}
+.native-panel-root .settings-tabs button {
+  padding-block: 7px;
+}
+.native-panel-root :is(.settings-intro, .form-intro, .notification-description) {
+  padding: 0 var(--s1);
+  margin: 0 0 var(--s4);
+}
+.native-panel-root .persona-summary {
+  gap: 0;
+  margin: 0 0 var(--s4);
+  border-radius: var(--r-md);
+  background: var(--surface-muted);
+  overflow: hidden;
+}
+.native-panel-root .persona-summary > div {
+  padding: var(--s3) var(--s4);
+}
+.native-panel-root .persona-summary > div + div {
+  box-shadow: inset 0 0.5px 0 var(--line);
+}
+.native-panel-root .persona-summary dt {
+  margin-bottom: 2px;
+}
+.native-panel-root .persona-summary dd {
+  font-size: var(--t-body);
+  line-height: var(--lh-text);
+  max-height: 168px;
+}
+.native-panel-root .settings-vm {
+  gap: var(--s2);
+  margin-bottom: var(--s5);
+}
+.native-panel-root .settings-vm > span {
+  padding-inline: var(--s1);
+  font-size: var(--t-caption);
+  color: var(--muted);
+}
+.native-panel-root .model-current {
+  margin-bottom: var(--s3);
+  padding: var(--s3) var(--s4);
+  border-radius: var(--r-md);
+}
+.native-panel-root .settings-section-heading {
+  margin: var(--s2) 0 var(--s3);
+  padding-inline: var(--s1);
+}
+.native-panel-root .settings-section-heading h2 {
+  font-size: var(--t-title);
+}
+.native-panel-root .extension-list {
+  border-radius: var(--r-md);
+}
+.native-panel-root .settings-wide-action {
+  min-height: 44px;
+  margin-top: var(--s2);
+  border-radius: var(--r-md);
+}
+.native-panel-root .notification-panel {
+  gap: var(--s4);
+}
+.native-panel-root :is(.notification-preference, .notification-status) {
+  padding: var(--s3) var(--s4);
+  border-radius: var(--r-md);
+  background: var(--surface-muted);
+}
+.native-panel-root .notification-note {
+  padding-inline: var(--s1);
+}
+.native-panel-root .notification-status {
+  border: 0;
+}
+.native-panel-root .notification-preference {
+  justify-content: space-between;
+  flex-direction: row-reverse;
+}
+.native-panel-root .notification-actions > * {
+  flex: 1;
+  min-height: 44px;
 }

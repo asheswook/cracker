@@ -32,6 +32,8 @@ export const Message = z.object({
   task_id: Id.nullable().optional(),
   conversation_id: Id,
   role: z.enum(["user", "assistant", "system"]),
+  origin: z.enum(["user", "schedule", "responsibility"]).optional(),
+  notify: z.boolean().optional(),
   phase: AssistantPhase.nullish(),
   content: z.string(),
   reply_to_message_id: Id.nullable().optional(),

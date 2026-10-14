@@ -6,12 +6,19 @@ enum ShellStyle {
 
 struct ShellView: View {
     @ObservedObject var shell: WebShell
-    @StateObject private var data = ShellData()
+    @StateObject private var data: ShellData
+    @StateObject private var panels: PanelStore
     @Environment(\.scenePhase) private var phase
-    @State private var path: [String] = []
     @State private var panel: ShellPanel?
     @State private var selectionError: String?
     @State private var selectionRequest = UUID()
+
+    init(shell: WebShell) {
+        self.shell = shell
+        let data = ShellData()
+        _data = StateObject(wrappedValue: data)
+        _panels = StateObject(wrappedValue: PanelStore(data: data))
+    }
 
     var body: some View {
         navigation
@@ -20,26 +27,24 @@ struct ShellView: View {
                 Button("확인", role: .cancel) { selectionError = nil }
             } message: { Text(selectionError ?? "") }
             .task(id: shell.authenticated && phase == .active) {
+                data.webView = shell.webView
                 guard shell.authenticated, phase == .active else {
-                    if !shell.authenticated { data.clear() }
+                    if !shell.authenticated { data.clear(); panels.clear() }
                     return
                 }
-                while !Task.isCancelled {
-                    await data.refreshConversations()
-                    do { try await Task.sleep(for: .seconds(30)) } catch { return }
-                }
+                WebPanelCache.warm(["settings", "computer"])
+                await panels.prefetch()
             }
-            .onChange(of: shell.conversation) { _, id in
-                #if os(iOS)
-                if let id, !path.isEmpty { path = [id] }
-                #endif
+            .onChange(of: shell.resultRevision) { _, _ in panel = nil }
+            .onChange(of: shell.panelRequest) { _, request in
+                guard let request else { return }
+                shell.panelRequest = nil
+                open(request)
             }
-            .onChange(of: shell.resultRevision) { _, _ in
-                panel = nil
-                #if os(iOS)
-                if let id = shell.conversation { path = [id] }
-                #endif
-                Task { await data.refreshConversations() }
+            .onChange(of: shell.openRequest) { _, request in
+                guard let request else { return }
+                shell.openRequest = nil
+                select(request.conversation, request.message)
             }
             .onChange(of: phase) { _, value in
                 if value == .active { NotificationService.shared.refresh(registerIfGranted: true) }
@@ -52,43 +57,33 @@ struct ShellView: View {
 
     @ViewBuilder private var navigation: some View {
         #if os(macOS)
-        NavigationSplitView {
-            conversationList
-                .navigationTitle("대화")
-                .navigationSplitViewColumnWidth(min: 230, ideal: 280, max: 380)
-        } detail: {
+        NavigationStack {
             ConversationSurface(shell: shell)
-                .navigationTitle(conversationTitle)
+                .ignoresSafeArea(.container, edges: .top)
+                .navigationTitle("")
                 .toolbar { shellToolbar }
+                .toolbarBackground(.hidden, for: .windowToolbar)
         }
         .inspector(isPresented: Binding(get: { panel != nil }, set: { if !$0 { panel = nil } })) {
             if let panel {
-                NativePanelView(panel: panel, data: data, openConversation: select) { self.panel = nil }
-                    .inspectorColumnWidth(min: 320, ideal: panel == .computer ? 540 : 360, max: 800)
+                NavigationStack {
+                    NativePanelView(panel: panel, data: data, panels: panels, assistant: shell.assistant, openConversation: select) { self.panel = nil }
+                }
+                .inspectorColumnWidth(min: 320, ideal: panel == .computer ? 540 : 380, max: 800)
             }
         }
-        .frame(minWidth: 720, minHeight: 480)
+        .frame(minWidth: 560, minHeight: 480)
         #else
-        NavigationStack(path: $path) {
-            Group {
-                if shell.authenticated { conversationList }
-                else { ConversationSurface(shell: shell) }
-            }
-            .navigationTitle("대화")
-            .toolbar { shellToolbar }
-            .navigationDestination(for: String.self) { _ in
-                ConversationSurface(shell: shell)
-                    .navigationTitle(conversationTitle)
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar { shellToolbar }
-            }
-        }
+        ConversationSurface(shell: shell)
+            .ignoresSafeArea(.container, edges: .top)
+            .overlay(alignment: .top) { if shell.authenticated { conversationBar } }
         .sheet(item: $panel) { item in
             NavigationStack {
-                NativePanelView(panel: item, data: data, openConversation: select) { panel = nil }
+                NativePanelView(panel: item, data: data, panels: panels, assistant: shell.assistant, openConversation: select) { panel = nil }
             }
-            .presentationDetents([.medium, .large])
+            .presentationDetents(item.compact ? [.medium, .large] : [.large])
             .presentationDragIndicator(.visible)
+            .presentationCornerRadius(24)
         }
         .onChange(of: panel) { _, value in
             shell.presentedPanel = value != nil
@@ -97,57 +92,41 @@ struct ShellView: View {
         #endif
     }
 
-    private var conversationTitle: String {
-        data.conversations.first { $0.id == shell.conversation }?.displayTitle ?? "Assistant"
-    }
-    private var conversationList: some View {
-        List {
-            if let error = data.errors["conversations"] {
-                Section { Text(error).foregroundStyle(.secondary); Button("다시 불러오기") { Task { await data.refreshConversations() } } }
-            }
-            if data.conversations.isEmpty {
-                if data.loading.contains("conversations") { ProgressView("대화를 불러오고 있어요") }
-                else { Text(shell.authenticated ? "아직 대화가 없어요" : "대화 화면에서 연결해 주세요").foregroundStyle(.secondary) }
-            }
-            if let current = data.conversations.first(where: { $0.id == shell.assistant }) {
-                Section("현재 대화") { row(current) }
-            }
-            Section("이전 대화") {
-                ForEach(data.conversations.filter { $0.id != shell.assistant }) { row($0) }
-            }
-        }
-        #if os(iOS)
-        .listStyle(.insetGrouped)
-        .refreshable { await data.refreshConversations() }
-        #else
-        .listStyle(.sidebar)
-        #endif
-    }
-    private func row(_ item: ShellConversation) -> some View {
-        Button { select(item.id, nil) } label: {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(item.displayTitle).font(.headline).lineLimit(1)
-                    Spacer(minLength: 4)
-                    if item.id == shell.conversation { Image(systemName: "checkmark").foregroundStyle(ShellStyle.accent).accessibilityLabel("선택한 대화") }
-                }
-                if let preview = item.preview, !preview.isEmpty { Text(preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(2) }
-                HStack {
-                    if let date = item.date { Text(date, style: .relative) }
-                    Spacer()
-                    if let count = item.message_count { Text("메시지 \(count)개") }
-                }.font(.caption).foregroundStyle(.secondary)
-            }.padding(.vertical, 4).contentShape(Rectangle())
+    #if os(iOS)
+    /// The persona and thinking state stay in the web header (Messages-style); the tools menu is native.
+    private var conversationBar: some View {
+        HStack {
+            Spacer()
+            shellMenu
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier("conversation-\(item.id)")
+        .foregroundStyle(ShellStyle.accent)
+        .padding(.horizontal, 8)
     }
+    #endif
     @ToolbarContentBuilder private var shellToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            Button { Task { await data.refreshConversations() } } label: { Label("새로고침", systemImage: "arrow.clockwise") }
-                .disabled(!shell.authenticated)
+            #if os(macOS)
+            ForEach([ShellPanel.tasks, .schedules, .memory, .computer]) { item in
+                Button { toggle(item) } label: { Label(item.title, systemImage: item.symbol) }
+                    .help(item.title)
+                    .disabled(!shell.authenticated)
+                    .accessibilityIdentifier("shell-\(item.rawValue)")
+            }
+            SettingsLink { Label("설정", systemImage: "gearshape") }.help("설정")
+            #else
+            shellMenu
+            #endif
+        }
+    }
+    #if os(macOS)
+    private func toggle(_ item: ShellPanel) {
+        withAnimation(.snappy(duration: 0.28)) { panel = panel == item ? nil : item }
+    }
+    #endif
+    private var shellMenu: some View {
             Menu {
-                ForEach(ShellPanel.allCases.filter { $0 != .settings }) { item in
+                ForEach(ShellPanel.allCases.filter { $0 != .settings && $0 != .notifications }) { item in
                     Button { open(item) } label: { Label(item.title, systemImage: item.symbol) }
                 }
                 Divider()
@@ -156,10 +135,9 @@ struct ShellView: View {
                 #else
                 Button { open(.settings) } label: { Label("설정", systemImage: "gearshape") }
                 #endif
-            } label: { Label("도구", systemImage: "ellipsis.circle") }
+            } label: { Label("도구", systemImage: "ellipsis.circle").labelStyle(.iconOnly).frame(width: 44, height: 44) }
                 .disabled(!shell.authenticated)
                 .accessibilityIdentifier("shell-tools")
-        }
     }
     private func open(_ item: ShellPanel) {
         #if os(iOS)
@@ -179,9 +157,6 @@ struct ShellView: View {
                 return
             }
             panel = nil
-            #if os(iOS)
-            path = [id]
-            #endif
         }
     }
 }

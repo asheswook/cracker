@@ -93,7 +93,7 @@ async function deliverNotifications(tx: Transaction, principal: Principal): Prom
       continue;
     }
     if (row.notification_mode === "quiet" || quietNow(row.quiet_hours, new Date())) continue;
-    const message = z.object({ id: z.uuid() }).parse((await tx`INSERT INTO assistant.messages(workspace_id,conversation_id,role,content) VALUES(${principal.workspace_id},${row.conversation_id},'assistant',${row.content}) RETURNING id`)[0]);
+    const message = z.object({ id: z.uuid() }).parse((await tx`INSERT INTO assistant.messages(workspace_id,conversation_id,role,content,origin,notify) VALUES(${principal.workspace_id},${row.conversation_id},'assistant',${row.content},'responsibility',true) RETURNING id`)[0]);
     await enqueueMessageNotification(tx, principal.workspace_id, message);
     await tx`UPDATE assistant.responsibility_notifications SET state='delivered',message_id=${message.id},delivered_at=now() WHERE id=${row.notification_id}`;
     await recordEvent(tx, { workspace: principal.workspace_id, kind: "responsibility.notified", payload: JSON.stringify({ responsibility_id: row.id, message_id: message.id }) });

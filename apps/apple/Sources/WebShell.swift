@@ -18,7 +18,11 @@ final class WebShell: NSObject, ObservableObject {
     @Published var authenticated = false
     @Published var conversation: String?
     @Published var assistant: String?
+    @Published var assistantName = "Assistant"
     @Published var resultRevision = 0
+    @Published var openRequest: ShellOpenRequest?
+    @Published var panelRequest: ShellPanel?
+    static weak var body: WebShell?
     var webReady = false
     private var documentID = UUID()
     private var results: [URL] = []
@@ -110,6 +114,8 @@ final class WebShell: NSObject, ObservableObject {
         webView.isOpaque = false
         webView.backgroundColor = .systemBackground
         webView.scrollView.backgroundColor = .systemBackground
+        // The web header (persona and thinking state) draws its own top fade; a system edge blur would wash it out.
+        if #available(iOS 26.0, *) { webView.scrollView.topEdgeEffect.isHidden = true }
         #endif
         bridge = NativeBridge(shell: self)
         configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "assistantNative")
@@ -135,6 +141,7 @@ final class WebShell: NSObject, ObservableObject {
         }
         downloads.onFailure = { [weak self] in self?.downloadNotice = "파일을 저장하지 못했어요. 다시 시도해 주세요." }
         if panel == nil {
+            Self.body = self
             NotificationService.shared.onStateChange = { [weak self] in self?.sendState() }
             NotificationService.shared.connectResults { [weak self] url in self?.enqueueResult(url) }
             notificationObserver = NotificationCenter.default.publisher(for: NotificationService.foregroundNotification)
@@ -166,6 +173,7 @@ final class WebShell: NSObject, ObservableObject {
         authenticated = body["authenticated"] as? Bool == true
         conversation = (body["conversation"] as? String).flatMap { UUID(uuidString: $0) == nil ? nil : $0 }
         assistant = (body["assistant"] as? String).flatMap { UUID(uuidString: $0) == nil ? nil : $0 }
+        if let name = body["name"] as? String, !name.isEmpty, name.count <= 80 { assistantName = name }
         if let pendingResultConversation, conversation == pendingResultConversation {
             self.pendingResultConversation = nil
             resultRevision += 1
@@ -185,7 +193,21 @@ final class WebShell: NSObject, ObservableObject {
         }
         deliverResults()
     }
-    func ready() { webReady = true; sendState(); deliverResults() }
+    func ready() {
+        webReady = true; sendState(); deliverResults()
+        #if os(iOS)
+        if panel == nil { nativeComposer.resetSafeTop() }
+        #else
+        if panel == nil { publishTitlebarInset() }
+        #endif
+    }
+    #if os(macOS)
+    /// The conversation runs under the transparent titlebar; the centred persona sits between the traffic lights and the toolbar.
+    static let titlebarInset = 0
+    private func publishTitlebarInset() {
+        webView.evaluateJavaScript("document.documentElement.style.setProperty('--native-safe-top', '\(Self.titlebarInset)px')")
+    }
+    #endif
     func sendState() {
         guard webReady else { return }
         dispatch("assistant-native-notification-state", detail: NotificationService.shared.state)
@@ -235,7 +257,14 @@ extension WebShell: WKNavigationDelegate {
         if panel == nil { nativeComposer.resetDocument(); updateComposerPresentation() }
         #endif
     }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { loading = false }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        loading = false
+        #if os(iOS)
+        if panel == nil { nativeComposer.resetSafeTop() }
+        #else
+        if panel == nil { publishTitlebarInset() }
+        #endif
+    }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { failed(error) }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { failed(error) }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
@@ -300,3 +329,4 @@ extension WebShell: WKUIDelegate {
     }
 }
 struct ExportedFile: Identifiable { let id = UUID(); let url: URL }
+struct ShellOpenRequest: Equatable { let id = UUID(); let conversation: String; let message: String? }

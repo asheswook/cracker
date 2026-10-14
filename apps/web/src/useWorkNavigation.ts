@@ -37,14 +37,17 @@ export function useWorkNavigation({ workspace, phase, panel, generation, onOpene
   };
   return {
     openSource: (conversation: Id, message: Id) => open(async () => ({ conversation, message })),
-    openTask: (task: Task, sourceMessageId?: Id, destination: TaskDestination = 'request') => open(async signal => {
-      if (sourceMessageId) return { conversation: task.conversation_id, message: sourceMessageId };
-      const target = TaskNavigation.parse(await http.get(`/v1/tasks/${task.id}/navigation`, { signal }).json<unknown>());
-      if (target.task_id !== task.id || target.conversation_id !== task.conversation_id)
-        throw new WorkNavigationError('작업의 메시지 정보를 확인할 수 없어요. 다시 시도해 주세요.');
-      const message = destination === 'reply' ? target.reply_message_id : target.request_message_id;
-      if (!message) throw new WorkNavigationError(destination === 'reply' ? '이 작업에 저장된 답변이 없어요. 요청 원문을 확인해 주세요.' : '이 작업에 저장된 요청 원문이 없어요.');
-      return { conversation: Id.parse(target.conversation_id), message: Id.parse(message) };
-    }),
+    openTask: (task: Task, sourceMessageId?: Id, destination: TaskDestination = 'request') =>
+      open(signal => taskTarget(task, sourceMessageId, destination, signal)),
   };
+}
+
+export async function taskTarget(task: Task, sourceMessageId: Id | undefined, destination: TaskDestination, signal?: AbortSignal) {
+  if (sourceMessageId) return { conversation: task.conversation_id, message: sourceMessageId };
+  const target = TaskNavigation.parse(await http.get(`/v1/tasks/${task.id}/navigation`, signal ? { signal } : {}).json<unknown>());
+  if (target.task_id !== task.id || target.conversation_id !== task.conversation_id)
+    throw new WorkNavigationError('작업의 메시지 정보를 확인할 수 없어요. 다시 시도해 주세요.');
+  const message = destination === 'reply' ? target.reply_message_id : target.request_message_id;
+  if (!message) throw new WorkNavigationError(destination === 'reply' ? '이 작업에 저장된 답변이 없어요. 요청 원문을 확인해 주세요.' : '이 작업에 저장된 요청 원문이 없어요.');
+  return { conversation: Id.parse(target.conversation_id), message: Id.parse(message) };
 }

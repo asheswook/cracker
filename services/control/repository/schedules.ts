@@ -26,6 +26,7 @@ export async function dispatchDueSchedules(sql: Database): Promise<number> {
         content: schedule.objective,
         clientId: schedule.id,
         role: "system",
+        origin: "schedule",
       });
       if(schedule.skill_id&&schedule.skill_revision)await bindSkill(tx,{workspace:schedule.workspace_id,task:created.task.id,message:created.message.id,skill:schedule.skill_id,revision:schedule.skill_revision,kind:"scheduled"});
       await tx`UPDATE assistant.schedules SET status='delivered',delivered_at=now() WHERE id=${schedule.id}`;

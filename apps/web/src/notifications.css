@@ -12,15 +12,15 @@
 }
 .notification-description {
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--t-subhead);
 }
 .notification-status {
   padding: 16px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   background: var(--surface-muted);
   color: var(--ink);
-  font-size: 14px;
+  font-size: var(--t-subhead);
 }
 .notification-actions {
   display: flex;
@@ -29,7 +29,7 @@
 }
 .notification-note {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t-caption);
 }
 
 .notification-preference {
@@ -37,7 +37,7 @@
   align-items: center;
   gap: 12px;
   color: var(--ink);
-  font-size: 14px;
+  font-size: var(--t-subhead);
   line-height: 1.6;
 }
 .notification-preference input {
@@ -48,5 +48,5 @@
 .notification-preference small {
   display: block;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t-caption);
 }

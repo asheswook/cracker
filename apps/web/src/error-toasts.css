@@ -24,7 +24,7 @@
   background: var(--surface);
   box-shadow: var(--shadow-float);
   pointer-events: auto;
-  font-size: 13px;
+  font-size: var(--t-footnote);
   line-height: 1.6;
 }
 .error-toast > svg { color: var(--danger); flex-shrink: 0; margin-top: var(--s3); }

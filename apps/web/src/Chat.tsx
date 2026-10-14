@@ -82,7 +82,7 @@ export const Chat = memo(function Chat({
   const savedDraft = useComposerDraft(client.snapshot().workspace, selected);
   const draft = savedDraft.text;
   const setDraft = savedDraft.setText;
-  const paste = useComposerPaste(savedDraft.scope, !readOnly && Boolean(selected), addingFiles, setAddingFiles);
+  const { paste, drop, dragging } = useComposerPaste(savedDraft.scope, !readOnly && Boolean(selected), addingFiles, setAddingFiles);
   const [sending, setSending] = useState<ReadonlySet<string>>(() => new Set());
   const busy = sending.has(savedDraft.scope);
   const sendingNow = useRef(new Set<string>());
@@ -94,8 +94,18 @@ export const Chat = memo(function Chat({
   const [newContent, setNewContent] = useState(false);
   const feed = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  const footer = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = footer.current;
+    const section = node?.parentElement;
+    if (!node || !section) return;
+    const observer = new ResizeObserver(() => section.style.setProperty('--chat-footer-height', `${Math.ceil(node.offsetHeight)}px`));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
   const anchored = useRef(true);
   const returningToEnd = useRef(false);
+  const lastUserScroll = useRef(0);
   const touchScroll = useRef<{ identifier: number; x: number; y: number; top: number; height: number; content: number; vertical: boolean } | null>(null);
   const feedGeometry = useRef({ width: 0, height: 0, content: 0 });
   const previousCount = useRef(0);
@@ -222,7 +232,8 @@ export const Chat = memo(function Chat({
     if (!node || !content) return;
     if (ROOT_SCROLL_TRIAL) return;
     const observer = new ResizeObserver(() => {
-      if (touchScroll.current) {
+      // A programmatic scroll during momentum stops the fling; let the reader keep control while it is moving.
+      if (touchScroll.current || (!anchored.current && performance.now() - lastUserScroll.current < 400)) {
         feedGeometry.current = { width: node.clientWidth, height: node.clientHeight, content: node.scrollHeight };
         return;
       }
@@ -396,7 +407,7 @@ export const Chat = memo(function Chat({
     rememberPosition();
   };
   return (
-    <section className={`chat${nativeComposer.active ? ' native-composer' : ''}`} aria-label="대화">
+    <section className={`chat${nativeComposer.active ? ' native-composer' : ''}`} aria-label="대화" data-dropping={dragging || undefined} {...drop}>
       <div
         className="message-feed"
         ref={feed}
@@ -469,6 +480,7 @@ export const Chat = memo(function Chat({
           if (ROOT_SCROLL_TRIAL) return;
           const el = feed.current;
           if (!el) return;
+          lastUserScroll.current = performance.now();
           if (touchScroll.current) return;
           if (returningToEnd.current) {
             if (el.scrollHeight - el.scrollTop - el.clientHeight <= 1) returningToEnd.current = false;
@@ -530,7 +542,7 @@ export const Chat = memo(function Chat({
         </div>
         </div>
       </div>
-      <div className={`chat-footer${independentFooter.active ? ' independent-footer-active' : ''}`}>
+      <div ref={footer} className={`chat-footer${independentFooter.active ? ' independent-footer-active' : ''}`}>
         {independentFooter.error && <ErrorNotice>{independentFooter.error}</ErrorNotice>}
         {(ROOT_SCROLL_TRIAL ? reader.awayFromLatest || reader.unread : newContent) && (
           <LatestButton onLatest={() => {

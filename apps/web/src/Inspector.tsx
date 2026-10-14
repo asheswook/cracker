@@ -23,6 +23,7 @@ export function Inspector({
   onArchive,
   onSource,
   workSession,
+  embedded = false,
 }: {
   panel: Panel;
   state: ReturnType<typeof useClient>;
@@ -32,6 +33,7 @@ export function Inspector({
   onSource: (conversation: Id, message: Id) => Promise<void>;
   workSession: WorkSession;
   onArchive: (id: Id) => void;
+  embedded?: boolean;
 }) {
   const [error, setError] = useState('');
   useLayoutEffect(() => {
@@ -39,7 +41,7 @@ export function Inspector({
   }, [panel]);
   return (
     <>
-      <InspectorHeader panel={panel} onClose={onClose} />
+      {!embedded && <InspectorHeader panel={panel} onClose={onClose} />}
       <div className="inspector-body">
         <AnimatePresence mode="wait" initial={false}>
           <Motion.div

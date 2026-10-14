@@ -15,6 +15,7 @@ export const Version = z.object({
   content: z.string(),
   content_hash: z.string(),
   origin_message_id: z.uuid().nullable(),
+  agent_authored: z.boolean().default(false),
   created_at: z.string(),
 });
 export async function ownedVersion(

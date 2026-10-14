@@ -1,0 +1,39 @@
+/* The single design scale. Components use these instead of literal sizes, radii and curves. */
+:root {
+  --t-micro: 11px;
+  --t-caption: 12px;
+  --t-footnote: 13px;
+  --t-subhead: 14px;
+  --t-body: 15px;
+  --t-callout: 16px;
+  --t-title: 17px;
+  --t-title2: 20px;
+  --t-title1: 24px;
+  --t-large: 34px;
+
+  --lh-tight: 1.3;
+  --lh-text: 1.5;
+  --lh-read: 1.65;
+
+  --r-xs: 8px;
+  --r-sm: 10px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --r-2xl: 28px;
+  --r-full: 999px;
+
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --dur-quick: 120ms;
+  --dur-base: 180ms;
+  --dur-sheet: 340ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-quick: 0ms;
+    --dur-base: 0ms;
+    --dur-sheet: 0ms;
+  }
+}

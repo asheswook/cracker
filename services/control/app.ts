@@ -2,6 +2,7 @@ import { notificationRoutes } from "../../packages/notifications/routes.ts";
 import { proactiveRoutes } from "../../packages/proactive/routes.ts";
 import { modelClientRoutes, modelDaemonRoutes } from "../../packages/models/routes.ts";
 import { accountClientRoutes, accountDaemonRoutes } from "../../packages/models/account-routes.ts";
+import { subscriptionClientRoutes, subscriptionDaemonRoutes } from "../../packages/models/subscription-routes.ts";
 import type { NotificationConfig } from "../../packages/notifications/config.ts";
 import type { PushConfig } from "../../packages/notifications/schema.ts";
 import { extensionClientRoutes, extensionDaemonRoutes } from "../../packages/extensions/routes";
@@ -111,6 +112,8 @@ export function createApp(
   app.route("/v1/daemon/proactive-work", proactiveRoutes(sql));
   app.route("/v1/model-settings", modelClientRoutes(sql, options.extensionKey));
   app.route("/v1/model-account", accountClientRoutes(sql, options.extensionKey));
+  app.route("/v1/subscription", subscriptionClientRoutes(sql, options.extensionKey));
+  app.route("/v1/daemon/subscription", subscriptionDaemonRoutes(sql, options.extensionKey));
   app.route("/v1/daemon/model-account", accountDaemonRoutes(sql, options.extensionKey));
   app.route("/v1/daemon/model-settings", modelDaemonRoutes(sql, options.extensionKey));
   app.route("/v1/extensions", extensionClientRoutes(sql, options.extensionKey));

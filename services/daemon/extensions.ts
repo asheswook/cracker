@@ -1,11 +1,12 @@
 import type { Assignment } from "../../packages/protocol/index.ts";
 import { HTTPError, type KyInstance } from "ky";
 import { z } from "zod";
-import { Manifest, type SkillMetadata, type Observation } from "../../packages/extensions/schema.ts";
+import { Manifest, SaveSkillInput, Skill, type SkillMetadata, type Observation } from "../../packages/extensions/schema.ts";
 import type { Tool } from "../../packages/provider/index.ts";
 import type { ToolExecutor } from "./tools.ts";
 import { mcpConnectionFailure } from "./mcp-failure.ts";
 export const loadSkillTool:Tool={type:"function",name:"load_skill",description:"Load the complete SKILL.md of an enabled user-configured skill when relevant. The catalog only contains metadata; do not claim to have read the skill before this tool succeeds.",strict:true,parameters:{type:"object",properties:{skill_id:{type:"string"}},required:["skill_id"],additionalProperties:false}};
+export const saveSkillTool:Tool={type:"function",name:"save_skill",description:"Save a reusable procedure or standing preference explicitly stated by the user. Describe WHEN to use it in description and HOW in Markdown content. Load and update a matching skill rather than duplicating it. source_message_id must identify the user's instruction in this conversation. Never save one-off facts, secrets or credentials. Use null skill_id to create; saved skills are enabled immediately.",strict:true,parameters:{type:"object",properties:{name:{type:"string",maxLength:80},description:{type:"string",maxLength:300},content:{type:"string",maxLength:20000},skill_id:{type:["string","null"]},source_message_id:{type:"string"}},required:["name","description","content","skill_id","source_message_id"],additionalProperties:false}};
 export class ExtensionManager {
   private skills:readonly z.infer<typeof SkillMetadata>[]=[];
   private readonly servers=new Map<string,{revision:number;failures:number;retryAt:number;errorCode?:NonNullable<z.infer<typeof Observation>["error_code"]>}>();
@@ -20,6 +21,15 @@ export class ExtensionManager {
     return {kind:'pinned_skill_version' as const,...skill};
   }
   catalog():readonly {id:string;name:string;description:string;revision:number}[]{return this.skills.filter(skill=>skill.enabled).map(({id,name,description,revision})=>({id,name,description,revision}));}
+  async save(args:string,signal:AbortSignal,assignment:Assignment):Promise<string>{
+    const input=SaveSkillInput.parse(JSON.parse(args));
+    const known=input.skill_id?this.skills.find(skill=>skill.id===input.skill_id):undefined;
+    if(input.skill_id&&!known)return JSON.stringify({error:"skill_configuration_changed"});
+    if(known&&!known.enabled)return JSON.stringify({error:"skill_not_enabled",instruction:"The user disabled this skill; do not re-enable it implicitly."});
+    const {skill}=z.object({skill:Skill}).parse(await this.http.post("v1/daemon/extensions/skills",{json:{...input,run_id:assignment.run_id,...(known?{expected_revision:known.revision}:{})},signal}).json());
+    this.skills=[...this.skills.filter(item=>item.id!==skill.id),skill];
+    return JSON.stringify({saved:true,skill_id:skill.id,name:skill.name,description:skill.description,revision:skill.revision,enabled:skill.enabled});
+  }
   async load(args:string,signal:AbortSignal,assignment?:Assignment):Promise<string>{
     const {skill_id}=z.object({skill_id:z.uuid()}).parse(JSON.parse(args));
     if(assignment?.skill_binding?.skill_id===skill_id)return JSON.stringify(await this.loadBound(assignment,signal));

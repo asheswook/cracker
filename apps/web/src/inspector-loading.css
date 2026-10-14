@@ -1,5 +1,5 @@
 .inspector-loading-status {
   margin: var(--s2) 0 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--t-footnote);
 }

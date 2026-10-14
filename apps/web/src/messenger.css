@@ -9,33 +9,55 @@
   --message-radius: 22px;
   --message-line: 22px;
   --message-control-motion: 150ms;
-  --message-safe-top: env(safe-area-inset-top, 0px);
+  --message-safe-top: var(--native-safe-top, env(safe-area-inset-top, 0px));
   --message-top-fade-height: calc(96px + var(--message-safe-top));
-  --message-header-inset: calc(var(--s3) + var(--message-safe-top));
-  --message-identity-height: 94px;
-  --message-header-clearance: calc(var(--message-header-inset) + var(--message-identity-height) + var(--s4));
+  --message-header-inset: calc(var(--s2) + var(--message-safe-top));
+  --message-identity-height: 80px;
+  --message-header-clearance: calc(var(--message-header-inset) + var(--message-identity-height) + var(--s2));
 }
 .assistant-shell .main-surface {
   position: relative;
   background: var(--message-canvas);
   color: var(--message-ink);
 }
+/* Messages-style: the identity floats over a progressive blur that eases into the conversation, with no bar edge.
+   Each layer blurs harder than the one below it and is masked to an overlapping band, so the blur radius ramps
+   smoothly from the top edge to nothing instead of starting at a visible line. */
 .assistant-shell .main-surface::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto;
-  height: var(--message-top-fade-height);
-  z-index: 2;
-  pointer-events: none;
-  background: linear-gradient(to bottom, var(--message-canvas), transparent);
+  content: none;
 }
+.messenger-header-backdrop {
+  --header-fade: var(--s10);
+  position: absolute;
+  inset: 0 0 calc(-1 * var(--header-fade));
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(to bottom,
+    color-mix(in srgb, var(--message-canvas) 90%, transparent) 0%,
+    color-mix(in srgb, var(--message-canvas) 82%, transparent) 40%,
+    color-mix(in srgb, var(--message-canvas) 58%, transparent) 66%,
+    color-mix(in srgb, var(--message-canvas) 26%, transparent) 84%,
+    color-mix(in srgb, var(--message-canvas) 8%, transparent) 94%,
+    transparent 100%);
+}
+.messenger-header-backdrop > span {
+  position: absolute;
+  inset: 0;
+}
+.messenger-header-backdrop > span:nth-child(1) { -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px); -webkit-mask-image: linear-gradient(to top, transparent 0%, #000 16%, #000 32%, transparent 48%); mask-image: linear-gradient(to top, transparent 0%, #000 16%, #000 32%, transparent 48%); }
+.messenger-header-backdrop > span:nth-child(2) { -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); -webkit-mask-image: linear-gradient(to top, transparent 16%, #000 32%, #000 48%, transparent 64%); mask-image: linear-gradient(to top, transparent 16%, #000 32%, #000 48%, transparent 64%); }
+.messenger-header-backdrop > span:nth-child(3) { -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); -webkit-mask-image: linear-gradient(to top, transparent 32%, #000 48%, #000 64%, transparent 80%); mask-image: linear-gradient(to top, transparent 32%, #000 48%, #000 64%, transparent 80%); }
+.messenger-header-backdrop > span:nth-child(4) { -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); -webkit-mask-image: linear-gradient(to top, transparent 48%, #000 64%, #000 80%, transparent 96%); mask-image: linear-gradient(to top, transparent 48%, #000 64%, #000 80%, transparent 96%); }
+.messenger-header-backdrop > span:nth-child(5) { -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); -webkit-mask-image: linear-gradient(to top, transparent 64%, #000 80%); mask-image: linear-gradient(to top, transparent 64%, #000 80%); }
+.messenger-header-backdrop > span:nth-child(6) { -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); -webkit-mask-image: linear-gradient(to top, transparent 80%, #000 96%); mask-image: linear-gradient(to top, transparent 80%, #000 96%); }
 .assistant-shell .messenger-header {
   container: conversation-header / inline-size;
   position: absolute;
   z-index: 3;
   inset: 0 0 auto;
-  height: var(--message-header-clearance);
-  padding: var(--message-header-inset) max(var(--s5), env(safe-area-inset-right)) 0 max(var(--s5), env(safe-area-inset-left));
+  min-height: var(--message-header-clearance);
+  padding: var(--message-header-inset) max(var(--s5), env(safe-area-inset-right)) var(--s2) max(var(--s5), env(safe-area-inset-left));
+  isolation: isolate;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, min(240px, 40%)) minmax(0, 1fr);
   align-items: start;
@@ -43,7 +65,7 @@
   background: transparent;
   pointer-events: none;
 }
-.messenger-header > * {
+.messenger-header > :not(.messenger-header-backdrop) {
   pointer-events: auto;
 }
 .messenger-header-start {
@@ -65,12 +87,12 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 2px;
   min-height: var(--message-identity-height);
   max-width: 100%;
   min-width: 0;
   padding: var(--s1) var(--s2);
-  border-radius: 16px;
+  border-radius: var(--r-lg);
   transition: transform var(--message-control-motion);
 }
 .messenger-identity:hover .identity-name {
@@ -82,13 +104,13 @@
 .identity-avatar {
   display: grid;
   place-items: center;
-  width: 60px;
-  height: 60px;
-  flex: 0 0 60px;
+  width: 56px;
+  height: 56px;
+  flex: 0 0 56px;
   border-radius: 50%;
   background: var(--message-received);
   color: var(--message-ink);
-  font-size: 24px;
+  font-size: var(--t-title1);
   font-weight: 550;
 }
 .identity-name {
@@ -96,13 +118,14 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  min-height: 22px;
-  padding: 2px var(--s3);
-  border: 1px solid var(--line);
+  min-height: 20px;
+  padding: 1px var(--s2);
+  border: 0;
   border-radius: var(--pill);
-  background: var(--message-canvas);
+  background: color-mix(in srgb, var(--message-canvas) 70%, transparent);
+  font-weight: 600;
   max-width: 100%;
-  font-size: 12px;
+  font-size: var(--t-caption);
   line-height: 18px;
   overflow: hidden;
   white-space: nowrap;
@@ -124,18 +147,18 @@
   gap: 0;
   padding: 4px 14px 6px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--message-canvas);
   text-align: center;
 }
 .archive-kicker {
-  font-size: 11px;
+  font-size: var(--t-micro);
   line-height: 14px;
   color: var(--muted);
 }
 .archive-name {
   max-width: 100%;
-  font-size: 15px;
+  font-size: var(--t-body);
   line-height: 22px;
   font-weight: 600;
   color: var(--ink);
@@ -160,8 +183,6 @@
   gap: 0;
   margin-top: 16px;
   min-width: 0;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 72px;
 }
 .assistant-shell .message.same-speaker {
   margin-top: 4px;
@@ -178,7 +199,7 @@
   max-width: min(88%, calc(100% - 73px));
   padding: 10px 16px;
   border-radius: var(--message-radius);
-  font-size: 16px;
+  font-size: var(--t-callout);
   line-height: var(--message-line);
   color: var(--message-ink);
   background: var(--message-received);
@@ -212,7 +233,7 @@
   margin: 0;
   padding: 4px 16px 0 0;
   color: var(--message-secondary);
-  font-size: 12px;
+  font-size: var(--t-caption);
   line-height: 16px;
 }
 .assistant-shell .receipt-shell {
@@ -236,7 +257,7 @@
 }
 .assistant-shell .messenger-composer {
   padding: 8px;
-  border-radius: 28px;
+  border-radius: var(--r-2xl);
   background: var(--message-composer);
   box-shadow:
     0 0 0 1px rgb(0 0 0 / 4%),
@@ -249,7 +270,7 @@
   flex-wrap: wrap;
   gap: var(--s2);
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--t-footnote);
   line-height: 1.65;
   word-break: keep-all;
 }
@@ -263,7 +284,7 @@
 .assistant-shell .composer-input-row textarea {
   min-height: 36px;
   padding: 7px 0;
-  font-size: 16px;
+  font-size: var(--t-callout);
   line-height: 22px;
   color: var(--message-ink);
   scrollbar-width: none;
@@ -399,10 +420,10 @@
   margin: 0 0 var(--s4);
   padding: 0 var(--s4);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--message-canvas);
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--t-footnote);
 }
 .older-messages:hover {
   color: var(--ink);

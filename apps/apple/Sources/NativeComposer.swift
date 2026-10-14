@@ -1,6 +1,7 @@
 #if os(iOS)
 import SwiftUI
 import WebKit
+import UniformTypeIdentifiers
 
 private final class ComposerButton: UIButton {
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
@@ -20,7 +21,7 @@ struct NativeComposerHost: UIViewControllerRepresentable {
 }
 
 @MainActor
-final class NativeComposerController: UIViewController, UITextViewDelegate, UITextPasteDelegate {
+final class NativeComposerController: UIViewController, UITextViewDelegate, UITextPasteDelegate, UIDropInteractionDelegate {
     typealias Deliver = ([String: Any], Bool, @escaping (Result<Any, Error>) -> Void) -> Void
     #if os(iOS)
     private let attachmentPicker = NativeAttachmentPicker()
@@ -29,7 +30,7 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
         guard let state, state.visible, !suspended, !externalPresentation, state.attachEnabled else { completion(nil); return }
         if let pastedAttachment {
             self.pastedAttachment = nil
-            completion(pastedAttachment.session == state.session ? [pastedAttachment.url] : nil)
+            completion(pastedAttachment.session == state.session ? pastedAttachment.urls : nil)
             return
         }
         attachmentPicker.begin(parameters: parameters, host: self, anchor: attach, completion: completion)
@@ -42,6 +43,7 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
     private var keyboardWasVisible = false
     private var keyboardAccessibilityActionVisible = false
     private let tray = UIView()
+    private let trayMaterial = UIVisualEffectView(effect: UIBlurEffect(style: .systemThickMaterial))
     private let editor = UITextView()
     private let placeholder = UILabel()
     private let attach = ComposerButton(type: .system)
@@ -67,7 +69,7 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
     private var externalPresentation = false
     private var pendingSends = Set<String>()
     private var uncertainSends: [String: [String: Any]] = [:]
-    private var pastedAttachment: (url: URL, session: String)?
+    private var pastedAttachment: (urls: [URL], session: String)?
     private var pastedDirectories: [URL] = []
 
     init(webView: WKWebView, transition: @escaping ([String: Any]) -> Void, deliver: @escaping Deliver) {
@@ -84,10 +86,23 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
         [webView, tray].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; view.addSubview($0) }
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.scrollView.keyboardDismissMode = .interactive
+        webView.scrollView.bounces = false
+        webView.scrollView.alwaysBounceVertical = false
         tray.layer.cornerRadius = NativeComposerLayout.cornerRadius
-        tray.layer.borderWidth = 1
+        tray.layer.cornerCurve = .continuous
+        tray.layer.borderWidth = 0.5
+        tray.clipsToBounds = true
+        trayMaterial.translatesAutoresizingMaskIntoConstraints = false
+        trayMaterial.isUserInteractionEnabled = false
+        tray.insertSubview(trayMaterial, at: 0)
+        NSLayoutConstraint.activate([
+            trayMaterial.topAnchor.constraint(equalTo: tray.topAnchor), trayMaterial.bottomAnchor.constraint(equalTo: tray.bottomAnchor),
+            trayMaterial.leadingAnchor.constraint(equalTo: tray.leadingAnchor), trayMaterial.trailingAnchor.constraint(equalTo: tray.trailingAnchor)
+        ])
         editor.delegate = self
         editor.pasteDelegate = self
+        editor.pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: [UTType.plainText.identifier, UTType.image.identifier, UTType.item.identifier])
+        view.addInteraction(UIDropInteraction(delegate: self))
         editor.allowsEditingTextAttributes = false
         editor.font = .systemFont(ofSize: 16)
         editor.adjustsFontForContentSizeCategory = true
@@ -330,7 +345,7 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
         view.backgroundColor = .systemBackground
         webView.backgroundColor = .systemBackground
         webView.scrollView.backgroundColor = .systemBackground
-        tray.backgroundColor = .secondarySystemBackground
+        tray.backgroundColor = .clear
         tray.layer.borderColor = UIColor.separator.cgColor
         editor.textColor = .label
         editor.tintColor = UIColor(red: 232/255, green: 99/255, blue: 10/255, alpha: 1)
@@ -377,6 +392,64 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
         capture(); flush(); updateControls()
     }
 
+    func textPasteConfigurationSupporting(_ supporting: UITextPasteConfigurationSupporting, transform item: UITextPasteItem) {
+        let provider = item.itemProvider
+        let text = provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier)
+        let file = provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) || (!text && provider.hasItemConformingToTypeIdentifier(UTType.item.identifier))
+        guard file else { item.setDefaultResult(); return }
+        stageFiles([provider])
+        item.setNoResult()
+    }
+
+    func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
+        state?.attachEnabled == true && session.hasItemsConforming(toTypeIdentifiers: [UTType.item.identifier])
+    }
+    func dropInteraction(_ interaction: UIDropInteraction, sessionDidUpdate session: UIDropSession) -> UIDropProposal {
+        UIDropProposal(operation: state?.attachEnabled == true ? .copy : .forbidden)
+    }
+    func dropInteraction(_ interaction: UIDropInteraction, performDrop session: UIDropSession) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        stageFiles(session.items.map(\.itemProvider))
+    }
+
+    /// Copies pasted or dropped files to a private folder and hands them to the page's existing attach flow.
+    private func stageFiles(_ providers: [NSItemProvider]) {
+        guard let state, state.attachEnabled, !suspended, !externalPresentation, pastedAttachment == nil else {
+            if let scope = state?.scope { pasteError("파일 첨부가 끝난 뒤 다시 시도해 주세요.", scope: scope) }
+            return
+        }
+        guard #available(iOS 18.4, *) else { pasteError("이 iOS 버전에서는 + 버튼으로 첨부해 주세요.", scope: state.scope); return }
+        let session = state.session, scope = state.scope
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("assistant-drop-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        pastedDirectories.append(directory)
+        Task { @MainActor in
+            var urls: [URL] = []
+            for (index, provider) in providers.prefix(8).enumerated() {
+                let type = provider.registeredContentTypes.first { $0.conforms(to: .image) } ?? provider.registeredContentTypes.first { !$0.conforms(to: .plainText) } ?? .data
+                if let url = await Self.copy(provider, type: type, into: directory, index: index) { urls.append(url) }
+            }
+            guard !urls.isEmpty, let current = self.state, current.session == session else {
+                self.pasteError("파일을 가져오지 못했어요.", scope: scope); return
+            }
+            self.pastedAttachment = (urls, session)
+            self.flush()
+            if let buffer = self.buffers[session] { self.issue(self.command("attach", state: current, buffer: buffer), state: current) }
+        }
+    }
+
+    private static func copy(_ provider: NSItemProvider, type: UTType, into directory: URL, index: Int) async -> URL? {
+        await withCheckedContinuation { continuation in
+            provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
+                guard let url else { continuation.resume(returning: nil); return }
+                let name = provider.suggestedName.map { $0 + (url.pathExtension.isEmpty ? "" : ".\(url.pathExtension)") } ?? url.lastPathComponent
+                let target = directory.appendingPathComponent("\(index)-\(name)")
+                do { try FileManager.default.copyItem(at: url, to: target); continuation.resume(returning: target) }
+                catch { continuation.resume(returning: nil) }
+            }
+        }
+    }
+
     func textPasteConfigurationSupporting(_ supporting: UITextPasteConfigurationSupporting,
                                          performPasteOf attributedString: NSAttributedString, to textRange: UITextRange) -> UITextRange {
         guard let state, state.visible, state.editable, !suspended, !externalPresentation else { return textRange }
@@ -392,7 +465,7 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
                 pastedDirectories.append(directory)
                 let url = directory.appendingPathComponent("pasted-text.txt")
                 try text.write(to: url, atomically: true, encoding: .utf8)
-                pastedAttachment = (url, state.session)
+                pastedAttachment = ([url], state.session)
                 flush()
                 if let buffer = buffers[state.session] { issue(command("attach", state: state, buffer: buffer), state: state) }
             } catch { pasteError("붙여넣은 내용을 파일로 보관하지 못했어요. 원문은 클립보드에 유지됩니다.", scope: state.scope) }
@@ -428,11 +501,11 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
 
     private func issue(_ payload: [String: Any], state sentState: NativeComposerState) {
         let isSend = payload["kind"] as? String == "send"
-        let pastedURL = payload["kind"] as? String == "attach" ? pastedAttachment?.url : nil
+        let pastedURL = payload["kind"] as? String == "attach" ? pastedAttachment?.urls.first : nil
         let pasteFailed = { [weak self] in
-            guard let self, let pastedURL, self.pastedAttachment?.url == pastedURL else { return }
+            guard let self, let pastedURL, self.pastedAttachment?.urls.first == pastedURL else { return }
             self.pastedAttachment = nil
-            self.pasteError("텍스트 파일을 첨부하지 못했어요. 원문은 클립보드에 유지됩니다.", scope: sentState.scope)
+            self.pasteError("파일을 첨부하지 못했어요. 다시 시도해 주세요.", scope: sentState.scope)
         }
         if isSend { pendingSends.insert(sentState.session); updateControls() }
         deliver(payload, payload["kind"] as? String == "attach") { [weak self] result in
@@ -521,7 +594,7 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
     }
 
     private func updateViewportConstraints() {
-        let overlay = !tray.isHidden && NativeReaderBridge.lookup(webView)?.allowsComposerOverlay == true
+        let overlay = !tray.isHidden
         let desired: NSLayoutConstraint = overlay ? overlayBottom
             : (tray.isHidden ? inactiveBottom : activeBottom)
         overlayActive = overlay
@@ -537,10 +610,13 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
 
     private func updateReaderInset() {
         let inset = overlayActive ? max(0, webView.frame.maxY - tray.frame.minY) : 0
+        publishComposerInset(inset)
+        // The page owns its scroller and reserves the composer through --native-composer-inset.
+        // An inset on the outer scroll view would let the whole document move under a drag.
         let scroll = webView.scrollView
-        if abs(scroll.contentInset.bottom - inset) > 0.5 {
-            var value = scroll.contentInset; value.bottom = inset; scroll.contentInset = value
-            var indicator = scroll.verticalScrollIndicatorInsets; indicator.bottom = inset
+        if scroll.contentInset.bottom != 0 {
+            var value = scroll.contentInset; value.bottom = 0; scroll.contentInset = value
+            var indicator = scroll.verticalScrollIndicatorInsets; indicator.bottom = 0
             scroll.verticalScrollIndicatorInsets = indicator
         }
     }
@@ -561,7 +637,33 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
         #if os(iOS)
         updateReaderInset()
         NativeReaderBridge.lookup(webView)?.geometryChanged()
+        publishSafeTop()
         #endif
+    }
+    private var publishedComposerInset: CGFloat = -1
+    private func publishComposerInset(_ inset: CGFloat) {
+        guard abs(inset - publishedComposerInset) > 0.5 else { return }
+        publishedComposerInset = inset
+        webView.evaluateJavaScript("document.documentElement.style.setProperty('--native-composer-inset', '\(Int(inset.rounded()))px')")
+    }
+    private var publishedSafeTop: CGFloat = -1
+    /// Inset adjustment is disabled for the reader, so the page cannot see the status bar inset; share it as a CSS variable.
+    private func publishSafeTop() {
+        // The conversation web view always extends under the status bar, so the window inset is the page inset.
+        guard let window = view.window else { return }
+        let top = window.safeAreaInsets.top
+        guard abs(top - publishedSafeTop) > 0.5 else { return }
+        publishedSafeTop = top
+        applySafeTop()
+    }
+    private func applySafeTop() {
+        guard publishedSafeTop >= 0 else { return }
+        webView.evaluateJavaScript("document.documentElement.style.setProperty('--native-safe-top', '\(Int(publishedSafeTop.rounded()))px')")
+    }
+    /// A new document starts without the variable; re-apply the last measured inset.
+    func resetSafeTop() {
+        applySafeTop()
+        if publishedComposerInset >= 0 { let inset = publishedComposerInset; publishedComposerInset = -1; publishComposerInset(inset) }
     }
     private func resizeEditor() {
         guard editor.bounds.width > 0 else { return }

@@ -4,6 +4,10 @@
 <dict>
 	<key>AssistantAppOrigin</key>
 	<string>$(ASSISTANT_APP_ORIGIN)</string>
+	<key>CFBundleAllowMixedLocalizations</key>
+	<true/>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>ko</string>
 	<key>CFBundleDisplayName</key>
 	<string>Assistant</string>
 	<key>CFBundleExecutable</key>

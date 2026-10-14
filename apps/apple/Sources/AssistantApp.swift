@@ -14,7 +14,7 @@ struct AssistantApp: App {
         Window("Assistant", id: "assistant") { ShellView(shell: shell) }
         .defaultSize(width: 1120, height: 780)
         .commands { CommandGroup(replacing: .newItem) {} }
-        Settings { NativeSettingsView().tint(ShellStyle.accent) }
+        Settings { MacSettingsView().tint(ShellStyle.accent) }
         #else
         WindowGroup { ShellView(shell: shell) }
         #endif

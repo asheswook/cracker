@@ -25,7 +25,7 @@
   border-radius: var(--r2);
   background: var(--surface);
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--t-caption);
   line-height: 1.5;
   word-break: keep-all;
   pointer-events: none;
@@ -51,7 +51,7 @@
 }
 .screen-takeover span,
 .screen-control-pending {
-  font-size: 13px;
+  font-size: var(--t-footnote);
   font-weight: 500;
 }
 .screen-takeover span {
@@ -100,7 +100,7 @@
   align-items: center;
   gap: var(--s2);
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t-caption);
   line-height: 1.5;
   word-break: keep-all;
 }
@@ -113,7 +113,7 @@
 .computer-control-strip .computer-control-action {
   min-height: 44px;
   padding: var(--s2) var(--s3);
-  font-size: 12px;
+  font-size: var(--t-caption);
   white-space: nowrap;
 }
 .computer-panel.computer-session:fullscreen {
@@ -157,13 +157,13 @@
   max-width: 36ch;
   text-wrap: balance;
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--t-footnote);
   line-height: 1.5;
 }
 .computer-session .screen-connection > span {
   max-width: 38ch;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t-caption);
   word-break: keep-all;
 }
 .computer-session .screen-connection > svg {
@@ -225,7 +225,7 @@
 }
 .computer-input-hint {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t-caption);
   line-height: 1.6;
   text-wrap: balance;
   word-break: keep-all;
@@ -242,7 +242,7 @@
   padding: 0;
   border: 0;
   opacity: 0;
-  font-size: 16px;
+  font-size: var(--t-callout);
   resize: none;
 }
 .computer-keyboard[data-open="false"] {
@@ -264,7 +264,7 @@
   color: var(--ink);
   background: var(--surface-muted);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--t-caption);
 }
 .inspector-dialog:not([data-inline]) .computer-inspector .inspector-header .icon-button {
   width: 44px;
@@ -293,7 +293,7 @@
   background: transparent;
   color: var(--computer-control-ink);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--t-caption);
 }
 .computer-session[data-keyboard-compact="true"] .computer-control-action {
   color: var(--computer-control-ink);
@@ -301,7 +301,7 @@
   flex-shrink: 0;
   min-height: 44px;
   padding-inline: var(--s2);
-  font-size: 12px;
+  font-size: var(--t-caption);
   white-space: nowrap;
 }
 .computer-session[data-keyboard-compact="true"] .computer-input-hint {
@@ -359,7 +359,7 @@
     min-width: 0;
   }
   .inspector-dialog:not([data-inline]) .computer-session .computer-identity h3 {
-    font-size: 12px;
+    font-size: var(--t-caption);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

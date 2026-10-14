@@ -11,8 +11,13 @@ import { resumeRun } from "../repository/resume";
 import {ComposingRequest} from "../../../packages/protocol/composing";
 import {updateComposing} from "../repository/composing";
 import { ComputerControlRequest, requestComputerControl } from "../repository/message-control";
+import { NotifyUserRequest, notifyUser } from "../repository/notify-user";
 export function daemonRoutes(sql: Database, semanticEnabled = false, structureMode:'off'|'shadow'|'on'='off') {
   const app = new Hono<AppEnv>();
+  app.post("/notify-user", async c => {
+    const request = NotifyUserRequest.parse(await c.req.json());
+    return c.json(await sql.begin(tx => notifyUser(tx, c.get("principal"), request)));
+  });
   app.post("/computer-control", async c => {
     const request = ComputerControlRequest.parse(await c.req.json());
     return c.json(await sql.begin(tx => requestComputerControl(tx, c.get("principal"), request)));

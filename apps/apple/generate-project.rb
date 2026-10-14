@@ -22,10 +22,16 @@ package.requirement = { 'kind' => 'exactVersion', 'version' => '12.19.2' }
 project.root_object.package_references << package
 sources = project.main_group.new_group('Sources', 'Sources')
 refs = Dir[File.join(root, 'Sources/*.swift')].sort.map { |file| sources.new_file(File.basename(file)) }
+shared = project.main_group.new_group('Shared', 'Shared')
+shared_refs = Dir[File.join(root, 'Shared/*.swift')].sort.map { |file| shared.new_file(File.basename(file)) }
+controls_group = project.main_group.new_group('Controls', 'Controls')
+controls_refs = Dir[File.join(root, 'Controls/*.swift')].sort.map { |file| controls_group.new_file(File.basename(file)) }
+apps = {}
 [['Assistant-iOS', :ios, '17.0', 'ios'], ['Assistant-macOS', :osx, '14.0', 'macos']].each do |name, platform, minimum, suffix|
   target = project.new_target(:application, name, platform, minimum)
   target.product_reference.path = 'Assistant.app'
-  refs.each { |ref| target.source_build_phase.add_file_reference(ref) }
+  (refs + shared_refs).each { |ref| target.source_build_phase.add_file_reference(ref) }
+  apps[platform] = target
   catalog = project.main_group.new_file("Assets/#{platform == :ios ? 'iOS' : 'macOS'}.xcassets")
   target.resources_build_phase.add_file_reference(catalog)
   %w[FirebaseCore FirebaseMessaging].each do |product|
@@ -77,4 +83,31 @@ refs = Dir[File.join(root, 'Sources/*.swift')].sort.map { |file| sources.new_fil
   scheme.set_launch_target(target)
   scheme.save_as(project.path, name, true)
 end
+
+ios_app = apps.fetch(:ios)
+controls = project.new_target(:app_extension, 'Assistant-Controls', :ios, '18.0')
+(controls_refs + shared_refs).each { |ref| controls.source_build_phase.add_file_reference(ref) }
+%w[WidgetKit SwiftUI AppIntents].each { |framework| controls.add_system_framework(framework) }
+controls.build_configurations.each do |config|
+  settings = config.build_settings
+  settings['SWIFT_VERSION'] = '5.0'
+  settings['PRODUCT_NAME'] = 'AssistantControls'
+  settings['PRODUCT_BUNDLE_IDENTIFIER'] = "#{ENV.fetch('ASSISTANT_BUNDLE_PREFIX', 'com.example.assistant')}.ios.controls"
+  settings['INFOPLIST_FILE'] = 'Configuration/controls-Info.plist'
+  settings['CODE_SIGN_STYLE'] = development_team ? 'Automatic' : 'Manual'
+  settings['DEVELOPMENT_TEAM'] = development_team || ''
+  settings['CODE_SIGN_IDENTITY'] = 'Apple Development' if development_team
+  settings['CURRENT_PROJECT_VERSION'] = '1'
+  settings['MARKETING_VERSION'] = '1.0.0'
+  settings['TARGETED_DEVICE_FAMILY'] = '1,2'
+  settings['IPHONEOS_DEPLOYMENT_TARGET'] = '18.0'
+  settings['SKIP_INSTALL'] = 'YES'
+  settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
+  settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = config.name == 'Debug' ? 'DEBUG' : ''
+end
+ios_app.add_dependency(controls)
+embed = ios_app.new_copy_files_build_phase('Embed Foundation Extensions')
+embed.symbol_dst_subfolder_spec = :plug_ins
+build_file = embed.add_file_reference(controls.product_reference, true)
+build_file.settings = { 'ATTRIBUTES' => ['RemoveHeadersOnCopy'] }
 project.save

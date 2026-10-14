@@ -1,10 +1,10 @@
 .messenger-header .messenger-identity {
   --identity-radius: 14px;
-  --identity-name-size: 16px;
-  --identity-status-size: 14px;
+  --identity-name-size: 15px;
+  --identity-status-size: 13px;
   --identity-line-height: 20px;
-  --identity-name-weight: 500;
-  --identity-padding-block: 4px;
+  --identity-name-weight: 600;
+  --identity-padding-block: 2px;
   --identity-padding-inline: 10px;
   --identity-character-overlap: 2px;
   --identity-status-lines: 2;
@@ -33,8 +33,10 @@
   left: 50%;
   transform: translateX(-50%);
   border-radius: var(--identity-radius);
-  background: var(--message-canvas);
-  box-shadow: 0 0 0 var(--identity-outline-width) var(--line);
+  background: color-mix(in srgb, var(--message-canvas) 72%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(160%);
+  box-shadow: none;
   pointer-events: none;
 }
 .identity-working-label > .identity-label-surface::after {

@@ -39,9 +39,10 @@ export async function saveModel(sql: Query, scope: { readonly workspace: string;
     throw new DomainError("stale_revision", "Model settings changed. Reload before saving.", 409);
   const inherited = await defaults(sql, vmScope);
   if (!inherited) throw new DomainError("model_runtime_unavailable", "The computer has not reported model-settings support yet", 409);
-  if (input.selection.provider === "chatgpt" && input.api_key)
-    throw new DomainError("invalid_request", "ChatGPT uses the computer's connected account", 400);
-  const stored = input.selection.provider === "chatgpt" ? undefined : (await sql`SELECT secret_cipher FROM assistant.model_revisions WHERE workspace_id=${scope.workspace} AND vm_id=${input.vm_id} AND selection->>'provider'=${input.selection.provider} AND secret_cipher IS NOT NULL ORDER BY created_at DESC,id DESC LIMIT 1`)[0];
+  const account = input.selection.provider === "chatgpt" || input.selection.provider === "subscription";
+  if (account && input.api_key)
+    throw new DomainError("invalid_request", "This provider uses the computer's connected account", 400);
+  const stored = account ? undefined : (await sql`SELECT secret_cipher FROM assistant.model_revisions WHERE workspace_id=${scope.workspace} AND vm_id=${input.vm_id} AND selection->>'provider'=${input.selection.provider} AND secret_cipher IS NOT NULL ORDER BY created_at DESC,id DESC LIMIT 1`)[0];
   const cipher = input.api_key ? await seal({ api_key: input.api_key }, scope.encryptionKey) : z.string().nullable().parse(stored?.["secret_cipher"] ?? null);
   if (!cipher && !inherited?.available.includes(input.selection.provider))
     throw new DomainError("model_connection_required", "Connect this provider before saving the model", 409);

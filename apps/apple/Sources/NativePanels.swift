@@ -3,94 +3,63 @@ import SwiftUI
 struct NativePanelView: View {
     let panel: ShellPanel
     @ObservedObject var data: ShellData
+    @ObservedObject var panels: PanelStore
+    var assistant: String? = nil
     let openConversation: (String, String?) -> Void
     let close: () -> Void
-    @State private var screen = false
     var body: some View {
         Group {
-            if panel == .settings { NativeSettingsView() }
-            else if panel == .notifications { NativeNotificationsView() }
-            else {
-                List {
-                    if let error = data.errors[panel.id] {
-                        Text(error).foregroundStyle(.secondary)
-                        Button("다시 불러오기") { Task { await data.refresh(panel) } }
-                    }
-                    if data.loading.contains(panel.id) { ProgressView("불러오고 있어요") }
-                    else if (data.records[panel] ?? []).isEmpty { Text("표시할 항목이 없어요").foregroundStyle(.secondary) }
-                    ForEach(data.records[panel] ?? []) { record in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(record.title).font(.body).textSelection(.enabled)
-                            if let detail = record.detail { Text(detail).font(.subheadline).foregroundStyle(.secondary) }
-                            if let date = record.date {
-                                if panel == .schedules { Text(date, format: .dateTime.month().day().hour().minute()).font(.caption).foregroundStyle(.secondary) }
-                                else { Text(date, style: .relative).font(.caption).foregroundStyle(.secondary) }
-                            }
-                            if let conversation = record.conversation_id {
-                                Button("대화에서 보기") { openConversation(conversation, record.source_message_id) }
-                            }
-                        }.padding(.vertical, 6)
-                    }
-                    if panel == .computer, !(data.records[panel] ?? []).isEmpty {
-                        Button("컴퓨터 화면 열기", systemImage: "display") { screen = true }
-                    }
-                }
-                #if os(iOS)
-                .listStyle(.insetGrouped)
-                #endif
-                .refreshable { await data.refresh(panel) }
+            switch panel {
+            case .notifications: NativeNotificationsView()
+            case .tasks: TasksPanel(store: panels, assistant: assistant, open: openConversation)
+            case .schedules: SchedulesPanel(store: panels, open: openConversation)
+            case .memory: MemoryPanel(store: panels)
+            case .computer, .settings: WebPanelView(panel: panel.webPanel)
             }
         }
         .navigationTitle(panel.title)
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) { Button("닫기", action: close) }
         }
-        .task(id: panel) { await data.refresh(panel) }
-        .sheet(isPresented: $screen) {
-            NavigationStack {
-                WebPanelView(panel: "computer").navigationTitle("컴퓨터")
-                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { screen = false } } }
+        #else
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
+                Text(panel.title).font(.title3.weight(.semibold))
+                Spacer()
+                Button(action: close) { Image(systemName: "xmark").font(.body.weight(.semibold)) }
+                    .buttonStyle(.borderless).foregroundStyle(.secondary)
+                    .keyboardShortcut(.cancelAction).help("닫기").accessibilityLabel("닫기")
             }
-            #if os(iOS)
-            .presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
-            #else
-            .frame(minWidth: 800, minHeight: 600)
-            #endif
+            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 4)
         }
+        #endif
     }
 }
 
-struct NativeSettingsView: View {
-    @State private var advanced = false
+#if os(macOS)
+/// General preferences are native; assistant configuration reuses the web settings in its own tab.
+struct MacSettingsView: View {
     var body: some View {
-        Form {
-            Section("Assistant") {
-                LabeledContent("버전", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0")
-                Text("시스템의 화면 모드와 동작 줄이기 설정을 따라요.").foregroundStyle(.secondary)
+        TabView {
+            Form {
+                Section {
+                    LabeledContent("버전", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0")
+                    Text("시스템의 화면 모드와 동작 줄이기 설정을 따라요.").foregroundStyle(.secondary)
+                }
+                Section("알림") { NativeNotificationsView() }
             }
-            Section("계정과 어시스턴트") {
-                Button("어시스턴트 설정 열기") { advanced = true }
-                Text("모델 연결과 어시스턴트의 세부 설정을 관리해요.").font(.caption).foregroundStyle(.secondary)
-            }
-            Section("알림") { NativeNotificationsView() }
-        }
-        .formStyle(.grouped)
-        #if os(macOS)
-        .frame(width: 480, height: 430)
-        #endif
-        .sheet(isPresented: $advanced) {
-            NavigationStack {
-                WebPanelView(panel: "settings").navigationTitle("어시스턴트 설정")
-                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { advanced = false } } }
-            }
-            #if os(iOS)
-            .presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
-            #else
-            .frame(minWidth: 640, minHeight: 620)
-            #endif
+            .formStyle(.grouped)
+            .frame(width: 520, height: 360)
+            .tabItem { Label("일반", systemImage: "gearshape") }
+            WebPanelView(panel: "settings")
+                .frame(minWidth: 640, idealWidth: 720, minHeight: 640, idealHeight: 760)
+                .tabItem { Label("어시스턴트", systemImage: "person.crop.circle") }
         }
     }
 }
+#endif
 
 struct NativeNotificationsView: View {
     @State private var permission = "default"
@@ -115,18 +84,34 @@ struct NativeNotificationsView: View {
 }
 
 /// Complex controls remain web content; the sheet, title and dismissal are native.
+@MainActor
+enum WebPanelCache {
+    private static var shells: [String: WebShell] = [:]
+    static func shell(_ panel: String) -> WebShell {
+        if let shell = shells[panel] { return shell }
+        let shell = WebShell(panel: panel)
+        shells[panel] = shell
+        return shell
+    }
+    static func warm(_ panels: [String]) { for panel in panels { _ = shell(panel) } }
+}
+
 struct WebPanelView: View {
-    @StateObject private var shell: WebShell
-    init(panel: String) { _shell = StateObject(wrappedValue: WebShell(panel: panel)) }
+    @ObservedObject private var shell: WebShell
+    @State private var showSpinner = false
+    init(panel: String) { shell = WebPanelCache.shell(panel) }
     var body: some View {
         ZStack {
             NativeWebView(webView: shell.webView)
-            if shell.loading { ProgressView("불러오고 있어요") }
+                .opacity(shell.loading ? 0 : 1)
+                .animation(.easeOut(duration: 0.2), value: shell.loading)
+            if shell.loading && showSpinner { ProgressView() }
             if let error = shell.failure {
                 ContentUnavailableView { Label("연결하지 못했어요", systemImage: "wifi.exclamationmark") }
                     description: { Text(error) } actions: { Button("다시 연결", action: shell.retry) }
             }
         }
+        .task { try? await Task.sleep(for: .milliseconds(400)); showSpinner = true }
         #if os(iOS)
         .sheet(item: $shell.exportedFile) { ActivitySheet(url: $0.url) }
         #endif

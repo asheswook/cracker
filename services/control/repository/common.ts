@@ -22,6 +22,7 @@ export async function appendMessage(
     readonly clientId: string;
     readonly attachments?: readonly string[];
     readonly role?: "user" | "system";
+    readonly origin?: "user" | "schedule" | "responsibility";
     readonly returnControl?: true;
     readonly replyTo?: string;
   },
@@ -61,11 +62,11 @@ export async function appendMessage(
   const task = Task.parse(
     active[0] ??
       (
-        await sql`INSERT INTO assistant.tasks(workspace_id,conversation_id,objective) VALUES(${input.workspace},${input.conversation},${input.content || attachments.map((file) => file.name).join(", ")}) RETURNING *`
+        await sql`INSERT INTO assistant.tasks(workspace_id,conversation_id,objective,origin) VALUES(${input.workspace},${input.conversation},${input.content || attachments.map((file) => file.name).join(", ")},${input.origin ?? "user"}) RETURNING *`
       )[0],
   );
   const rows =
-    await sql`INSERT INTO assistant.messages(workspace_id,conversation_id,task_id,role,content,client_message_id,reply_to_message_id) VALUES(${input.workspace},${input.conversation},${task.id},${input.role ?? "user"},${input.content},${input.clientId},${input.replyTo??null}) RETURNING *`;
+    await sql`INSERT INTO assistant.messages(workspace_id,conversation_id,task_id,role,content,client_message_id,reply_to_message_id,origin) VALUES(${input.workspace},${input.conversation},${task.id},${input.role ?? "user"},${input.content},${input.clientId},${input.replyTo??null},${input.origin ?? "user"}) RETURNING *`;
   const message = { ...Message.parse(rows[0]), attachments,reply:input.replyTo?await replyPreview(sql,input.workspace,input.replyTo):null };
   await bindAttachments(
     sql,

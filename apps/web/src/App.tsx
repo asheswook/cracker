@@ -30,7 +30,8 @@ import type { Id } from './types';
 import { createWorkSession } from './work-session';
 import { useWorkNavigation } from './useWorkNavigation';
 import { useAssistantWorking } from './useAssistantWorking';
-import { nativeShellConfiguration, listenNativeShell, publishNativeShell } from './native-bridge';
+import { nativeShellConfiguration, listenNativeShell, publishNativeShell, openInNativeBody, requestNativePanel } from './native-bridge';
+import { taskTarget } from './useWorkNavigation';
 import './assistant.css';
 import './messenger.css';
 import './inspector-motion.css';
@@ -50,8 +51,8 @@ export function App() {
     return selected.selected === conversation && selected.syncedCursor !== null && !selected.error;
   }), []);
   useEffect(() => {
-    publishNativeShell(state.phase === 'ready', state.selected, state.assistantId);
-  }, [state.phase, state.selected, state.assistantId]);
+    publishNativeShell(state.phase === 'ready', state.selected, state.assistantId, state.persona.name);
+  }, [state.phase, state.selected, state.assistantId, state.persona.name]);
   useTaskErrorToasts(state.workspace, state.phase === 'ready' && state.connected, state.tasks);
   useNotificationAttention(state.phase === 'ready' && state.connected && state.syncedCursor !== null, refreshAfterNotification, state.selected);
   const assistantWorking = useAssistantWorking(state);
@@ -176,6 +177,7 @@ export function App() {
     else setPanel(null);
   };
   const selectPanel = (value: Panel) => {
+    if (nativeShell?.role === 'body') { requestNativePanel(value); return; }
     const commit = () => {
     navigation.current++;
     setReserved(true);
@@ -247,10 +249,12 @@ export function App() {
   if (nativeShell?.role === 'panel' && nativeShell.panel) return (
     <ScreenSessionProvider workspace={state.workspace} vmId={state.vms[0]?.id} connected={state.connected}
       visible={nativeShell.panel === 'computer'} controlAllowed={state.vms[0]?.control_state === 'user' && !state.control[state.vms[0].id]}>
-      <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
+      <div className="native-panel-root" data-ready={state.phase === 'ready' && state.syncedCursor !== null || undefined} style={{ height: '100dvh', display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
         <PanelErrorBoundary onClose={() => {}}><Suspense fallback={<LoadingSkeleton label="불러오는 중…" />}>
-          <Inspector panel={nativeShell.panel} state={state} onClose={() => {}} onComputer={() => {}}
-            workSession={workSession} onTask={openTask} onSource={openSource} onArchive={id => { run(() => client.select(id)); }} />
+          <Inspector embedded panel={nativeShell.panel} state={state} onClose={() => {}} onComputer={() => {}}
+            workSession={workSession}
+            onTask={async (task, source, destination = 'request') => { const target = await taskTarget(task, source, destination); await openInNativeBody(target.conversation, target.message); }}
+            onSource={openInNativeBody} onArchive={() => {}} />
         </Suspense></PanelErrorBoundary>
       </div>
     </ScreenSessionProvider>
@@ -278,7 +282,7 @@ export function App() {
         {side}
       </dialog>
       <main className="main-surface" style={nativeShell ? { height: '100%', margin: 0, border: 0, borderRadius: 0 } : undefined}>
-        {!nativeShell && !independentHeader.active && <ConversationHeader name={state.persona.name} archiveTitle={archive ? title : undefined}
+        {!independentHeader.active && <ConversationHeader native={Boolean(nativeShell)} name={state.persona.name} archiveTitle={archive ? title : undefined}
           appearance={state.appearance} working={assistantWorking}
           presence={presence} computerOpen={panel === 'computer'} onMenu={openMenu}
           onSettings={() => selectPanel('settings')} onComputer={() => selectPanel('computer')}

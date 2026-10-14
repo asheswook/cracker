@@ -81,6 +81,10 @@
   box-sizing: border-box;
 }
 html,
+body {
+  overscroll-behavior: none;
+}
+html,
 body,
 #root {
   margin: 0;
@@ -89,7 +93,7 @@ body,
   height: 100%;
 }
 body {
-  font-size: 15px;
+  font-size: var(--t-body);
   line-height: 1.65;
 }
 button,
@@ -168,7 +172,7 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: var(--s2);
-  font-size: 14px;
+  font-size: var(--t-subhead);
   font-weight: 500;
 }
 .button span {
@@ -206,7 +210,7 @@ textarea {
   color: var(--ink);
 }
 .mark {
-  font-size: 26px;
+  font-size: var(--t-title1);
   font-weight: 650;
   line-height: 1;
   letter-spacing: -0.08em;
@@ -216,7 +220,7 @@ textarea {
   align-items: center;
   justify-content: center;
   background: var(--surface);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   box-shadow: inset 0 0 0 0.5px var(--line);
   color: var(--ink);
 }
@@ -226,11 +230,11 @@ textarea {
 .mark.small {
   width: 28px;
   height: 28px;
-  border-radius: 10px;
-  font-size: 20px;
+  border-radius: var(--r-sm);
+  font-size: var(--t-title2);
 }
 .status {
-  font-size: 12px;
+  font-size: var(--t-caption);
   color: var(--muted);
   display: inline-flex;
   align-items: center;
@@ -270,11 +274,11 @@ textarea {
   margin-bottom: var(--s5);
 }
 .empty-state h3 {
-  font-size: 20px;
+  font-size: var(--t-title2);
   margin-bottom: var(--s2);
 }
 .empty-state p {
-  font-size: 14px;
+  font-size: var(--t-subhead);
   color: var(--muted);
   line-height: 1.7;
 }
@@ -286,7 +290,7 @@ textarea {
   padding: var(--s3) var(--s4);
   border-radius: var(--r2);
   color: var(--danger);
-  font-size: 13px;
+  font-size: var(--t-footnote);
 }
 .error-notice svg {
   margin-top: 3px;
@@ -315,8 +319,8 @@ textarea {
 }
 .bubble {
   padding: var(--s3) var(--s5);
-  border-radius: 20px;
-  font-size: 15px;
+  border-radius: var(--r-xl);
+  font-size: var(--t-body);
   line-height: 1.75;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -331,7 +335,7 @@ textarea {
 }
 .message-meta {
   display: block;
-  font-size: 11px;
+  font-size: var(--t-micro);
   color: var(--muted);
   margin-top: var(--s2);
   white-space: normal;
@@ -352,7 +356,7 @@ textarea {
   border: 0;
   background: transparent;
   padding: var(--s4) var(--s4) var(--s2);
-  font-size: 16px;
+  font-size: var(--t-callout);
   line-height: 1.6;
   overflow-y: auto;
 }
@@ -364,7 +368,7 @@ textarea {
   gap: var(--s2);
 }
 .composer-actions > span {
-  font-size: 11px;
+  font-size: var(--t-micro);
   color: var(--faint);
 }
 .send-button {
@@ -426,20 +430,20 @@ textarea {
   margin-bottom: var(--s5);
 }
 .eyebrow {
-  font-size: 12px;
+  font-size: var(--t-caption);
   font-weight: 500;
   letter-spacing: 0.03em;
   color: var(--muted);
   margin-bottom: var(--s4);
 }
 .connect-content h1 {
-  font-size: 22px;
+  font-size: var(--t-title1);
   font-weight: 600;
   line-height: 1.4;
   letter-spacing: -0.02em;
 }
 .connect-description {
-  font-size: 14px;
+  font-size: var(--t-subhead);
   color: var(--muted);
   margin-top: var(--s2);
   word-break: keep-all;
@@ -459,7 +463,7 @@ textarea {
   border-radius: var(--r3);
   background: var(--surface);
   color: var(--ink);
-  font-size: 16px;
+  font-size: var(--t-callout);
 }
 .token-input:focus-visible {
   outline: none;
@@ -508,7 +512,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: var(--s3);
-  font-size: 17px;
+  font-size: var(--t-title);
   font-weight: 600;
   letter-spacing: -0.025em;
 }
@@ -520,7 +524,7 @@ textarea {
   align-items: center;
   gap: var(--s3);
   padding: var(--s3) var(--s4);
-  font-size: 14px;
+  font-size: var(--t-subhead);
   font-weight: 500;
   box-shadow: 0 2px 6px rgba(25, 35, 55, 0.035);
 }
@@ -532,7 +536,7 @@ textarea {
   color: var(--faint);
 }
 .sidebar-label {
-  font-size: 11px;
+  font-size: var(--t-micro);
   color: var(--faint);
   padding: var(--s6) var(--s3) var(--s2);
 }
@@ -554,7 +558,7 @@ textarea {
   min-height: 44px;
   padding: var(--s3);
   text-align: left;
-  font-size: 13px;
+  font-size: var(--t-footnote);
   color: var(--muted);
   border-radius: var(--r2);
 }
@@ -589,7 +593,7 @@ textarea {
   opacity: 1;
 }
 .sidebar-empty {
-  font-size: 12px;
+  font-size: var(--t-caption);
   color: var(--faint);
   padding: var(--s3);
 }
@@ -607,7 +611,7 @@ textarea {
   gap: var(--s3);
   padding: var(--s3);
   border-radius: var(--r2);
-  font-size: 13px;
+  font-size: var(--t-footnote);
   color: var(--muted);
   text-align: left;
 }
@@ -629,17 +633,17 @@ textarea {
   place-items: center;
   background: var(--surface);
   border-radius: 50%;
-  font-size: 12px;
+  font-size: var(--t-caption);
   color: var(--muted);
 }
 .sidebar-footer > span:nth-child(2) {
-  font-size: 11px;
+  font-size: var(--t-micro);
   flex: 1;
   white-space: nowrap;
 }
 .sidebar-footer small {
   display: block;
-  font-size: 10px;
+  font-size: var(--t-micro);
   color: var(--faint);
 }
 .main-surface {
@@ -665,7 +669,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  font-size: 14px;
+  font-size: var(--t-subhead);
   min-width: 0;
   font-weight: 500;
 }
@@ -690,7 +694,7 @@ textarea {
   border: 0;
   background: var(--surface-muted);
   border-radius: var(--r2);
-  font-size: 12px;
+  font-size: var(--t-caption);
   height: 36px;
   white-space: nowrap;
 }
@@ -728,22 +732,22 @@ textarea {
 .welcome > .mark {
   width: 52px;
   height: 52px;
-  font-size: 34px;
-  border-radius: 18px;
+  font-size: var(--t-large);
+  border-radius: var(--r-xl);
   margin-bottom: var(--s6);
 }
 .welcome .eyebrow {
   margin-bottom: var(--s3);
 }
 .welcome h1 {
-  font-size: 20px;
+  font-size: var(--t-title2);
   font-weight: 600;
   letter-spacing: -0.02em;
   line-height: 1.4;
   word-break: keep-all;
 }
 .welcome p {
-  font-size: 14px;
+  font-size: var(--t-subhead);
   color: var(--muted);
   margin-top: var(--s2);
   line-height: 1.6;
@@ -766,7 +770,7 @@ textarea {
   padding: var(--s2) var(--s3);
   min-height: 36px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t-caption);
 }
 .suggestions button:hover {
   background: var(--wash);
@@ -814,7 +818,7 @@ textarea {
   border-radius: var(--r3);
   background: var(--surface-muted);
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t-caption);
   line-height: 1.65;
 }
 .system-event svg {
@@ -834,18 +838,18 @@ textarea {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  font-size: 12px;
+  font-size: var(--t-caption);
   font-weight: 500;
 }
 .message-time {
-  font-size: 10px;
+  font-size: var(--t-micro);
   color: var(--faint);
   padding: 0 var(--s1);
 }
 .retry-message {
   background: none;
   border: 0;
-  font-size: 12px;
+  font-size: var(--t-caption);
   color: var(--danger);
   display: flex;
   align-items: center;
@@ -878,12 +882,12 @@ textarea {
   gap: var(--s3);
 }
 .private-label {
-  font-size: 11px;
+  font-size: var(--t-micro);
   color: var(--faint);
 }
 .composer-footnote {
   text-align: center;
-  font-size: 11px;
+  font-size: var(--t-micro);
   color: var(--faint);
 }
 .chat-footer {
@@ -931,7 +935,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  font-size: 14px;
+  font-size: var(--t-subhead);
   font-weight: 500;
 }
 .inspector-body {
@@ -947,7 +951,7 @@ textarea {
   padding: var(--s4) 0 var(--s6);
 }
 .section-intro p {
-  font-size: 20px;
+  font-size: var(--t-title2);
   line-height: 1.6;
   letter-spacing: -0.04em;
 }
@@ -972,7 +976,7 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: var(--s2);
-  font-size: 12px;
+  font-size: var(--t-caption);
   color: var(--muted);
   margin-bottom: var(--s2);
 }
@@ -1006,7 +1010,7 @@ textarea {
   margin-left: calc(var(--s2) * -1);
   background: transparent;
   color: var(--accent);
-  font-size: 13px;
+  font-size: var(--t-footnote);
   font-weight: 500;
 }
 .link-button:hover:not(:disabled) {
@@ -1018,13 +1022,13 @@ textarea {
   gap: 6px;
 }
 .resource-item h3 {
-  font-size: 14px;
+  font-size: var(--t-subhead);
   line-height: 1.65;
   font-weight: 500;
   overflow-wrap: anywhere;
 }
 .resource-item p {
-  font-size: 12px;
+  font-size: var(--t-caption);
   color: var(--muted);
   margin-top: var(--s2);
 }
@@ -1033,7 +1037,7 @@ textarea {
   color: var(--danger);
 }
 .small-button {
-  font-size: 12px;
+  font-size: var(--t-caption);
   min-height: 32px;
   padding: 6px var(--s3);
   margin-top: var(--s4);
@@ -1044,7 +1048,7 @@ textarea {
   gap: var(--s2);
 }
 .memory-item p {
-  font-size: 14px;
+  font-size: var(--t-subhead);
   margin: 0;
   flex: 1;
   color: var(--ink);
@@ -1063,7 +1067,7 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--t-caption);
   color: var(--muted);
 }
 .schedule-form input,
@@ -1077,7 +1081,7 @@ textarea {
   box-shadow: inset 0 0 0 1px var(--line);
   width: 100%;
   min-width: 0;
-  font-size: 14px;
+  font-size: var(--t-subhead);
   color: var(--ink);
 }
 .schedule-form input[type='datetime-local'] {
@@ -1107,11 +1111,11 @@ textarea {
   color: var(--muted);
 }
 .computer-identity h3 {
-  font-size: 14px;
+  font-size: var(--t-subhead);
   font-weight: 500;
 }
 .computer-identity p {
-  font-size: 11px;
+  font-size: var(--t-micro);
   color: var(--muted);
   margin-top: var(--s1);
 }
@@ -1130,7 +1134,7 @@ textarea {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 .screen-toolbar > span {
-  font-size: 10px;
+  font-size: var(--t-micro);
   letter-spacing: 0.05em;
   display: flex;
   align-items: center;
@@ -1183,14 +1187,14 @@ textarea {
   color: #b2b9c6;
 }
 .screen-empty strong {
-  font-size: 13px;
+  font-size: var(--t-footnote);
   font-weight: 400;
   line-height: 1.7;
   color: #d9dee8;
   word-break: keep-all;
 }
 .screen-empty > span {
-  font-size: 10px;
+  font-size: var(--t-micro);
   color: #a0a8b6;
   line-height: 1.7;
 }
@@ -1235,17 +1239,17 @@ textarea {
   flex-shrink: 0;
 }
 .ownership strong {
-  font-size: 12px;
+  font-size: var(--t-caption);
   font-weight: 500;
 }
 .ownership p {
-  font-size: 11px;
+  font-size: var(--t-micro);
   line-height: 1.7;
   color: var(--muted);
   margin-top: var(--s1);
 }
 .screen-caption {
-  font-size: 11px;
+  font-size: var(--t-micro);
   line-height: 1.7;
   color: var(--muted);
   text-align: center;
@@ -1256,7 +1260,7 @@ textarea {
   gap: var(--s2);
 }
 .remote-text small {
-  font-size: 11px;
+  font-size: var(--t-micro);
   color: var(--muted);
 }
 .confirm-dialog {
@@ -1269,10 +1273,10 @@ textarea {
   box-shadow: var(--shadow-shell);
 }
 .confirm-dialog h2 {
-  font-size: 20px;
+  font-size: var(--t-title2);
 }
 .confirm-dialog p {
-  font-size: 14px;
+  font-size: var(--t-subhead);
   color: var(--muted);
   margin: var(--s3) 0 var(--s6);
 }
@@ -1377,7 +1381,7 @@ dialog::backdrop {
   }
   .header-title {
     gap: 6px;
-    font-size: 13px;
+    font-size: var(--t-footnote);
   }
   .header-title > svg {
     display: none;
@@ -1401,7 +1405,7 @@ dialog::backdrop {
     padding: var(--s8) var(--s5) var(--s10);
   }
   .welcome h1 {
-    font-size: 18px;
+    font-size: var(--t-title);
   }
   .suggestions {
     flex-direction: column;
@@ -1413,21 +1417,21 @@ dialog::backdrop {
     padding: 0 var(--s3) max(var(--s3), env(safe-area-inset-bottom));
   }
   .composer-hint {
-    font-size: 10px !important;
+    font-size: var(--t-micro) !important;
   }
   .composer-hint svg,
   .private-label {
     display: none;
   }
   .composer-footnote {
-    font-size: 10px;
+    font-size: var(--t-micro);
   }
   .message-column {
     padding: var(--s3) var(--s4) var(--s6);
   }
   .bubble {
     max-width: 92%;
-    font-size: 14px;
+    font-size: var(--t-subhead);
   }
   .inspector-shell {
     inset: 0;
@@ -1508,7 +1512,7 @@ dialog::backdrop {
   align-items: center;
   justify-content: center;
   gap: var(--s2);
-  font-size: 12px;
+  font-size: var(--t-caption);
   line-height: 1.5;
   color: var(--muted);
   padding: var(--s1) var(--s2);
@@ -1537,7 +1541,7 @@ dialog::backdrop {
 .attachment-card {
   border: 1px solid var(--line);
   background: var(--surface);
-  border-radius: 16px;
+  border-radius: var(--r-lg);
   overflow: hidden;
   max-width: 300px;
   min-width: 180px;
@@ -1559,7 +1563,7 @@ dialog::backdrop {
 .draft-file small {
   display: block;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--t-micro);
   margin-top: 3px;
 }
 .attachment-preview {
@@ -1571,7 +1575,7 @@ dialog::backdrop {
 }
 .attachment-deleted {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t-caption);
 }
 .draft-attachments {
   display: flex;
@@ -1585,12 +1589,12 @@ dialog::backdrop {
   display: flex;
   align-items: center;
   gap: 8px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   background: var(--surface-muted);
   padding: 8px;
   max-width: 100%;
   margin-bottom: 8px;
-  font-size: 12px;
+  font-size: var(--t-caption);
 }
 .draft-file > span {
   min-width: 0;
@@ -1605,17 +1609,17 @@ dialog::backdrop {
   padding: 4px;
   gap: 4px;
   background: var(--surface-muted);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   margin-bottom: 24px;
 }
 .settings-tabs button {
   flex: 1;
   border: 0;
   background: transparent;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   padding: 9px 8px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--t-footnote);
   cursor: pointer;
   transition:
     background 150ms,
@@ -1628,19 +1632,19 @@ dialog::backdrop {
 }
 .settings-intro {
   padding: 4px 0 16px;
-  font-size: 13px;
+  font-size: var(--t-footnote);
   line-height: 1.6;
   color: var(--muted);
   margin: 0;
   word-break: keep-all;
 }
 .settings-section-heading h2 {
-  font-size: 19px;
+  font-size: var(--t-title2);
   letter-spacing: -0.03em;
   margin: 0 0 6px;
 }
 .settings-section-heading p {
-  font-size: 13px;
+  font-size: var(--t-footnote);
   line-height: 1.6;
   color: var(--muted);
   margin: 0;
@@ -1650,8 +1654,8 @@ dialog::backdrop {
   overflow-wrap: anywhere;
   padding: 16px;
   border: 1px solid var(--line);
-  border-radius: 16px;
-  font-size: 14px;
+  border-radius: var(--r-lg);
+  font-size: var(--t-subhead);
   line-height: 1.7;
   max-height: 340px;
   overflow: auto;
@@ -1669,14 +1673,14 @@ dialog::backdrop {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--t-caption);
   color: var(--muted);
 }
 .settings-vm select {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
 }
@@ -1699,7 +1703,7 @@ dialog::backdrop {
 .settings-notice,
 .settings-loading {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t-caption);
   line-height: 1.6;
   margin: 12px 0;
 }
@@ -1713,7 +1717,7 @@ dialog::backdrop {
 .extension-card {
   padding: 16px;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: var(--r-lg);
   background: var(--surface);
   min-width: 0;
 }
@@ -1724,12 +1728,12 @@ dialog::backdrop {
   gap: 12px;
 }
 .extension-card h3 {
-  font-size: 14px;
+  font-size: var(--t-subhead);
   margin: 0;
   overflow-wrap: anywhere;
 }
 .extension-description {
-  font-size: 12px;
+  font-size: var(--t-caption);
   line-height: 1.6;
   color: var(--muted);
   margin: 8px 0 12px;
@@ -1755,7 +1759,7 @@ dialog::backdrop {
 }
 .extension-toggle span {
   width: 34px;
-  border-radius: 20px;
+  border-radius: var(--r-xl);
   background: #c6cbd2;
   transition: background 150ms;
 }
@@ -1786,7 +1790,7 @@ dialog::backdrop {
 .extension-status {
   display: grid;
   gap: 5px;
-  font-size: 11px;
+  font-size: var(--t-micro);
   line-height: 1.5;
 }
 .extension-status > span {
@@ -1796,7 +1800,7 @@ dialog::backdrop {
 }
 .extension-status small,
 .extension-status time {
-  font-size: 11px;
+  font-size: var(--t-micro);
   color: var(--muted);
 }
 .extension-status .is-error {
@@ -1819,7 +1823,7 @@ dialog::backdrop {
 }
 .small-button {
   padding: 7px 10px;
-  font-size: 12px;
+  font-size: var(--t-caption);
   min-height: 32px;
 }
 .settings-dialog {
@@ -1827,7 +1831,7 @@ dialog::backdrop {
   max-height: calc(100dvh - 48px);
   padding: 0;
   border: 1px solid var(--line);
-  border-radius: 24px;
+  border-radius: var(--r-2xl);
   background: var(--surface);
   color: var(--ink);
   box-shadow: var(--shadow-float);
@@ -1853,7 +1857,7 @@ dialog::backdrop {
 }
 .settings-dialog h2 {
   margin: 0;
-  font-size: 17px;
+  font-size: var(--t-title);
   letter-spacing: -0.02em;
 }
 .settings-form {
@@ -1875,7 +1879,7 @@ dialog::backdrop {
 .settings-form-body label {
   display: grid;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--t-footnote);
   font-weight: 550;
   min-width: 0;
 }
@@ -1887,7 +1891,7 @@ dialog::backdrop {
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--ink);
-  border-radius: 10px;
+  border-radius: var(--r-sm);
   font: inherit;
   font-weight: 400;
   min-width: 0;
@@ -1899,7 +1903,7 @@ dialog::backdrop {
 }
 .settings-form-body .code-field {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--t-caption);
 }
 .skill-document {
   min-height: 220px;
@@ -1916,7 +1920,7 @@ dialog::backdrop {
 .form-intro,
 .field-help {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t-caption);
   font-weight: 400;
   line-height: 1.6;
   margin: 0;
@@ -1932,7 +1936,7 @@ dialog::backdrop {
 }
 .secret-fields {
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--r-md);
   padding: 16px;
   margin: 0;
   display: grid;
@@ -1940,7 +1944,7 @@ dialog::backdrop {
   min-width: 0;
 }
 .secret-fields legend {
-  font-size: 13px;
+  font-size: var(--t-footnote);
   padding: 0 6px;
 }
 .secret-fields legend svg {
@@ -1949,7 +1953,7 @@ dialog::backdrop {
 }
 .saved-secret-keys {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t-caption);
   overflow-wrap: anywhere;
   margin: 0;
 }
@@ -1977,7 +1981,7 @@ dialog::backdrop {
   .settings-dialog {
     max-height: calc(100dvh - 24px);
     width: calc(100vw - 24px);
-    border-radius: 20px;
+    border-radius: var(--r-xl);
   }
   .settings-dialog > header {
     padding: 16px 20px;
@@ -1998,10 +2002,10 @@ dialog::backdrop {
   .settings-form-body input:not([type="checkbox"]),
   .settings-form-body textarea,
   .settings-form-body select {
-    font-size: 16px;
+    font-size: var(--t-callout);
   }
   .settings-form-body .code-field {
-    font-size: 14px;
+    font-size: var(--t-subhead);
   }
 }
 @media (prefers-reduced-motion: reduce) {
