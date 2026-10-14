@@ -9,6 +9,7 @@ import type { Id } from '../types';
 import './persona.css';
 import { onboardingDraftKey, readOnboardingDraft } from './onboardingDraft';
 import { SettingsConflict } from './SettingsConflict';
+import { isDefaultAssistantName } from '../../../../packages/appearance/schema';
 const presets = [
   {
     title: '함께 생각하는 동료',
@@ -80,7 +81,7 @@ export function PersonaOnboarding({ workspace }: { readonly workspace: Id }) {
       setLoadState({ workspace, status: 'ready' });
       if (
         settings.onboarding?.status === 'completed' ||
-        settings.persona.name !== 'Assistant' ||
+        !isDefaultAssistantName(settings.persona.name) ||
         settings.persona.role || settings.persona.style || settings.instructions
       ) return;
       let restored = settings.persona;

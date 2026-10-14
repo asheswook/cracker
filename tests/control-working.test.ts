@@ -209,3 +209,16 @@ test("working endpoint denies another workspace", async () => {
   // Then
   expect(response.status).toBe(404);
 });
+
+test("computer activity event marks working until it goes stale", async () => {
+  // Given
+  const s = await setup();
+  expect((await workingState(f.sql, f.workspace, s.task.message.conversation_id))?.activity).toBeNull();
+  // When
+  const response = await f.request("/v1/daemon/events", f.machine, { kind: "activity", event_id: crypto.randomUUID(), run_id: s.run, activity: "computer" });
+  // Then
+  expect(response.status).toBe(200);
+  expect((await workingState(f.sql, f.workspace, s.task.message.conversation_id))?.activity).toBe("computer");
+  await f.sql`UPDATE assistant.runs SET activity_at=now()-interval '30 seconds' WHERE id=${s.run}`;
+  expect((await workingState(f.sql, f.workspace, s.task.message.conversation_id))?.activity).toBeNull();
+});

@@ -13,8 +13,11 @@ import { startScreen } from "./screen.ts";
 import { ToolExecutor } from "./tools.ts";
 import { ModelResolver } from "./model-resolver.ts";
 import { ModelAccountManager, accountOperations } from "./model-account.ts";
+import { SubscriptionProxy, SubscriptionEnvironment } from "./subscription-proxy.ts";
+import { SubscriptionAccountManager } from "./subscription-account.ts";
 
 const BaseConfig = z.object({
+  ...SubscriptionEnvironment.shape,
   CONTROL_URL: z.url().refine((value) => {
     const url = new URL(value);
     return (
@@ -93,7 +96,8 @@ export async function main(): Promise<void> {
     ...(config.CHATGPT_TOKEN_FILE ? { tokenFile: config.CHATGPT_TOKEN_FILE } : {}),
   };
   const provider = new OpenAIProvider(providerConfig);
-  const models = new ModelResolver({ defaultProvider: provider, defaultConfig: providerConfig, http: ky.create({ prefixUrl: config.CONTROL_URL, headers: { authorization: `Bearer ${config.VM_TOKEN}` }, retry: 0, timeout: 15000 }), ...(config.ANTHROPIC_API_KEY ? { anthropicKey: config.ANTHROPIC_API_KEY } : {}) });
+  const subscription = new SubscriptionProxy(config);
+  const models = new ModelResolver({ defaultProvider: provider, defaultConfig: providerConfig, subscription, http: ky.create({ prefixUrl: config.CONTROL_URL, headers: { authorization: `Bearer ${config.VM_TOKEN}` }, retry: 0, timeout: 15000 }), ...(config.ANTHROPIC_API_KEY ? { anthropicKey: config.ANTHROPIC_API_KEY } : {}) });
   await mkdir(dirname(config.JOURNAL_PATH), { recursive: true, mode: 0o700 });
   const journal = new Journal(config.JOURNAL_PATH);
   await chmod(config.JOURNAL_PATH, 0o600);
@@ -118,11 +122,13 @@ export async function main(): Promise<void> {
   const shutdown = new AbortController();
   const accountHttp = ky.create({ prefixUrl: config.CONTROL_URL, headers: { authorization: `Bearer ${config.VM_TOKEN}` }, retry: 0, timeout: 15000 });
   const account = config.CHATGPT_TOKEN_FILE ? new ModelAccountManager(accountHttp, accountOperations(config.CHATGPT_TOKEN_FILE, accountHttp), () => models.advertise()) : undefined;
+  const subscriptions = new SubscriptionAccountManager(accountHttp, subscription, () => models.advertise());
   const requestShutdown = () => shutdown.abort();
   process.once("SIGTERM", requestShutdown);
   process.once("SIGINT", requestShutdown);
   try {
     if (config.screen) await tools.enableBuiltinBrowser();
+    if (config.screen) await tools.enableBuiltinDesktop();
     if (config.MCP_CONFIG) await tools.connect(config.MCP_CONFIG);
     let recovered = false,
       backoff = 1000;
@@ -142,6 +148,7 @@ export async function main(): Promise<void> {
           recovered = true;
         }
         await account?.tick();
+        subscriptions.tick();
         await runtime.tick(!account?.busy);
         backoff = 1000;
       } catch (error) {
@@ -161,6 +168,7 @@ export async function main(): Promise<void> {
     }
   } finally {
     await account?.close();
+    await subscriptions.close();
     process.removeListener("SIGTERM", requestShutdown);
     process.removeListener("SIGINT", requestShutdown);
     try {

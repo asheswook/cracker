@@ -41,13 +41,25 @@ export class SemanticStructure {
  private readonly abort=new AbortController();
  private readonly cache=new StructureCorpusCache();
   constructor(private readonly dependencies:{jobs:StructureJobs;http:KyInstance;provider:Provider;models?:RunModelResolver;log?:(record:ReturnType<typeof shadowComparison>)=>void}){this.claims=new SemanticClaims({...dependencies,jobs:dependencies.jobs.claims});}
-  async reference(run:string,message:string,existing:string|null,signal:AbortSignal,combinedMaxBytes?:number){
+  /** Starts the network reads now; the returned function assembles the packet once the semantic reference is known. */
+  prefetch(run:string,message:string,signal:AbortSignal){
    const {http}=this.dependencies,path=`v1/daemon/context/${run}`;
+   const loaded=(async()=>{
+    // Idempotent metadata creation only; the queued anchor remains asynchronous.
+    await http.post(`${path}/structure/backfill/exchange`,{json:{user_message_id:message},signal});
+    const corpus=StructureCorpus.parse(await http.post(`${path}/structure/corpus`,{json:{user_message_id:message},signal}).json());
+    const ledger=z.object({claims:z.array(DeliveryClaim),pending_message_ids:z.array(z.uuid())}).parse(await http.post(`${path}/claims/read`,{json:{message_id:message,delivery_source_ids:corpus.sources.map(s=>s.message_id)},signal}).json());
+    return {corpus,ledger};
+   })();
+   loaded.catch(()=>{});
+   return (existing:string|null,combinedMaxBytes?:number)=>this.assemble(run,message,loaded,existing,signal,combinedMaxBytes);
+  }
+  async reference(run:string,message:string,existing:string|null,signal:AbortSignal,combinedMaxBytes?:number){
+   return this.prefetch(run,message,signal)(existing,combinedMaxBytes);
+  }
+  private async assemble(run:string,message:string,loaded:Promise<{corpus:StructureCorpus;ledger:{claims:z.infer<typeof DeliveryClaim>[];pending_message_ids:string[]}}>,existing:string|null,signal:AbortSignal,combinedMaxBytes?:number){
    try{
-   // Idempotent metadata creation only; the queued anchor remains asynchronous.
-   await http.post(`${path}/structure/backfill/exchange`,{json:{user_message_id:message},signal});
-   const corpus=StructureCorpus.parse(await http.post(`${path}/structure/corpus`,{json:{user_message_id:message},signal}).json());
-   const ledger=z.object({claims:z.array(DeliveryClaim),pending_message_ids:z.array(z.uuid())}).parse(await http.post(`${path}/claims/read`,{json:{message_id:message,delivery_source_ids:corpus.sources.map(s=>s.message_id)},signal}).json());
+   const {corpus,ledger}=await loaded;
    return {role:'user' as const,content:JSON.stringify(structureDeliveryPacket(corpus,{existing,ledgerSnapshot:ledger.claims,pendingMessageIds:ledger.pending_message_ids,cache:this.cache,...(combinedMaxBytes===undefined?{}:{combinedMaxBytes})}))};
    }catch(error){
     if(signal.aborted)throw error;

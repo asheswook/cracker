@@ -13,8 +13,8 @@ import { rawSource, referenceSource, sourceScope, type RawSource, type ContextSc
 
 export const retentionAllowed = allowsRetention;
 export async function sourceView(sql: Query, scope: ContextScope, source: z.infer<typeof RawSource>, limit = 1800) {
-  const actual=await sourceScope(sql,scope.workspace,source.message_id);
-  return SemanticSource.parse({ ...source, conversation_id:actual.conversation, content:source.content.slice(0,limit),truncated:source.content.length>limit,sha256:await hashToken(JSON.stringify(source)),retention_allowed:await retentionAllowed(sql,scope,source),linked_context_id:(await linked(sql,scope,source.message_id))?.context_id??null });
+  const [actual,allowed,link]=await Promise.all([sourceScope(sql,scope.workspace,source.message_id),retentionAllowed(sql,scope,source),linked(sql,scope,source.message_id)]);
+  return SemanticSource.parse({ ...source, conversation_id:actual.conversation, content:source.content.slice(0,limit),truncated:source.content.length>limit,sha256:await hashToken(JSON.stringify(source)),retention_allowed:allowed,linked_context_id:link?.context_id??null });
 }
 export async function sourceList(sql: Query, scope: ContextScope, ids: readonly string[], limit = 1800) {
   const records=await sourceBatch(sql,scope,ids);
@@ -35,17 +35,27 @@ export async function exactEvidence(sql: Query, scope: ContextScope, evidence: r
   return sources;
 }
 export async function contextSnapshot(sql: Query, scope: ContextScope, id: string, through = Number.MAX_SAFE_INTEGER, noteIds:readonly string[] = [], sourceIds:readonly string[] = [], windows:readonly z.infer<typeof SourceWindow>[] = []) {
-  const row=(await sql`SELECT id AS context_id,title,scope,revision,source_sequence,initiating_message_id FROM assistant.semantic_contexts WHERE workspace_id=${scope.workspace} AND id=${id}`)[0];
-  if(!row) throw new DomainError("not_found","Context not found in this workspace",404);
-  const base=z.object({context_id:z.uuid(),title:z.string(),scope:z.string(),revision:z.number(),source_sequence:z.coerce.number(),initiating_message_id:z.uuid()}).parse(row);
-  const firstRow=(await sql`SELECT l.message_id FROM assistant.semantic_context_links l JOIN assistant.messages m ON m.workspace_id=l.workspace_id AND m.id=l.message_id WHERE l.workspace_id=${scope.workspace} AND l.context_id=${id} AND l.source_sequence<=${through} ORDER BY (m.role='user') DESC,l.source_sequence LIMIT 1`)[0];
+  // Independent reads run together; each await is a network round trip from the Worker.
+  const settled=await Promise.allSettled([
+    sql`SELECT id AS context_id,title,scope,revision,source_sequence,initiating_message_id FROM assistant.semantic_contexts WHERE workspace_id=${scope.workspace} AND id=${id}`,
+    sql`SELECT l.message_id FROM assistant.semantic_context_links l JOIN assistant.messages m ON m.workspace_id=l.workspace_id AND m.id=l.message_id WHERE l.workspace_id=${scope.workspace} AND l.context_id=${id} AND l.source_sequence<=${through} ORDER BY (m.role='user') DESC,l.source_sequence LIMIT 1`,
+    sql`SELECT message_id AS id FROM assistant.semantic_context_links WHERE workspace_id=${scope.workspace} AND context_id=${id} AND source_sequence<=${through} ORDER BY source_sequence DESC LIMIT 4`,
+    sql`SELECT message_id AS id FROM assistant.semantic_context_links WHERE workspace_id=${scope.workspace} AND context_id=${id} AND source_sequence<=${through} AND message_id=ANY(${sql.array([...new Set([...sourceIds,...windows.map(window=>window.message_id)])])}::uuid[])`,
+    snapshotContextNotes(sql,scope,{context_id:id,through,note_ids:noteIds}),
+  ] as const);
+  const [rows,firstRows,recentRows,selectedRows,visibleNotes]=settled;
+  if(rows.status==='fulfilled'&&!rows.value[0]) throw new DomainError("not_found","Context not found in this workspace",404);
+  const failed=settled.find(result=>result.status==='rejected');
+  if(failed?.status==='rejected')throw failed.reason;
+  if(rows.status!=='fulfilled'||firstRows.status!=='fulfilled'||recentRows.status!=='fulfilled'||selectedRows.status!=='fulfilled'||visibleNotes.status!=='fulfilled')throw new DomainError("snapshot_failed","Context snapshot failed",503);
+  const base=z.object({context_id:z.uuid(),title:z.string(),scope:z.string(),revision:z.number(),source_sequence:z.coerce.number(),initiating_message_id:z.uuid()}).parse(rows.value[0]);
+  const firstRow=firstRows.value[0],recent=recentRows.value,selected=selectedRows.value,visible=visibleNotes.value;
   if(!firstRow)return SemanticContext.parse({...base,title:'Later context',scope:'Context details are beyond this historical source',source_sequence:0,notes:[],recent_messages:[],files:[]});
   const firstScope=await sourceScope(sql,scope.workspace,z.object({message_id:z.uuid()}).parse(firstRow).message_id);
   const first=await rawSource(sql,firstScope,z.object({message_id:z.uuid()}).parse(firstRow).message_id);
-  const firstLinked=(await linked(sql,scope,first.message_id))?.context_id===id;
-  const pair=await sql`SELECT id FROM assistant.messages WHERE workspace_id=${scope.workspace} AND conversation_id=${firstScope.conversation} AND task_id=${first.task_id} AND role='assistant' AND sequence<=${through} AND sequence>${first.sequence} AND sequence<COALESCE((SELECT min(sequence) FROM assistant.messages WHERE workspace_id=${scope.workspace} AND conversation_id=${firstScope.conversation} AND task_id=${first.task_id} AND role='user' AND sequence>${first.sequence}),9223372036854775807) ORDER BY sequence LIMIT 1`;
-  const recent=await sql`SELECT message_id AS id FROM assistant.semantic_context_links WHERE workspace_id=${scope.workspace} AND context_id=${id} AND source_sequence<=${through} ORDER BY source_sequence DESC LIMIT 4`;
-  const selected=await sql`SELECT message_id AS id FROM assistant.semantic_context_links WHERE workspace_id=${scope.workspace} AND context_id=${id} AND source_sequence<=${through} AND message_id=ANY(${sql.array([...new Set([...sourceIds,...windows.map(window=>window.message_id)])])}::uuid[])`;
+  const [firstLink,pair]=await Promise.all([linked(sql,scope,first.message_id),
+    sql`SELECT id FROM assistant.messages WHERE workspace_id=${scope.workspace} AND conversation_id=${firstScope.conversation} AND task_id=${first.task_id} AND role='assistant' AND sequence<=${through} AND sequence>${first.sequence} AND sequence<COALESCE((SELECT min(sequence) FROM assistant.messages WHERE workspace_id=${scope.workspace} AND conversation_id=${firstScope.conversation} AND task_id=${first.task_id} AND role='user' AND sequence>${first.sequence}),9223372036854775807) ORDER BY sequence LIMIT 1`]);
+  const firstLinked=firstLink?.context_id===id;
   const ids=[...new Set([...(firstLinked?[first.message_id]:[]),...z.array(z.object({id:z.uuid()})).parse([...pair,...recent,...selected]).map(item=>item.id)])];
   const messages:z.infer<typeof SemanticSource>[]=[];
   const records=await sourceBatch(sql,scope,ids);
@@ -60,7 +70,6 @@ export async function contextSnapshot(sql: Query, scope: ContextScope, id: strin
     }
   }
   messages.sort((a,b)=>a.sequence-b.sequence);
-  const visible=await snapshotContextNotes(sql,scope,{context_id:id,through,note_ids:noteIds});
   const retrieval={note_ids:noteIds.filter(note=>visible.some(item=>item.id===note)),source_windows:windows.flatMap(window=>{
     const message=messages.find(item=>item.message_id===window.message_id);
     return message?.content.length?[{message_id:message.message_id,start:message.content_offset,end:message.content_offset+message.content.length}]:[];

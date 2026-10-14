@@ -1,7 +1,7 @@
 import { bindSkill } from "../../../packages/extensions/versions.ts";
 import { z } from "zod";
 import type { Database } from "../db";
-import { appendMessage, conversation } from "./common";
+import { createBackgroundTask } from "./common";
 export async function dispatchDueSchedules(sql: Database): Promise<number> {
   return sql.begin(async (tx) => {
     const due = z
@@ -14,18 +14,15 @@ export async function dispatchDueSchedules(sql: Database): Promise<number> {
         }),
       )
       .parse(
-        await tx`SELECT s.* FROM assistant.schedules s WHERE s.status='pending' AND s.due_at<=now() AND (s.skill_id IS NULL OR NOT EXISTS(SELECT 1 FROM assistant.tasks t WHERE t.conversation_id=s.conversation_id AND t.state NOT IN ('cancelled','succeeded','failed'))) ORDER BY s.due_at LIMIT 100 FOR UPDATE OF s SKIP LOCKED`,
+        await tx`SELECT s.* FROM assistant.schedules s WHERE s.status='pending' AND s.due_at<=now() ORDER BY s.due_at LIMIT 100 FOR UPDATE OF s SKIP LOCKED`,
       );
     let dispatched=0;
     for (const schedule of due) {
-      await conversation(tx,schedule.workspace_id,schedule.conversation_id);
-      if(schedule.skill_id&&(await tx`SELECT id FROM assistant.tasks WHERE conversation_id=${schedule.conversation_id} AND state NOT IN ('cancelled','succeeded','failed') LIMIT 1`)[0])continue;
-      const created=await appendMessage(tx, {
+      const created=await createBackgroundTask(tx, {
         workspace: schedule.workspace_id,
         conversation: schedule.conversation_id,
-        content: schedule.objective,
+        objective: schedule.objective,
         clientId: schedule.id,
-        role: "system",
         origin: "schedule",
       });
       if(schedule.skill_id&&schedule.skill_revision)await bindSkill(tx,{workspace:schedule.workspace_id,task:created.task.id,message:created.message.id,skill:schedule.skill_id,revision:schedule.skill_revision,kind:"scheduled"});

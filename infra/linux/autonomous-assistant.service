@@ -1,8 +1,8 @@
 [Unit]
 Description=Autonomous Assistant VM daemon
 Requires=assistant-xvfb.service
-After=assistant-xvfb.service assistant-desktop.service
-Wants=assistant-desktop.service assistant-browser.service
+After=assistant-xvfb.service assistant-desktop.service assistant-cliproxy.service
+Wants=assistant-desktop.service assistant-browser.service assistant-cliproxy.service
 
 [Service]
 Type=simple

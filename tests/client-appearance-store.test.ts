@@ -3,8 +3,8 @@ import { AppearanceSettings, defaultAppearance } from '../packages/appearance/sc
 import { Id } from '../apps/web/src/types';
 
 const workspace = Id.parse(crypto.randomUUID());
-const saved = AppearanceSettings.parse({ appearance: { ...defaultAppearance, color: 'blue' }, revision: crypto.randomUUID() });
-const newer = AppearanceSettings.parse({ appearance: { ...defaultAppearance, color: 'pink' }, revision: crypto.randomUUID() });
+const saved = AppearanceSettings.parse({ appearance: { ...defaultAppearance, color: 'charcoal' }, revision: crypto.randomUUID() });
+const newer = AppearanceSettings.parse({ appearance: { ...defaultAppearance, color: 'berry' }, revision: crypto.randomUUID() });
 let appearanceRead: () => Promise<unknown>;
 mock.module('../apps/web/src/api.ts', () => ({
   read: async (path: string, schema: { parse: (value: unknown) => unknown }) => {

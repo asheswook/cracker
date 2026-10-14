@@ -4,6 +4,7 @@ import {ComposingReceipt,type ComposingRequest} from "../../packages/protocol/co
 import type {ProviderResponseEvent,ProviderResponseObserver,ResponseInputItem} from "../../packages/provider";
 
 const Source=z.object({source_message_id:z.uuid(),source_role:z.enum(["user","system","assistant"])});
+export function silentComposing(){return {observer:undefined,deliver:async(_eventId:string)=>{},close:async()=>{}};}
 export function sourceInputIds(input:readonly ResponseInputItem[]):string[]{
   const ids=new Set<string>();
   for(const item of input){

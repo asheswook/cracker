@@ -18,7 +18,7 @@ final class WebShell: NSObject, ObservableObject {
     @Published var authenticated = false
     @Published var conversation: String?
     @Published var assistant: String?
-    @Published var assistantName = "Assistant"
+    @Published var assistantName = "크래커"
     @Published var resultRevision = 0
     @Published var openRequest: ShellOpenRequest?
     @Published var panelRequest: ShellPanel?

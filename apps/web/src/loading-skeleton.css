@@ -49,3 +49,4 @@
 @media (prefers-reduced-motion: reduce) {
   .loading-skeleton-geometry { animation: none; }
 }
+.boot-character .assistant-character { --character-size: 72px; }

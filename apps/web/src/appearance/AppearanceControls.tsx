@@ -1,14 +1,15 @@
 import { useId, useRef, useState } from 'react';
 import type { AssistantAppearance } from './types';
 import { AppearanceOptions } from './AppearanceOptions';
+import { blushLabel } from './catalog';
 
-const tabs = [{ id: 'body', label: '체형' }, { id: 'eyes', label: '눈' }, { id: 'eyewear', label: '안경' }, { id: 'accessory', label: '액세서리' }] as const;
+const tabs = [{ id: 'biscuit', label: '과자' }, { id: 'color', label: '색상' }, { id: 'eyes', label: '눈' }, { id: 'accessory', label: '액세서리' }] as const;
 export function AppearanceControls({ draft, onChange, disabled }: {
   readonly draft: AssistantAppearance;
   readonly onChange: (value: AssistantAppearance) => void;
   readonly disabled: boolean;
 }) {
-  const [tab, setTab] = useState<typeof tabs[number]['id']>('body');
+  const [tab, setTab] = useState<typeof tabs[number]['id']>('biscuit');
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const id = useId();
   return <div className="appearance-controls">
@@ -22,9 +23,10 @@ export function AppearanceControls({ draft, onChange, disabled }: {
       }}>{item.label}</button>)}
     </div>
     <div className="appearance-fields" role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-${tab}`}>
-      {tab === 'body' && <><AppearanceOptions field="shape" title="체형" draft={draft} onChange={onChange} disabled={disabled} /><AppearanceOptions field="color" title="색상" draft={draft} onChange={onChange} disabled={disabled} /></>}
-      {tab === 'eyes' && <AppearanceOptions field="eyes" title="눈" draft={draft} onChange={onChange} disabled={disabled} />}
-      {tab === 'eyewear' && <AppearanceOptions field="eyewear" title="안경" draft={draft} onChange={onChange} disabled={disabled} />}
+      {tab === 'biscuit' && <AppearanceOptions field="biscuit" title="과자" draft={draft} onChange={onChange} disabled={disabled} />}
+      {tab === 'color' && <AppearanceOptions field="color" title="색상" draft={draft} onChange={onChange} disabled={disabled} />}
+      {tab === 'eyes' && <><AppearanceOptions field="eyes" title="눈" draft={draft} onChange={onChange} disabled={disabled} />
+        <label className="appearance-switch"><span>{blushLabel}</span><input type="checkbox" role="switch" checked={draft.blush} disabled={disabled} onChange={event => onChange({ ...draft, blush: event.target.checked })} /></label></>}
       {tab === 'accessory' && <AppearanceOptions field="accessory" title="액세서리" draft={draft} onChange={onChange} disabled={disabled} />}
     </div>
   </div>;

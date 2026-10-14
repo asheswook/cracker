@@ -100,9 +100,10 @@ export const ReplyComposing=z.object({task_id:Id,run_id:Id,inference_id:Id,gener
 export type ReplyComposing=z.infer<typeof ReplyComposing>;
 export const ReplyHandoff = ReplyHandoffState;
 export type ReplyHandoff = z.infer<typeof ReplyHandoff>;
-export const AssistantWorking = z.object({ task_id: Id, run_id: Id, input_message_id: Id, expires_at: z.iso.datetime() });
+export const AssistantWorking = z.object({ task_id: Id, run_id: Id, input_message_id: Id, expires_at: z.iso.datetime(), activity: z.enum(['computer']).nullable().default(null) });
 export type AssistantWorking = z.infer<typeof AssistantWorking>;
 export const MessagePage = z.object({
+  background: z.object({count:z.number().int().nonnegative(),items:z.array(z.object({task_id:Id,objective:z.string().max(140),state:z.enum(['queued','running','waiting','paused']),started_at:z.string().nullable()}))}).optional(),
   composing:ReplyComposing.nullable().default(null),
   reply_handoff: ReplyHandoff.nullable().optional(),
   working: AssistantWorking.nullable().default(null),

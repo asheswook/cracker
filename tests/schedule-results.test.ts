@@ -21,11 +21,11 @@ test("recurring work exposes its pending occurrence and actual last task, scoped
   expect((await list()).find(item => item.id === id)?.last_action).toBeNull();
   await f.sql`UPDATE assistant.responsibilities SET next_review_at='2000-01-01T03:00:00Z' WHERE id=${id}`;
   await f.request("/v1/daemon/responsibilities", f.machine);
-  expect((await list()).find(item => item.id === id)?.last_action?.state).toBe("pending");
-  await f.finishActive();
+  expect((await list()).find(item => item.id === id)?.last_action?.state).toBe("dispatched");
   await f.request("/v1/daemon/responsibilities", f.machine);
   const task = (await list()).find(item => item.id === id)?.last_action?.task;
   expect(task?.state).toBe("queued");
+  expect(task?.id).not.toBe(source.task.id);
   expect(task?.conversation_id).toBe(source.task.conversation_id);
   await f.finishActive();
   expect((await list()).find(item => item.id === id)?.last_action?.task?.state).toBe("succeeded");

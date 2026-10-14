@@ -2,7 +2,7 @@ import { Monitor, PanelLeft } from 'lucide-react';
 import { IconButton, Status, type Presence } from './primitives';
 import { useLayoutEffect, useRef, type CSSProperties } from 'react';
 import { AnimatePresence, animate, m, useMotionValue, useTransform } from 'motion/react';
-import { AssistantCharacter } from './appearance/AssistantCharacter';
+import { AssistantCharacter, type CharacterState } from './appearance/AssistantCharacter';
 import { defaultAppearance, type AssistantAppearance } from './appearance/types';
 import { useReducedMotion } from './useReducedMotion';
 import './appearance/identity.css';
@@ -13,12 +13,18 @@ const identityMotionTokens: CSSProperties & { readonly '--identity-fade-duration
 };
 const identityTransition = { type: 'tween', duration: 0.3, ease: [0.23, 1, 0.32, 1] } as const;
 
-export function AssistantIdentity({ name, onOpen, appearance = defaultAppearance, working = false }: {
+export type WorkingActivity = Exclude<CharacterState, 'idle'>;
+const activityLabel: Record<WorkingActivity, string> = { thinking: '생각 중…', computer: '컴퓨터 사용 중…', typing: '입력 중…' };
+
+export function AssistantIdentity({ name, onOpen, appearance = defaultAppearance, working = false, activity }: {
   readonly name: string;
   readonly onOpen: () => void;
   readonly appearance?: AssistantAppearance;
   readonly working?: boolean;
+  readonly activity?: WorkingActivity | undefined;
 }) {
+  const current: WorkingActivity = activity ?? 'thinking';
+  const label = activityLabel[current];
   const measure = useRef<HTMLSpanElement>(null);
   const width = useMotionValue(0);
   const height = useMotionValue(0);
@@ -50,20 +56,20 @@ export function AssistantIdentity({ name, onOpen, appearance = defaultAppearance
       aria-label={`${name} 페르소나 설정`}
       title={name}
     >
-      <AssistantCharacter appearance={appearance} thinking={working} />
+      <AssistantCharacter appearance={appearance} state={working ? current : 'idle'} />
       <span className="identity-name identity-working-label" data-working={working} aria-hidden="true">
         <m.span className="identity-label-surface" style={{ width, height }} />
         <m.span ref={measure} className="identity-label-content" style={{ clipPath }}>
           <span className="identity-label-persona">{name}</span>
           <AnimatePresence initial={false}>
-            {working && <m.span key="working" className="identity-label-thinking"
+            {working && <m.span key={current} className="identity-label-thinking"
               initial={{ opacity: reducedMotion ? 1 : 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               transition={{ ...identityTransition, duration: reducedMotion ? 0 : identityFadeDuration }}
-            >생각 중…</m.span>}
+            >{label}</m.span>}
           </AnimatePresence>
         </m.span>
       </span>
-      <span className="identity-status" role="status">{working ? `${name}, 생각 중` : ''}</span>
+      <span className="identity-status" role="status">{working ? `${name}, ${label.replace('…', '')}` : ''}</span>
     </button>
   );
 }
@@ -79,6 +85,7 @@ export function ConversationHeader({
   onTimeControlMount,
   appearance,
   working = false,
+  activity,
   native = false,
 }: {
   readonly native?: boolean;
@@ -92,6 +99,7 @@ export function ConversationHeader({
   readonly onTimeControlMount?: (node: HTMLDivElement | null) => void;
   readonly appearance?: AssistantAppearance;
   readonly working?: boolean;
+  readonly activity?: WorkingActivity | undefined;
 }) {
   return (
     <header className="conversation-header messenger-header" data-native-shell={native || undefined}>
@@ -110,7 +118,7 @@ export function ConversationHeader({
           <span className="archive-name" title={archiveTitle}>{archiveTitle}</span>
         </span>
       ) : (
-        <AssistantIdentity name={name} onOpen={onSettings} appearance={appearance ?? defaultAppearance} working={working} />
+        <AssistantIdentity name={name} onOpen={onSettings} appearance={appearance ?? defaultAppearance} working={working} activity={activity} />
       )}
       <div className="header-actions">
         <Status presence={presence} />

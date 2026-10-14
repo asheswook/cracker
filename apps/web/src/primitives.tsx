@@ -1,3 +1,5 @@
+import { characterSvg } from './appearance/character-svg';
+import { defaultAppearance } from './appearance/types';
 import { m as Motion } from 'motion/react';
 import { useReducedMotion } from './useReducedMotion';
 import { LoaderCircle, ArrowUp, ArrowRight, Monitor, X } from 'lucide-react';
@@ -28,12 +30,9 @@ export function IconButton({
     </button>
   );
 }
+const markSvg = characterSvg(defaultAppearance, 40);
 export function Mark({ small = false }: { small?: boolean }) {
-  return (
-    <span className={`mark ${small ? 'small' : ''}`} aria-hidden="true">
-      a<span>·</span>
-    </span>
-  );
+  return <span className={`mark ${small ? 'small' : ''}`} aria-hidden="true" dangerouslySetInnerHTML={{ __html: markSvg }} />;
 }
 export type Presence = 'online' | 'computer-offline' | 'offline';
 const presenceLabel: Record<Presence, string> = { online: '연결됨', 'computer-offline': '컴퓨터 꺼짐', offline: '연결 끊김' };

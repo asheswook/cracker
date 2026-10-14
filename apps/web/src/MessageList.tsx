@@ -38,7 +38,7 @@ export const MessageList = memo(function MessageList({
   pending,
   reduced,
   arrivals,
-  assistantName = 'Assistant',
+  assistantName = '크래커',
   timeControlRoot = null,
   keep = null,
 }: {

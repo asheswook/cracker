@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { MessagePage, Pending } from '../apps/web/src/types';
-import { assistantWorking } from '../apps/web/src/useAssistantWorking';
+import { assistantActivity, assistantWorking } from '../apps/web/src/useAssistantWorking';
 import { context, conversation, message, now, other, task, working } from './client-working-fixture';
 
 test('working eligibility uses the applied exact current input and expires at the deadline', () => {
@@ -77,4 +77,16 @@ test('old message pages default to absent working without fabricating activity',
   // Then
   expect(page.working).toBeNull();
   expect(page.composing).toBeNull();
+});
+
+test('activity prefers typing while composing, then computer, then thinking', () => {
+  // Given
+  const composing = { task_id: task.id, run_id: working.run_id, inference_id: other, generation: 1, response_id: 'r', item_id: 'i',
+    input_message_ids: [message.id], expires_at: new Date(Date.now() + 60_000).toISOString() };
+  // When / Then
+  expect(assistantActivity({ working, composing: null }, false)).toBeUndefined();
+  expect(assistantActivity({ working, composing: null }, true)).toBe('thinking');
+  expect(assistantActivity({ working: { ...working, activity: 'computer' }, composing: null }, true)).toBe('computer');
+  expect(assistantActivity({ working: { ...working, activity: 'computer' }, composing }, true)).toBe('typing');
+  expect(assistantActivity({ working, composing: { ...composing, task_id: other } }, true)).toBe('thinking');
 });

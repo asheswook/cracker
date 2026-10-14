@@ -625,3 +625,14 @@ html:not([data-root-scroll-trial]) .assistant-shell .chat:not(.native-composer) 
   flex: 1;
   min-height: 44px;
 }
+@media (hover: hover) and (pointer: fine) {
+  .messenger-header[data-native-shell]::after {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto;
+    height: 88px;
+    z-index: -1;
+    pointer-events: auto;
+    cursor: default;
+  }
+}

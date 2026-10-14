@@ -27,6 +27,7 @@ export async function appendMessage(
     readonly replyTo?: string;
   },
 ) {
+  if(input.origin && input.origin !== 'user')return createBackgroundTask(sql,{workspace:input.workspace,conversation:input.conversation,objective:input.content,origin:input.origin,clientId:input.clientId});
   if (input.returnControl)
     await sql`SELECT id FROM assistant.vms WHERE workspace_id=${input.workspace} ORDER BY id FOR NO KEY UPDATE`;
   await conversation(sql, input.workspace, input.conversation);
@@ -58,7 +59,7 @@ export async function appendMessage(
     input.attachments ?? [],
   );
   const active =
-    await sql`SELECT * FROM assistant.tasks WHERE conversation_id=${input.conversation} AND state NOT IN ('cancelled','succeeded','failed') AND (${!input.replyTo} OR state<>'unknown') ORDER BY (state='unknown'),created_at DESC LIMIT 1 FOR UPDATE`;
+    await sql`SELECT * FROM assistant.tasks WHERE conversation_id=${input.conversation} AND lane='foreground' AND state NOT IN ('cancelled','succeeded','failed') AND (${!input.replyTo} OR state<>'unknown') ORDER BY (state='unknown'),created_at DESC LIMIT 1 FOR UPDATE`;
   const task = Task.parse(
     active[0] ??
       (
@@ -86,6 +87,24 @@ export async function recordEvent(
 ) {
   await sql`WITH e AS (INSERT INTO assistant.events(workspace_id,kind,payload) VALUES(${event.workspace},${event.kind},${event.payload}::text::jsonb) RETURNING id) INSERT INTO assistant.outbox(workspace_id,event_id) SELECT ${event.workspace},id FROM e`;
 }
+export async function createBackgroundTask(sql: Query, input: {
+  readonly workspace: string; readonly conversation: string; readonly objective: string;
+  readonly origin: 'schedule' | 'responsibility'; readonly clientId: string;
+}) {
+  await conversation(sql,input.workspace,input.conversation);
+  const prior=(await sql`SELECT * FROM assistant.messages WHERE conversation_id=${input.conversation} AND client_message_id=${input.clientId}`)[0];
+  if(prior){
+    const message=Message.parse(prior);
+    if(message.content!==input.objective||message.origin!==input.origin||message.role!=='system'||!message.hidden)
+      throw new DomainError('idempotency_conflict','Background wake ID reused',409);
+    const task=Task.parse((await sql`SELECT * FROM assistant.tasks WHERE id=${message.task_id??null} AND lane='background'`)[0]);
+    return {message,task};
+  }
+  const task=Task.parse((await sql`INSERT INTO assistant.tasks(workspace_id,conversation_id,objective,origin,lane) VALUES(${input.workspace},${input.conversation},${input.objective},${input.origin},'background') RETURNING *`)[0]);
+  const message=Message.parse((await sql`INSERT INTO assistant.messages(workspace_id,conversation_id,task_id,role,content,client_message_id,origin,hidden) VALUES(${input.workspace},${input.conversation},${task.id},'system',${input.objective},${input.clientId},${input.origin},true) RETURNING *`)[0]);
+  await recordEvent(sql,{workspace:input.workspace,kind:'message.created',payload:JSON.stringify({message,task})});
+  return {message,task};
+}
 export async function messages(sql: Query, workspace: string, id: string, after = 0) {
   const rows = await sql`SELECT m.*,
     (SELECT jsonb_build_object('task_id',r.task_id,'run_id',r.id,'state',n.state,'reason',
@@ -97,7 +116,7 @@ export async function messages(sql: Query, workspace: string, id: string, after 
       ORDER BY r.created_at DESC,n.state DESC LIMIT 1) AS task_status,
     (SELECT min(i.applied_at) FROM assistant.input_receipts i WHERE i.workspace_id=m.workspace_id AND i.message_id=m.id AND m.role='user') AS read_at,
     COALESCE((SELECT jsonb_agg(to_jsonb(a) ORDER BY ma.position) FROM assistant.message_artifacts ma JOIN assistant.artifacts a ON a.id=ma.artifact_id WHERE ma.message_id=m.id),'[]'::jsonb) AS attachments
-    FROM assistant.messages m WHERE m.workspace_id=${workspace} AND m.conversation_id=${id} AND m.sequence>${after} ORDER BY m.sequence`;
+    FROM assistant.messages m WHERE m.workspace_id=${workspace} AND m.conversation_id=${id} AND NOT m.hidden AND m.sequence>${after} ORDER BY m.sequence`;
   const parsed=z.array(Message).parse(rows.map(row=>{
     const value={...row};
     if(value['task_status']===null)delete value['task_status'];

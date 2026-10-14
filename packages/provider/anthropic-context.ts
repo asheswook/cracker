@@ -14,6 +14,7 @@ import {
   type NativeContextState,
 } from "./native-context.ts";
 import { ProviderError } from "./errors.ts";
+import type { RetryBudget } from './retry.ts';
 
 const inlineModels = new Set(["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"]);
 const betas = ["compact-2026-09-04"];
@@ -37,6 +38,7 @@ export class AnthropicNativeContext implements NativeContext {
     private readonly flight: <T>(
       signal: AbortSignal,
       work: (signal: AbortSignal) => Promise<T>,
+      budget?: RetryBudget,
     ) => Promise<T>,
   ) {}
   async capability(signal: AbortSignal): Promise<NativeContextCapability> {
@@ -80,6 +82,7 @@ export class AnthropicNativeContext implements NativeContext {
     const body = nativeCountBody(request, state);
     const count = await this.flight(request.signal, (signal) =>
       this.client.beta.messages.countTokens({ ...body, betas }, { signal }),
+      request.budget,
     );
     const parsed = z.number().int().nonnegative().safeParse(count.input_tokens);
     if (!parsed.success) throw new NativeContextError("invalid_token_count");
@@ -142,7 +145,7 @@ export class AnthropicNativeContext implements NativeContext {
       } finally {
         if (responseId) request.observer?.({ type: "response_done", response_id: responseId });
       }
-    });
+    },request.budget);
     request.signal.throwIfAborted();
     return { response, state };
   }
@@ -182,7 +185,7 @@ export class AnthropicNativeContext implements NativeContext {
       signal.throwIfAborted();
       if (!stopped) throw new NativeContextError("invalid_summary");
       return stream.finalMessage();
-    });
+    },request.budget);
     request.signal.throwIfAborted();
     if (
       result.model !== this.config.model ||

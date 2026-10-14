@@ -1,0 +1,85 @@
+.background-work {
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  max-width: min(360px, calc(100% - 2 * var(--s4)));
+  margin: 0 auto var(--s2);
+  border-radius: var(--r-xl);
+  background: color-mix(in srgb, var(--message-canvas, var(--canvas)) 72%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(170%);
+  backdrop-filter: blur(20px) saturate(170%);
+  box-shadow: 0 0 0 0.5px var(--line), 0 4px 16px rgb(0 0 0 / 6%);
+  overflow: hidden;
+  pointer-events: auto;
+}
+.background-work-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s1);
+  min-height: 28px;
+  padding: 0 var(--s3);
+  border: 0;
+  background: transparent;
+  color: var(--message-secondary, var(--muted));
+  font: inherit;
+  font-size: var(--t-caption);
+  font-weight: 500;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.background-work-pill:active { opacity: 0.6; }
+.background-work-glyph {
+  display: inline-grid;
+  place-items: center;
+  color: var(--accent);
+}
+.background-work-glyph[data-active] svg { animation: background-work-turn 2.4s linear infinite; }
+@keyframes background-work-turn { to { transform: rotate(360deg); } }
+.background-work-chevron { transition: transform var(--dur-base) var(--ease-standard); }
+.background-work[data-open] .background-work-chevron { transform: rotate(180deg); }
+.background-work-list {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--s3) var(--s2);
+}
+.background-work-item {
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 32px;
+  box-shadow: inset 0 0.5px 0 var(--line);
+  font-size: var(--t-footnote);
+}
+.background-work-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--message-secondary, var(--muted));
+}
+.background-work-dot[data-state='running'] { background: var(--accent); }
+.background-work-objective {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--message-ink, var(--ink));
+}
+.background-work-state {
+  color: var(--message-secondary, var(--muted));
+  font-size: var(--t-caption);
+}
+.background-work-more {
+  min-height: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--t-footnote);
+  box-shadow: inset 0 0.5px 0 var(--line);
+  cursor: pointer;
+}
+@media (prefers-reduced-motion: reduce) {
+  .background-work-glyph[data-active] svg { animation: none; }
+}

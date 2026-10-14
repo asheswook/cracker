@@ -23,10 +23,10 @@ export async function publishAttentionMessage(
   run: { readonly id: string; readonly state: "failed" | "unknown" },
 ): Promise<void> {
   const link = z
-    .object({ task_id: z.uuid(), conversation_id: z.uuid(), created_at: z.string(), reason: z.string().nullable() })
+    .object({ task_id: z.uuid(), conversation_id: z.uuid(), created_at: z.string(), reason: z.string().nullable(),lane:z.enum(['foreground','background']),origin:z.enum(['user','schedule','responsibility']) })
     .parse(
       (
-        await sql`SELECT r.task_id,r.created_at,t.conversation_id,t.reason FROM assistant.runs r JOIN assistant.tasks t ON t.id=r.task_id AND t.workspace_id=r.workspace_id WHERE r.id=${run.id} AND r.workspace_id=${workspace} FOR UPDATE OF r`
+        await sql`SELECT r.task_id,r.created_at,t.conversation_id,t.reason,t.lane,t.origin FROM assistant.runs r JOIN assistant.tasks t ON t.id=r.task_id AND t.workspace_id=r.workspace_id WHERE r.id=${run.id} AND r.workspace_id=${workspace} FOR UPDATE OF r`
       )[0],
     );
   const content = link.reason?.trim() || (run.state === "failed" ? "작업 오류: 상세 정보가 없습니다." : "실행 오류: 상세 정보가 없습니다.");
@@ -41,7 +41,7 @@ export async function publishAttentionMessage(
     .optional()
     .parse(
       (
-        await sql`SELECT id FROM assistant.messages WHERE workspace_id=${workspace} AND task_id=${link.task_id} AND role='assistant' AND content=${content} AND created_at>=${link.created_at} ORDER BY sequence DESC LIMIT 1`
+        await sql`SELECT id FROM assistant.messages WHERE workspace_id=${workspace} AND task_id=${link.task_id} AND NOT hidden AND role='assistant' AND content=${content} AND created_at>=${link.created_at} ORDER BY sequence DESC LIMIT 1`
       )[0],
     );
   // Taskless status is visible history, never a new system input awaiting a run receipt.
@@ -49,12 +49,12 @@ export async function publishAttentionMessage(
     equivalent ??
     z.object({ id: z.uuid() }).parse(
       (
-        await sql`INSERT INTO assistant.messages(workspace_id,conversation_id,role,content)
-      VALUES(${workspace},${link.conversation_id},'system',${content}) RETURNING id`
+        await sql`INSERT INTO assistant.messages(workspace_id,conversation_id,role,content,origin)
+      VALUES(${workspace},${link.conversation_id},'system',${content},${link.origin}) RETURNING id`
       )[0],
     );
   await sql`INSERT INTO assistant.notification_attention_messages(run_id,state,message_id) VALUES(${run.id},${run.state},${message.id})`;
-  await sql`UPDATE assistant.messages SET notify=true WHERE id=${message.id} AND workspace_id=${workspace}`;
+  if(link.lane==='foreground')await sql`UPDATE assistant.messages SET notify=true WHERE id=${message.id} AND workspace_id=${workspace}`;
   await enqueueMessageNotification(sql, workspace, { id: message.id, runId: run.id });
   if (!equivalent)
     await recordEvent(sql, {

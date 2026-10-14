@@ -4,7 +4,7 @@ export const HeaderAction = z.enum(['menu', 'settings', 'computer', 'time-toggle
 export type HeaderActionName = z.infer<typeof HeaderAction>;
 export const HeaderProps = z.object({
   name: z.string().max(80), archiveTitle: z.string().max(200).nullable(), connected: z.boolean(), presence: z.enum(['online', 'computer-offline', 'offline']).optional(),
-  computerOpen: z.boolean(), working: z.boolean(), appearance: AssistantAppearance,
+  computerOpen: z.boolean(), working: z.boolean(), activity: z.enum(['thinking', 'computer', 'typing']).optional(), appearance: AssistantAppearance,
   scheme: z.enum(['light', 'dark']), time: z.object({ available: z.boolean(), pinned: z.boolean() }).strict(),
 }).strict();
 export type HeaderPropsValue = z.infer<typeof HeaderProps>;

@@ -120,7 +120,7 @@ test("cancelled reservations stay cancelled on replay and never wake", async () 
   ).toHaveLength(0);
 });
 
-test("completion cannot skip a scheduled system wake that arrived during the active run", async () => {
+test("completion does not consume a scheduled wake belonging to a separate background task", async () => {
   const context = await active();
   const saved = envelope.parse(
     await (await request("/v1/daemon/schedules", machine, context.body)).json(),
@@ -146,7 +146,7 @@ test("completion cannot skip a scheduled system wake that arrived during the act
       state: "succeeded",
       reason: null,
     });
-  expect((await completed()).status).toBe(409);
+  expect((await completed()).status).toBe(200);
   const wake = Message.parse(
     (
       await sql`SELECT * FROM assistant.messages WHERE workspace_id=${workspace} AND client_message_id=${saved.id}`
@@ -161,6 +161,7 @@ test("completion cannot skip a scheduled system wake that arrived during the act
         message_id: wake.id,
       })
     ).status,
-  ).toBe(200);
-  expect((await completed()).status).toBe(200);
+  ).toBe(404);
+  expect(wake.task_id).not.toBe(context.run.task.id);
+  expect(wake.hidden).toBe(true);
 });

@@ -1,5 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#fcfcfc"/>
-  <text x="123" y="350" fill="#202329" font-family="Arial, Helvetica, sans-serif" font-size="320" font-weight="700">a</text>
-  <circle cx="354" cy="278" r="23" fill="#225bd9"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-8 -8 116 116" color="#2a211c"><path d="M32 15H68A17 17 0 0 1 85 32V66A17 17 0 0 1 68 83H32A17 17 0 0 1 15 66V32A17 17 0 0 1 32 15Z" fill="#c08139" transform="translate(0 3.5)"/><path d="M32 15H68A17 17 0 0 1 85 32V66A17 17 0 0 1 68 83H32A17 17 0 0 1 15 66V32A17 17 0 0 1 32 15Z" fill="#eaae60"/><g fill="#c08139" opacity=".55"><circle cx="30" cy="29" r="2.6"/><circle cx="70" cy="29" r="2.6"/><circle cx="50" cy="29" r="2.6"/></g><g><g class="character-gaze"><g class="character-eyes" fill="currentColor"><circle cx="35" cy="54" r="4"/><circle cx="65" cy="54" r="4"/></g></g></g></svg>

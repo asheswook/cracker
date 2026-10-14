@@ -86,7 +86,7 @@ export function HeaderOnly() {
   if (!state) return null;
   return <div className="app-shell assistant-shell"><main className="main-surface" ref={surface}>
     <ConversationHeader name={state.props.name} appearance={state.props.appearance} archiveTitle={state.props.archiveTitle ?? undefined}
-      presence={state.props.presence ?? (state.props.connected ? 'online' : 'offline')} working={state.props.working} computerOpen={state.props.computerOpen}
+      presence={state.props.presence ?? (state.props.connected ? 'online' : 'offline')} working={state.props.working} activity={state.props.activity} computerOpen={state.props.computerOpen}
       onMenu={() => action('menu')} onSettings={() => action('settings')} onComputer={() => action('computer')}
       onTimeControlMount={setTimeRoot} />
     {state.props.archiveTitle !== null && <ArchiveBanner onReturn={() => action('archive-return')} />}

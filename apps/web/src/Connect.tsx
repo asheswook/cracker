@@ -11,7 +11,7 @@ export function Connect() {
     <main className="connect-page">
       <Surface className="connect-content">
         <Mark />
-        <h1>Assistant에 로그인</h1>
+        <h1>크래커에 로그인</h1>
         <p className="connect-description">설치할 때 받은 접근 토큰을 입력하세요.</p>
         <form
           className="connect-form"

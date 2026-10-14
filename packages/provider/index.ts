@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { retryProvider, type ProviderRetryObserver } from "./retry.ts";
+import { retryProvider, type ProviderRetryObserver, type RetryBudget } from "./retry.ts";
 import type { ResponseInputItem, Tool, Response } from "openai/resources/responses/responses";
 import { compactedInput } from "./compaction.ts";
 import { readCredential } from "./credentials.ts";
@@ -18,7 +18,7 @@ export interface Provider {
   close?():void|Promise<void>;
   readonly standaloneCompaction?:boolean;
   compact?(input: ResponseInputItem[], signal: AbortSignal): Promise<ResponseInputItem[]>;
-  respond(input: ResponseInputItem[], tools: Tool[], signal: AbortSignal, observer?:ProviderResponseObserver): Promise<Response>;
+  respond(input: ResponseInputItem[], tools: Tool[], signal: AbortSignal, observer?:ProviderResponseObserver, budget?:RetryBudget): Promise<Response>;
 }
 export class OpenAIProvider implements Provider {
   get standaloneCompaction():boolean{return this.config.mode==="api";}
@@ -31,12 +31,12 @@ export class OpenAIProvider implements Provider {
   constructor(private readonly config: ProviderConfig, private readonly client?: OpenAI) {
     if (!config.model.trim()) throw new ProviderError("configuration", "OPENAI_MODEL is required");
   }
-  async respond(input: ResponseInputItem[], tools: Tool[], signal: AbortSignal,observer?:ProviderResponseObserver): Promise<Response> {
+  async respond(input: ResponseInputItem[], tools: Tool[], signal: AbortSignal,observer?:ProviderResponseObserver,budget?:RetryBudget): Promise<Response> {
     if(this.closed)throw new ProviderError("configuration","Provider is closed");
-    if(this.config.mode==="proxy"||this.config.transport!=="websocket")return retryProvider(() => this.respondOnce(input,tools,signal,observer), {signal,onRetry:this.config.onRetry});
+    if(this.config.mode==="proxy"||this.config.transport!=="websocket")return retryProvider(() => this.respondOnce(input,tools,signal,observer), {signal,onRetry:this.config.onRetry,budget});
     if(this.websocketFlights>=8)throw new ProviderError("configuration","WebSocket concurrent request limit reached");
     this.websocketFlights++;
-    try{return await retryProvider(() => this.respondOnce(input,tools,signal,observer), {signal,onRetry:this.config.onRetry});}
+    try{return await retryProvider(() => this.respondOnce(input,tools,signal,observer), {signal,onRetry:this.config.onRetry,budget});}
     finally{this.websocketFlights--;for(const pool of this.retiredPools)if(pool.drained)this.retiredPools.delete(pool);}
   }
   private async credentialToken():Promise<string>{

@@ -13,7 +13,8 @@ export function desktopReadOnly(name: string): boolean {
   return ["desktop_list_apps", "desktop_get_app_state", "desktop_query"].includes(name);
 }
 export function desktopTool(tool: { name: string; description?: string | undefined; inputSchema: unknown }): Extract<Tool, { type: "function" }> {
-  const guidance = tool.name === "get_app_state" ? "Returns the window's accessibility tree with element indexes plus a screenshot; prefer element_index targets over coordinates. " : "";
+  const guidance = tool.name === "get_app_state" ? "Returns the window's accessibility tree with element indexes plus a screenshot; prefer element_index targets over coordinates. Pass app exactly as desktop_list_apps names it (e.g. \"Google Chrome\"), never a guessed binary name. "
+    : tool.name === "list_apps" ? "Call first to learn exact app names for the other desktop_ tools. " : "";
   return { type: "function", name: `desktop_${tool.name}`, description: guidance + (tool.description ?? tool.name), strict: false,
     parameters: z.record(z.string(), z.unknown()).parse(tool.inputSchema) };
 }

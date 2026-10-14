@@ -38,6 +38,10 @@ export class Journal {
   }
   archiveCheckpoint(value:RunCheckpoint,signal:AbortSignal):RunCheckpoint{return this.archive.commit(value,signal,next=>this.putCheckpoint(next));}
   originalInput(run:string){return this.archive.originalInput(run);}
+  assignmentLane(run:string):'foreground'|'background'|undefined{
+    const row=z.object({lane:z.enum(['foreground','background']).nullable()}).nullable().parse(this.db.query("SELECT json_extract(payload,'$.assignment.lane') AS lane FROM checkpoints WHERE run=?").get(run));
+    return row?.lane??undefined;
+  }
   recoverable(run: string): RunCheckpoint | null {
     return this.db.transaction(()=>{
     const row=z.object({payload:z.string()}).nullable().parse(this.db.query("SELECT payload FROM checkpoints c WHERE c.run=? AND NOT EXISTS(SELECT 1 FROM actions a WHERE a.run=c.run AND (a.rowid>c.watermark OR a.state<>'completed'))").get(run));

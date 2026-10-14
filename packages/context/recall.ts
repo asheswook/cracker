@@ -3,7 +3,8 @@ import type { Database } from '../../services/control/db';
 import { contextSnapshot } from './store-read';
 import type { SemanticRetriever } from './schema';
 import { contextDocumentHash, synchronizeContextIndex } from './recall-index';
-import { contextCosine, ContextRecallError, encodeContext, SearchDocument, type ContextEmbed } from './recall-types';
+import { ContextRecallError, encodeContext, SearchDocument, type ContextEmbed } from './recall-types';
+const RankedDocument=SearchDocument.omit({vector:true}).extend({score:z.coerce.number().finite()});
 export { CONTEXT_EMBEDDING_MODEL, contextCosine, ContextRecallError, type ContextEmbed } from './recall-types';
 
 export function createSemanticRetriever(sql:Database,embed:ContextEmbed):SemanticRetriever {
@@ -14,16 +15,18 @@ export function createSemanticRetriever(sql:Database,embed:ContextEmbed):Semanti
     const text=[input.source.content.slice(0,12000),...input.source.attachments.map(file=>file.name)].join('\n');
     if(!text.trim())return [];
     const [vector]=await encodeContext(embed,[text]);if(!vector)throw new ContextRecallError('invalid_embeddings');
+    const query=JSON.stringify(vector),columns=sql.unsafe('id,context_id,kind,reference_id,source_sequence,input_hash,start_offset,end_offset');
     const matching=await sql.begin(async tx=>{
       // Filters run after ANN scanning. pgvector 0.8 iterates to fill the 64-hit budget;
       // relaxed ordering is safe because we re-rank below. LOCAL avoids pooled-session leaks.
       await tx`SET LOCAL hnsw.iterative_scan = relaxed_order`;
       await tx`SET LOCAL hnsw.ef_search = 100`;
-      return z.array(SearchDocument).parse(await tx`SELECT *,vector::text::jsonb AS vector FROM assistant.semantic_search_documents WHERE workspace_id=${scope.workspace} AND source_sequence<=${input.source.sequence} ORDER BY vector <=> ${JSON.stringify(vector)}::vector LIMIT 64`);
+      return z.array(RankedDocument).parse(await tx`SELECT ${columns},1-(vector <=> ${query}::vector) AS score FROM assistant.semantic_search_documents WHERE workspace_id=${scope.workspace} AND source_sequence<=${input.source.sequence} ORDER BY vector <=> ${query}::vector LIMIT 64`);
     });
-    const recent=z.array(SearchDocument).parse(await sql`SELECT *,vector::text::jsonb AS vector FROM assistant.semantic_search_documents WHERE workspace_id=${scope.workspace} AND source_sequence<=${input.source.sequence} AND updated_at>now()-interval '10 minutes' ORDER BY updated_at DESC,id LIMIT 128`);
-    const unique=[...new Map([...matching,...recent].map(document=>[document.id,document])).values()];
-    const ranked=unique.map(document=>({document,score:contextCosine(vector,document.vector)})).toSorted((a,b)=>b.score-a.score||a.document.id.localeCompare(b.document.id));
+    // Similarity is computed in PostgreSQL; shipping 1024-float vectors as JSON cost seconds per lookup.
+    const recent=z.array(RankedDocument).parse(await sql`SELECT ${columns},1-(vector <=> ${query}::vector) AS score FROM assistant.semantic_search_documents WHERE workspace_id=${scope.workspace} AND source_sequence<=${input.source.sequence} AND updated_at>now()-interval '10 minutes' ORDER BY updated_at DESC,id LIMIT 128`);
+    const unique=[...new Map([...matching,...recent].map(({score,...document})=>[document.id,{document,score}])).values()];
+    const ranked=unique.toSorted((a,b)=>b.score-a.score||a.document.id.localeCompare(b.document.id));
     const groups=new Map<string,typeof ranked>();
     for(const item of ranked){const items=groups.get(item.document.context_id)??[];items.push(item);groups.set(item.document.context_id,items);}
     const result=[];

@@ -19,7 +19,8 @@ import type { Panel } from './AssistantNav';
 import { InspectorHost } from './InspectorHost';
 import { InspectorHeader } from './InspectorHeader';
 import { PanelErrorBoundary } from './PanelErrorBoundary';
-import { Mark, ErrorNotice, type Presence } from './primitives';
+import { ErrorNotice, type Presence } from './primitives';
+import { AssistantCharacter } from './appearance/AssistantCharacter';
 import { conversationLabel } from './feed-labels';
 import { ConversationHeader } from './ConversationHeader';
 import { errorMessage } from './api';
@@ -29,7 +30,7 @@ import { useNotificationAttention } from './useNotificationAttention';
 import type { Id } from './types';
 import { createWorkSession } from './work-session';
 import { useWorkNavigation } from './useWorkNavigation';
-import { useAssistantWorking } from './useAssistantWorking';
+import { assistantActivity, useAssistantWorking } from './useAssistantWorking';
 import { nativeShellConfiguration, listenNativeShell, publishNativeShell, openInNativeBody, requestNativePanel } from './native-bridge';
 import { taskTarget } from './useWorkNavigation';
 import './assistant.css';
@@ -56,6 +57,7 @@ export function App() {
   useTaskErrorToasts(state.workspace, state.phase === 'ready' && state.connected, state.tasks);
   useNotificationAttention(state.phase === 'ready' && state.connected && state.syncedCursor !== null, refreshAfterNotification, state.selected);
   const assistantWorking = useAssistantWorking(state);
+  const workingActivity = assistantActivity(state, assistantWorking);
   const [panel, setPanel] = useState<Panel | null>(null);
   const [reserved, setReserved] = useState(false);
   const [wideInspector, setWideInspector] = useState(false);
@@ -229,7 +231,7 @@ export function App() {
     scope: `${state.workspace ?? 'none'}:${state.selected ?? 'none'}`,
     visible: !nativeShell && state.phase === 'ready' && !menu && !panel && !reserved,
     props: { name: state.persona.name, appearance: state.appearance, connected: state.connected, presence,
-      working: assistantWorking, computerOpen: panel === 'computer',
+      working: assistantWorking, activity: workingActivity, computerOpen: panel === 'computer',
       archiveTitle: state.selected && state.selected !== state.assistantId ? archiveLabel : null },
   }, { menu: openMenu, settings: () => selectPanel('settings'), computer: () => selectPanel('computer'), 'archive-return': returnToAssistant });
   useEffect(() => () => panelTransition()?.cancel(), [state.workspace, state.selected]);
@@ -237,8 +239,8 @@ export function App() {
   if (state.phase === 'loading')
     return (
       <main className="boot">
-        <Mark />
-        <LoadingSkeleton label={state.error ? '연결을 복구하는 중…' : '어시스턴트를 불러오는 중…'} />
+        <span className="boot-character"><AssistantCharacter appearance={state.appearance} state="thinking" /></span>
+        <LoadingSkeleton label={state.error ? '연결을 복구하는 중…' : '크래커를 굽는 중…'} />
       </main>
     );
   if (state.phase === 'login') return <Connect />;
@@ -266,7 +268,7 @@ export function App() {
       visible={panel === 'computer' && !menu} controlAllowed={state.vms[0]?.control_state === 'user' && !state.control[state.vms[0].id]}>
     <div
       className={`app-shell assistant-shell ${independentHeader.active ? 'independent-header-active' : ''} ${reserved ? 'has-inspector' : ''} ${panel ? 'inspector-visible' : ''} ${reserved && wideInspector ? 'computer-open' : ''}`}
-      style={nativeShell ? { display: 'block', height: '100%', minHeight: 0 } : undefined}
+      style={nativeShell ? { display: 'block', height: '100%', minHeight: 0, padding: 0 } : undefined}
     >
       {!nativeShell && <div className="desktop-sidebar">{side}</div>}
       <dialog
@@ -281,9 +283,9 @@ export function App() {
       >
         {side}
       </dialog>
-      <main className="main-surface" style={nativeShell ? { height: '100%', margin: 0, border: 0, borderRadius: 0 } : undefined}>
+      <main className="main-surface" style={nativeShell ? { height: '100%', margin: 0, border: 0, borderRadius: 0, boxShadow: 'none' } : undefined}>
         {!independentHeader.active && <ConversationHeader native={Boolean(nativeShell)} name={state.persona.name} archiveTitle={archive ? title : undefined}
-          appearance={state.appearance} working={assistantWorking}
+          appearance={state.appearance} working={assistantWorking} activity={workingActivity}
           presence={presence} computerOpen={panel === 'computer'} onMenu={openMenu}
           onSettings={() => selectPanel('settings')} onComputer={() => selectPanel('computer')}
           onTimeControlMount={setTimeControlRoot} />}
@@ -310,6 +312,8 @@ export function App() {
           focusTask={focusTask}
           focusMessage={focusMessage}
           timeControlRoot={timeControlRoot}
+          background={state.background}
+          onOpenTasks={() => selectPanel('tasks')}
         />
       </main>
       <AnimatePresence onExitComplete={() => setReserved(false)}>

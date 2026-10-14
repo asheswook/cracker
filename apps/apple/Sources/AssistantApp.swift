@@ -11,7 +11,7 @@ struct AssistantApp: App {
     #endif
     var body: some Scene {
         #if os(macOS)
-        Window("Assistant", id: "assistant") { ShellView(shell: shell) }
+        Window("크래커", id: "assistant") { ShellView(shell: shell) }
         .defaultSize(width: 1120, height: 780)
         .commands { CommandGroup(replacing: .newItem) {} }
         Settings { MacSettingsView().tint(ShellStyle.accent) }
@@ -32,18 +32,22 @@ struct ConversationSurface: View {
                     .ignoresSafeArea(.keyboard, edges: .bottom)
                 #else
                 NativeWebView(webView: shell.webView)
+                    .overlay(alignment: .top) {
+                        // Leave the centred persona button clickable; drag from either side of it.
+                        HStack(spacing: 140) { TitlebarDragArea(); TitlebarDragArea() }.frame(height: 88)
+                    }
                 #endif
             }
             if let failure = shell.failure {
                 VStack(spacing: 20) {
                     Image(systemName: "wifi.exclamationmark").font(.system(size: 38, weight: .light)).foregroundStyle(.secondary)
-                    Text("Assistant에 연결할 수 없어요").font(.title3.weight(.semibold))
+                    Text("크래커에 연결할 수 없어요").font(.title3.weight(.semibold))
                     Text(failure).font(.body).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 320)
                     Button("다시 연결", action: shell.retry).buttonStyle(.borderedProminent).controlSize(.large)
                 }
                 .padding(32).frame(maxWidth: .infinity, maxHeight: .infinity).background(.background)
             } else if shell.loading {
-                ProgressView("연결 중…").padding(22).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+                CrackerLoadingView().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
             }
         }
         #if os(iOS)
@@ -87,6 +91,19 @@ struct NativeWebView: NSViewRepresentable {
     let webView: WKWebView
     func makeNSView(context: Context) -> WKWebView { webView }
     func updateNSView(_ view: WKWebView, context: Context) {}
+}
+/// The page runs under the transparent titlebar; this strip restores window dragging and double-click zoom there.
+final class TitlebarDragView: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 { window?.performZoom(nil); return }
+        window?.performDrag(with: event)
+    }
+}
+struct TitlebarDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> TitlebarDragView { TitlebarDragView() }
+    func updateNSView(_ view: TitlebarDragView, context: Context) {}
 }
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) { NotificationService.shared.configure() }

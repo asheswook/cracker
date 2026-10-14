@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ModelBinding } from "../models/schema";
 
 export const Id = z.uuid();
+export const TaskLane = z.enum(['foreground','background']);
 export const TaskState = z.enum([
   "queued",
   "running",
@@ -34,6 +35,7 @@ export const Message = z.object({
   role: z.enum(["user", "assistant", "system"]),
   origin: z.enum(["user", "schedule", "responsibility"]).optional(),
   notify: z.boolean().optional(),
+  hidden: z.boolean().optional(),
   phase: AssistantPhase.nullish(),
   content: z.string(),
   reply_to_message_id: Id.nullable().optional(),
@@ -48,6 +50,7 @@ export const Message = z.object({
 });
 export const Conversation = z.object({ id: Id, title: z.string(), created_at: z.string() });
 export const Task = z.object({
+  lane: TaskLane.optional(),
   id: Id,
   conversation_id: Id,
   objective: z.string(),
@@ -78,6 +81,7 @@ export const PriorWorkRequest = z.object({ task_id: Id.nullable(), before_task_i
 export const PriorWorkPage = z.object({ capsules: z.array(WorkCapsule).max(8), messages: z.array(Message).max(100), has_more: z.boolean(), next_before_task_id: Id.nullable(), next_after_sequence: z.number().int().nullable() });
 export const TaskSourcePage = z.object({ retention_context: RetentionContext.optional(), messages: z.array(Message).max(100), memory: z.array(z.object({ id: Id, text: z.string() })), next_after_sequence: z.number().int().nullable() });
 export const Assignment = z.object({
+  lane: TaskLane.optional(),
   semantic_structure_mode: z.enum(['off','shadow','on']).optional(),
   semantic_context_enabled: z.boolean().optional(),
   task: Task,
@@ -114,7 +118,7 @@ export const DaemonEvent = z.discriminatedUnion("kind", [
       phase: AssistantPhase.nullish(),
       attachment_ids: z.array(Id).max(8).optional(),
     })
-    .refine((value) => value.content.trim().length > 0 || (value.attachment_ids?.length ?? 0) > 0),
+    .refine((value) => value.phase === 'final_answer' || value.content.trim().length > 0 || (value.attachment_ids?.length ?? 0) > 0),
   z.object({
     kind: z.literal("state"),
     event_id: Id,
@@ -132,6 +136,7 @@ export const DaemonEvent = z.discriminatedUnion("kind", [
     detail: z.string().max(2000),
   }),
   z.object({ kind: z.literal("input_applied"), event_id: Id, run_id: Id, message_id: Id }),
+  z.object({ kind: z.literal("activity"), event_id: Id, run_id: Id, activity: z.literal("computer") }),
 ]);
 export type Assignment = z.infer<typeof Assignment>;
 export type DaemonEvent = z.infer<typeof DaemonEvent>;

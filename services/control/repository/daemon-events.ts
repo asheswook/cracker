@@ -51,12 +51,19 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
         throw new DomainError("stale_run", "Run cannot emit messages", 409);
       await clearDeliveredComposing(sql,run.id,event.event_id);
       const task = z
-        .object({ conversation_id: z.uuid(), origin: z.enum(["user", "schedule", "responsibility"]) })
-        .parse((await sql`SELECT conversation_id,origin FROM assistant.tasks WHERE id=${run.task_id}`)[0]);
+        .object({ conversation_id: z.uuid(), origin: z.enum(["user", "schedule", "responsibility"]), lane: z.enum(['foreground','background']) })
+        .parse((await sql`SELECT conversation_id,origin,lane FROM assistant.tasks WHERE id=${run.task_id}`)[0]);
+      const hidden=task.lane==='background'&&(event.phase!=='final_answer'||!event.content.trim()||event.content.trim()==='NO_REPORT');
+      // Publish task-created files with the report, never with intermediate artifact events.
+      const pendingArtifacts=task.lane==='background'&&!hidden?z.array(z.object({id:z.uuid()})).parse(await sql`
+        SELECT DISTINCT a.id FROM assistant.message_artifacts ma JOIN assistant.messages m ON m.id=ma.message_id
+        JOIN assistant.artifacts a ON a.id=ma.artifact_id
+        WHERE m.task_id=${run.task_id} AND m.hidden AND m.output_kind='artifact' AND a.state='ready' ORDER BY a.id`):[];
+      const attachmentIds=[...new Set([...(event.attachment_ids??[]),...pendingArtifacts.map(a=>a.id)])];
       const attachments = await attachmentReferences(
         sql,
         { workspace: principal.workspace_id, conversation: task.conversation_id },
-        event.attachment_ids ?? [],
+        attachmentIds.slice(0,8),
       );
       // Attribution is independent of semantic feature flags and never creates exchanges.
       await validateResponseAttribution(sql,{workspace:principal.workspace_id,conversation:task.conversation_id,task_id:run.task_id},event.response_to_message_id??null,event.applied_user_ids??[]);
@@ -64,7 +71,7 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
         .object({ id: z.uuid() })
         .parse(
           (
-            await sql`INSERT INTO assistant.messages(id,workspace_id,conversation_id,task_id,role,content,phase,response_to_message_id,applied_user_ids,output_kind,origin) VALUES(COALESCE(${event.message_id ?? null}::uuid,gen_random_uuid()),${principal.workspace_id},${task.conversation_id},${run.task_id},'assistant',${event.content},${event.phase ?? null},${event.response_to_message_id??null},${sql.array(event.applied_user_ids??[])}::uuid[],${event.output_kind??null},${task.origin}) RETURNING id`
+            await sql`INSERT INTO assistant.messages(id,workspace_id,conversation_id,task_id,role,content,phase,response_to_message_id,applied_user_ids,output_kind,origin,hidden) VALUES(COALESCE(${event.message_id ?? null}::uuid,gen_random_uuid()),${principal.workspace_id},${task.conversation_id},${run.task_id},'assistant',${event.content},${event.phase ?? null},${event.response_to_message_id??null},${sql.array(event.applied_user_ids??[])}::uuid[],${event.output_kind??null},${task.origin},${hidden}) RETURNING id`
           )[0],
         );
       if(event.response_to_message_id||event.applied_user_ids?.length) {
@@ -80,12 +87,18 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
         },
         attachments.map((file) => file.id),
       );
-      if (event.semantic_context_id) await linkAssistantContext(sql, {
+      // A report can publish more than the per-message limit without losing files.
+      for(let offset=8;offset<attachmentIds.length;offset+=8){
+        const files=await attachmentReferences(sql,{workspace:principal.workspace_id,conversation:task.conversation_id},attachmentIds.slice(offset,offset+8));
+        const extra=z.object({id:z.uuid()}).parse((await sql`INSERT INTO assistant.messages(workspace_id,conversation_id,task_id,role,content,phase,output_kind,origin) VALUES(${principal.workspace_id},${task.conversation_id},${run.task_id},'assistant','','final_answer','artifact',${task.origin}) RETURNING id`)[0]);
+        await bindAttachments(sql,{workspace:principal.workspace_id,conversation:task.conversation_id,message:extra.id},files.map(file=>file.id));
+      }
+      if (!hidden && event.semantic_context_id) await linkAssistantContext(sql, {
         workspace: principal.workspace_id, conversation: task.conversation_id,
         run_id: run.id, context_id: event.semantic_context_id, message_id: inserted.id,
         ...(event.semantic_source_message_id ? { source_message_id: event.semantic_source_message_id } : {}),
       });
-      await enqueueMessageNotification(sql, principal.workspace_id, { id: inserted.id, runId: run.id });
+      if(!hidden)await enqueueMessageNotification(sql, principal.workspace_id, { id: inserted.id, runId: run.id });
       break;
     }
     case "state": {
@@ -187,9 +200,15 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
     case "input_applied": {
       const run = await loadRun(sql, principal, event.run_id);
       const rows =
-        await sql`SELECT m.id FROM assistant.messages m JOIN assistant.tasks t ON t.conversation_id=m.conversation_id AND t.workspace_id=m.workspace_id WHERE m.id=${event.message_id} AND t.id=${run.task_id} AND m.workspace_id=${principal.workspace_id}`;
+        await sql`SELECT m.id FROM assistant.messages m WHERE m.id=${event.message_id} AND m.task_id=${run.task_id} AND m.workspace_id=${principal.workspace_id}`;
       if (!rows[0]) throw new DomainError("not_found", "Task input not found", 404);
       await sql`INSERT INTO assistant.input_receipts(workspace_id,run_id,message_id) VALUES(${principal.workspace_id},${run.id},${event.message_id}) ON CONFLICT DO NOTHING`;
+      break;
+    }
+    case "activity": {
+      const run = await loadRun(sql, principal, event.run_id);
+      if (run.state !== "running") throw new DomainError("stale_run", "Run is not running", 409);
+      await sql`UPDATE assistant.runs SET activity=${event.activity},activity_at=now() WHERE id=${run.id}`;
       break;
     }
     default:

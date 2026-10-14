@@ -24,7 +24,7 @@ test('appearance starts with the specified default and an independent workspace 
 test('appearance persists all supported fields and survives a fresh GET', async () => {
   // Given
   const base = await current();
-  const appearance = { version: 1, shape: 'rounded-triangle', color: 'orchid', eyes: 'sparkle', eyewear: 'sunglasses', accessory: 'beanie' } as const;
+  const appearance = { version: 2, biscuit: 'ring', color: 'cocoa', eyes: 'smile', blush: true, accessory: 'beret' } as const;
   // When
   const response = await put({ appearance, expected_revision: base.revision });
   const saved = AppearanceSettings.parse(await response.json());
@@ -37,11 +37,11 @@ test('appearance persists all supported fields and survives a fresh GET', async 
 });
 
 const choices = {
-  shape: ['circle', 'capsule', 'flower', 'heart', 'diamond', 'rounded-triangle'],
-  color: ['coral', 'pink', 'orchid', 'violet', 'blue', 'cyan', 'teal', 'lime', 'yellow'],
-  eyes: ['oval', 'dots', 'sleepy', 'sparkle'],
-  eyewear: ['none', 'monocle', 'round', 'sunglasses'],
-  accessory: ['none', 'headphones', 'bow', 'beanie', 'crown'],
+  biscuit: ['saltine', 'butter', 'graham', 'sandwich', 'wafer', 'ring'],
+  color: ['wheat', 'butter', 'honey', 'cinnamon', 'cocoa', 'matcha', 'berry', 'charcoal'],
+  eyes: ['dots', 'ovals', 'sleepy', 'smile'],
+  blush: [true, false],
+  accessory: ['none', 'headphones', 'beret', 'bow'],
 } as const;
 for (const [field, options] of Object.entries(choices)) for (const option of options) {
   test(`appearance persists the supported ${field} option ${option}`, async () => {
@@ -59,7 +59,7 @@ test('competing appearance writes have one winner and a conflict containing the 
   // Given
   const base = await current();
   // When
-  const responses = await Promise.all(['circle', 'heart'].map(shape => put({ appearance: { ...base.appearance, shape }, expected_revision: base.revision })));
+  const responses = await Promise.all(['wafer', 'ring'].map(biscuit => put({ appearance: { ...base.appearance, biscuit }, expected_revision: base.revision })));
   // Then
   expect(responses.map(response => response.status).sort()).toEqual([200, 409]);
   const winner = responses.find(response => response.status === 200);
@@ -73,7 +73,7 @@ test('competing appearance writes have one winner and a conflict containing the 
 test('an exact appearance retry does not change the revision', async () => {
   // Given
   const base = await current();
-  const body = { appearance: { ...base.appearance, color: 'teal' }, expected_revision: base.revision };
+  const body = { appearance: { ...base.appearance, color: 'matcha' }, expected_revision: base.revision };
   const saved = AppearanceSettings.parse(await (await put(body)).json());
   // When
   const response = await put(body);
@@ -100,7 +100,7 @@ test('appearance writes stay isolated from another workspace', async () => {
   // Given
   const base = await current(), alien = await current(f.alienToken);
   // When
-  const response = await put({ appearance: { ...base.appearance, color: 'yellow' }, expected_revision: alien.revision });
+  const response = await put({ appearance: { ...base.appearance, color: 'butter' }, expected_revision: alien.revision });
   // Then
   expect(response.status).toBe(409);
   expect(await current()).toEqual(base);
@@ -108,11 +108,11 @@ test('appearance writes stay isolated from another workspace', async () => {
 });
 
 const invalid = [
-  ['unknown version', { ...defaultAppearance, version: 2 }], ['unknown shape', { ...defaultAppearance, shape: 'square' }],
+  ['unknown version', { ...defaultAppearance, version: 3 }], ['unknown biscuit', { ...defaultAppearance, biscuit: 'square' }],
   ['unknown color', { ...defaultAppearance, color: '#ff0000' }], ['unknown eyes', { ...defaultAppearance, eyes: 'custom' }],
-  ['unknown eyewear', { ...defaultAppearance, eyewear: 'uploaded' }], ['unknown accessory', { ...defaultAppearance, accessory: 'cape' }],
+  ['non-boolean blush', { ...defaultAppearance, blush: 'yes' }], ['unknown accessory', { ...defaultAppearance, accessory: 'cape' }],
   ['null option', { ...defaultAppearance, eyes: null }], ['extra asset', { ...defaultAppearance, image_url: 'https://example.com/image.png' }],
-  ['missing fields', { version: 1, shape: 'flower' }],
+  ['missing fields', { version: 2, biscuit: 'ring' }], ['mixed legacy keys', { ...defaultAppearance, shape: 'flower' }],
 ] as const;
 for (const [label, appearance] of invalid) test(`appearance rejects ${label} without changing saved values`, async () => {
   // Given
@@ -144,7 +144,7 @@ test('appearance bounds the request body', async () => {
 
 test('the database rejects null or extra appearance fields even outside HTTP validation', async () => {
   // Given / When / Then
-  for (const appearance of [{ ...defaultAppearance, shape: null }, { ...defaultAppearance, unexpected: true }]) {
+  for (const appearance of [{ ...defaultAppearance, eyes: null }, { ...defaultAppearance, blush: 'false' }, { ...defaultAppearance, unexpected: true }]) {
     await expect(Promise.resolve(f.sql`UPDATE assistant.workspaces SET appearance=${JSON.stringify(appearance)}::text::jsonb WHERE id=${f.workspace}`))
       .rejects.toMatchObject({ code: '23514' });
   }
@@ -157,7 +157,7 @@ test('appearance edits neither change persona settings nor enter daemon assignme
   const settings = Settings.parse(await (await f.request('/v1/settings')).json());
   const base = await current();
   // When
-  expect((await put({ appearance: { ...base.appearance, accessory: 'crown' }, expected_revision: base.revision })).status).toBe(200);
+  expect((await put({ appearance: { ...base.appearance, accessory: 'beret' }, expected_revision: base.revision })).status).toBe(200);
   await f.newTask();
   const raw: unknown = await (await f.request('/v1/daemon/poll', f.machine)).json();
   const assignment = DaemonPoll.parse(raw).assignment;
@@ -176,10 +176,10 @@ test('persona saves do not invalidate an open appearance editor revision', async
   const settings = z.object({ persona: Persona, revision: z.uuid() }).parse(await (await f.request('/v1/settings')).json());
   expect((await f.request('/v1/settings', f.client, { persona: { ...settings.persona, name: 'Independent name' }, expected_revision: settings.revision }, 'PUT')).status).toBe(200);
   // When
-  const response = await put({ appearance: { ...base.appearance, color: 'lime' }, expected_revision: base.revision });
+  const response = await put({ appearance: { ...base.appearance, color: 'matcha' }, expected_revision: base.revision });
   // Then
   expect(response.status).toBe(200);
-  expect(AppearanceSettings.parse(await response.json()).appearance.color).toBe('lime');
+  expect(AppearanceSettings.parse(await response.json()).appearance.color).toBe('matcha');
 });
 
 test('appearance routes reject VM credentials', async () => {
@@ -189,4 +189,18 @@ test('appearance routes reject VM credentials', async () => {
   // Then
   expect(get.status).toBe(403);
   expect(update.status).toBe(403);
+});
+
+test('legacy v1 input is stored as the parsed v2 object, never raw', async () => {
+  // Given
+  const base = await current();
+  const legacy = { version: 1, shape: 'heart', color: 'blue', eyes: 'sparkle', eyewear: 'monocle', accessory: 'crown' };
+  // When
+  const response = await put({ appearance: legacy, expected_revision: base.revision });
+  // Then
+  expect(response.status).toBe(200);
+  const expected = { version: 2, biscuit: 'ring', color: 'charcoal', eyes: 'smile', blush: false, accessory: 'none' } as const;
+  expect(AppearanceSettings.parse(await response.json()).appearance).toEqual(expected);
+  expect((await current()).appearance).toEqual(expected);
+  expect(JSON.stringify(await f.sql`SELECT appearance FROM assistant.workspaces WHERE id=${f.workspace}`)).not.toContain('eyewear');
 });

@@ -1,5 +1,5 @@
 import { useCallback, useSyncExternalStore } from 'react';
-import type { AssistantWorking, Id, Message, Pending, Task } from './types';
+import type { AssistantWorking, Id, Message, Pending, ReplyComposing, Task } from './types';
 
 type WorkingContext = Readonly<{
   phase: 'loading' | 'login' | 'ready';
@@ -32,4 +32,14 @@ export function useAssistantWorking(context: WorkingContext): boolean {
     return () => clearTimeout(timer);
   }, [expires]);
   return useSyncExternalStore(subscribe, () => assistantWorking(context, Date.now()), () => false);
+}
+
+export function assistantActivity(
+  context: Readonly<{ working: AssistantWorking | null; composing: ReplyComposing | null }>,
+  working: boolean,
+): 'thinking' | 'computer' | 'typing' | undefined {
+  if (!working) return undefined;
+  const composing = context.composing;
+  if (composing && composing.task_id === context.working?.task_id && Date.parse(composing.expires_at) > Date.now()) return 'typing';
+  return context.working?.activity === 'computer' ? 'computer' : 'thinking';
 }

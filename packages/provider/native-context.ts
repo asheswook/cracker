@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Response, ResponseInputItem, Tool } from "openai/resources/responses/responses";
 import type { ProviderResponseObserver } from "./stream.ts";
+import type { RetryBudget } from './retry.ts';
 
 export const NativeText = z.object({ type: z.literal("text"), text: z.string() });
 export const SignedSummary = z
@@ -77,6 +78,7 @@ export type NativeContextCapability =
         | "capability_unavailable";
     };
 export type NativeContextRequest = {
+  readonly budget?: RetryBudget;
   readonly runId: string;
   readonly input: ResponseInputItem[];
   readonly tools: Tool[];

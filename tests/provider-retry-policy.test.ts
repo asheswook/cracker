@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import ky, { TimeoutError } from "ky";
-import { retryProvider, type ProviderRetryDecision } from "../packages/provider/retry.ts";
+import { advertisedWait, backgroundRetry, foregroundRetry, retryProvider, type ProviderRetryDecision } from "../packages/provider/retry.ts";
 import { ProviderError } from "../packages/provider/errors.ts";
 
 const signal = () => new AbortController().signal;
@@ -44,17 +44,44 @@ for (const error of [
   expect(calls).toBe(1); expect(notices).toBe(0);
 });
 
-test("persistent transient errors stop after exactly six attempts", async () => {
-  // Given
+test("persistent transient errors stop at the budget's attempt limit with jittered exponential delays", async () => {
+  // Given a tiny budget so the test does not sleep for real backoff.
   const error = new OpenAI.APIConnectionError({}); let calls = 0;
   const notices: ProviderRetryDecision[] = [];
   // When
-  await expect(retryProvider(async () => { calls++; throw error; }, { signal: signal(), onRetry: notice => notices.push(notice) })).rejects.toBe(error);
+  await expect(retryProvider(async () => { calls++; throw error; }, { signal: signal(), onRetry: notice => notices.push(notice), budget: { attempts: 4, totalMs: 60_000, maxDelayMs: 30_000 } })).rejects.toBe(error);
   // Then
-  expect(calls).toBe(6); expect(notices.map(n => n.attempt)).toEqual([1, 2, 3, 4, 5]);
-  expect(notices[0]?.delayMs).toBeGreaterThanOrEqual(250); expect(notices[0]?.delayMs).toBeLessThan(750);
-  expect(notices[1]?.delayMs).toBeGreaterThanOrEqual(500); expect(notices[1]?.delayMs).toBeLessThan(1500);
+  expect(calls).toBe(4); expect(notices.map(n => n.attempt)).toEqual([1, 2, 3]);
+  expect(notices[0]?.delayMs).toBeGreaterThanOrEqual(500); expect(notices[0]?.delayMs).toBeLessThanOrEqual(1000);
+  expect(notices[1]?.delayMs).toBeGreaterThanOrEqual(1000); expect(notices[1]?.delayMs).toBeLessThanOrEqual(2000);
 }, 60000);
+test("default budgets: foreground rides out short outages, background waits out long rate windows", () => {
+  expect(foregroundRetry.attempts).toBeGreaterThanOrEqual(6);
+  expect(backgroundRetry.totalMs).toBeGreaterThanOrEqual(10 * 60_000);
+  expect(backgroundRetry.attempts).toBeGreaterThan(foregroundRetry.attempts);
+});
+test("server-advertised waits come from retry-after-ms, retry-after, codex and OpenAI reset headers", () => {
+  const now = Date.parse("2026-10-14T00:00:00Z");
+  expect(advertisedWait(new Headers({ "retry-after-ms": "1500" }), now)).toBe(1500);
+  expect(advertisedWait(new Headers({ "retry-after": "3" }), now)).toBe(3000);
+  expect(advertisedWait(new Headers({ "retry-after": new Date(now + 4000).toUTCString() }), now)).toBe(4000);
+  expect(advertisedWait(new Headers({ "x-codex-primary-reset-after-seconds": "120", "x-codex-secondary-reset-after-seconds": "30" }), now)).toBe(120000);
+  expect(advertisedWait(new Headers({ "x-ratelimit-reset-requests": "1m3.5s" }), now)).toBe(63500);
+  expect(advertisedWait(new Headers({ "anthropic-ratelimit-unified-reset": String(now / 1000 + 90) }), now)).toBe(90000);
+  expect(advertisedWait(new Headers({ "retry-after": "soon" }), now)).toBeUndefined();
+});
+test("codex usage_limit_reached waits until resets_at under the background budget and is never retried early", async () => {
+  const resetsAt = Math.floor(Date.now() / 1000) + 2;
+  const error = OpenAI.APIError.generate(429, { error: { type: "usage_limit_reached", resets_at: resetsAt } }, "limit", new Headers());
+  const controller = new AbortController(), notices: ProviderRetryDecision[] = [];
+  await expect(retryProvider(async () => { throw error; }, { signal: controller.signal, budget: backgroundRetry, onRetry: n => { notices.push(n); controller.abort(); } })).rejects.toThrow();
+  expect(notices[0]?.reason).toBe("usage_limit");
+  expect(notices[0]?.delayMs).toBeGreaterThanOrEqual(1000);
+  let calls = 0;
+  const far = OpenAI.APIError.generate(429, { error: { type: "usage_limit_reached", resets_at: Math.floor(Date.now() / 1000) + 7200 } }, "limit", new Headers());
+  await expect(retryProvider(async () => { calls++; throw far; }, { signal: signal(), budget: backgroundRetry })).rejects.toBe(far);
+  expect(calls).toBe(1);
+});
 
 for (const retryAfter of ["120", new Date(Date.now() + 180000).toUTCString()]) test(`Retry-After ${retryAfter} beyond budget is never retried early`, async () => {
   // Given

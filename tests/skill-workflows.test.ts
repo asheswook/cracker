@@ -229,7 +229,7 @@ test("explicit disabled draft test is idempotent, VM-bound, pinned after edit, a
     await tools.close();
   }
 });
-test("pinned one-time schedule waits for unrelated task, then creates one exact-version execution", async () => {
+test("pinned one-time schedule runs beside an unrelated task as one exact-version background execution", async () => {
   const f = await fixture(),
     busy = await f.start();
   const scheduleKey = crypto.randomUUID();
@@ -259,24 +259,19 @@ test("pinned one-time schedule waits for unrelated task, then creates one exact-
     content: "head v2",
   });
   await dispatchDueSchedules(sql);
+  await dispatchDueSchedules(sql);
   expect(
     (await sql`SELECT status FROM schedules WHERE client_schedule_id=${scheduleKey}`)[0]?.[
       "status"
     ],
-  ).toBe("pending");
-  expect(
-    (await sql`SELECT count(*)::int n FROM skill_executions WHERE skill_id=${f.skill.id}`)[0]?.[
-      "n"
-    ],
-  ).toBe(1);
-  await sql`UPDATE tasks SET state='succeeded' WHERE id=${busy.task.id}`;
-  await dispatchDueSchedules(sql);
-  await dispatchDueSchedules(sql);
+  ).toBe("delivered");
+  expect((await sql`SELECT lane FROM tasks WHERE id=${busy.task.id}`)[0]?.["lane"]).toBe("foreground");
   const executed =
-    await sql`SELECT e.*,t.objective FROM skill_executions e JOIN tasks t ON t.id=e.task_id WHERE e.skill_id=${f.skill.id} AND kind='scheduled'`;
+    await sql`SELECT e.*,t.objective,t.lane FROM skill_executions e JOIN tasks t ON t.id=e.task_id WHERE e.skill_id=${f.skill.id} AND kind='scheduled'`;
   expect(executed).toHaveLength(1);
   expect(executed[0]?.["revision"]).toBe(1);
   expect(executed[0]?.["task_id"]).not.toBe(busy.task.id);
+  expect(executed[0]?.["lane"]).toBe("background");
   expect(executed[0]?.["objective"]).toBe("new input 8 + 9");
 });
 test("completed turn never auto-certifies a method; explicit user check requires loaded execution result", async () => {
@@ -308,7 +303,7 @@ test("completed turn never auto-certifies a method; explicit user check requires
   expect(history.executions[0]?.checks).toHaveLength(1);
   expect(history.executions[0]?.checks[0]).toMatchObject({ actor: "user", status: "pass" });
 });
-test("daily responsibility preserves pinned revision and defers bound action until conversation idle", async () => {
+test("daily responsibility preserves pinned revision and dispatches its bound action as a separate background task", async () => {
   const f = await fixture(),
     busy = await f.start("Every day sum new input 10 and 20.");
   const message = (
@@ -336,18 +331,12 @@ test("daily responsibility preserves pinned revision and defers bound action unt
   });
   await sql`UPDATE responsibilities SET next_review_at=now()-interval '1 minute' WHERE id=${responsibility.id}`;
   expect((await f.request("/v1/daemon/responsibilities", undefined, f.machine)).status).toBe(200);
-  expect(
-    (
-      await sql`SELECT state FROM responsibility_actions WHERE responsibility_id=${responsibility.id}`
-    )[0]?.["state"],
-  ).toBe("pending");
-  await sql`UPDATE tasks SET state='succeeded' WHERE id=${busy.task.id}`;
-  await f.request("/v1/daemon/responsibilities", undefined, f.machine);
   await f.request("/v1/daemon/responsibilities", undefined, f.machine);
   const rows =
-    await sql`SELECT e.revision,e.kind FROM responsibility_actions a JOIN skill_executions e ON e.task_id=a.task_id WHERE a.responsibility_id=${responsibility.id}`;
+    await sql`SELECT e.revision,e.kind,a.state,a.task_id,t.lane FROM responsibility_actions a JOIN skill_executions e ON e.task_id=a.task_id JOIN tasks t ON t.id=a.task_id WHERE a.responsibility_id=${responsibility.id}`;
   expect(rows).toHaveLength(1);
-  expect(rows[0]).toMatchObject({ revision: 1, kind: "scheduled" });
+  expect(rows[0]).toMatchObject({ revision: 1, kind: "scheduled", state: "dispatched", lane: "background" });
+  expect(rows[0]?.["task_id"]).not.toBe(busy.task.id);
 });
 test('archived skills remain rediscoverable only in explicit owned history listing',async()=>{
  const f=await fixture(),other=await fixture();

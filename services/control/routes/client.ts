@@ -7,7 +7,7 @@ import { appendMessage, messages, recordEvent } from "../repository/common";
 import { assistantRoutes } from "./assistant";
 import { personalRoutes } from "./personal";
 import {composingState,replyHandoffState} from "../repository/composing";
-import { workingState } from "../repository/working";
+import { backgroundState, workingState } from "../repository/working";
 import { appearanceRoutes } from "./appearance";
 import { TaskNavigation } from "../../../packages/protocol/task-navigation";
 export function clientRoutes(sql: Database) {
@@ -62,6 +62,7 @@ export function clientRoutes(sql: Database) {
         composing: await composingState(tx, workspace, id),
         reply_handoff: await replyHandoffState(tx, workspace, id),
         working: await workingState(tx, workspace, id),
+        background: await backgroundState(tx, workspace, id),
         cursor: result.at(-1)?.sequence ?? after,
         receipts: receiptIds.length ? z.array(ReadReceipt).parse(await tx`SELECT m.id AS message_id,min(i.applied_at) AS read_at FROM assistant.messages m JOIN assistant.input_receipts i ON i.message_id=m.id AND i.workspace_id=m.workspace_id WHERE m.workspace_id=${workspace} AND m.conversation_id=${id} AND m.role='user' AND m.id IN ${tx(receiptIds)} AND i.applied_at IS NOT NULL GROUP BY m.id`) : [],
       };

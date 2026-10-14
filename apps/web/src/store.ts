@@ -7,6 +7,7 @@ import { confirmControl, controlTransport, ControlFailure } from './controlRecei
 import type { ControlKind, ControlReceipt } from './controlReceipt';
 import type { Task, Vm, Schedule, Memory, Artifact,ReplyComposing, ReplyHandoff, AssistantWorking } from './types';
 import { AppearanceSettings, defaultAppearance, type AssistantAppearance } from './appearance/types';
+import { defaultAssistantName } from '../../../packages/appearance/schema';
 import { Instructions } from './settings/types';
 import { clearStartupCache, readStartupCache, writeStartupCache } from './startup-cache';
 type Snapshot = Readonly<{
@@ -27,6 +28,7 @@ type Snapshot = Readonly<{
   composing:ReplyComposing|null;
   replyHandoff: ReplyHandoff | null | undefined;
   working: AssistantWorking | null;
+  background: z.infer<typeof MessagePage>['background'];
   outbox: Pending[];
   error: string;
   connected: boolean;
@@ -37,7 +39,7 @@ const initial: Snapshot = {
   workspace: null,
   selected: null,
   assistantId: null,
-  persona: { name: 'Assistant', role: '', style: '' },
+  persona: { name: defaultAssistantName, role: '', style: '' },
   appearance: defaultAppearance,
   appearanceRevision: null,
   conversations: [],
@@ -50,6 +52,7 @@ const initial: Snapshot = {
   composing:null,
   replyHandoff: undefined,
   working: null,
+  background: undefined,
   outbox: [],
   error: '',
   connected: false,
@@ -306,7 +309,7 @@ export class ClientStore {
   async select(id: Id, sourceMessageId?: Id) {
     const epoch = this.epoch;
     if (this.value.selected !== id) this.selectionRevision++;
-    this.patch({ selected: id, composing:null,replyHandoff: null,working: null,messages: this.histories.get(id) ?? [], syncedCursor: this.cursors.get(id) ?? null });
+    this.patch({ selected: id, composing:null,replyHandoff: null,working: null,background:undefined,messages: this.histories.get(id) ?? [], syncedCursor: this.cursors.get(id) ?? null });
     try {
       if (sourceMessageId) await this.loadSource(id, sourceMessageId);
       else await this.sync(id);
@@ -420,12 +423,13 @@ export class ClientStore {
       : this.value.replyHandoff;
     const working = epoch === this.epoch && this.value.connected && this.value.selected === id && selection === this.selectionRevision
       ? stable(this.value.working, page.working && Date.parse(page.working.expires_at) <= Date.now() ? null : page.working) : this.value.working;
-    return { composing, replyHandoff, working };
+    const background=epoch===this.epoch&&this.value.selected===id&&selection===this.selectionRevision?stable(this.value.background,page.background):this.value.background;
+    return { composing, replyHandoff, working, background };
     };
     onBoot?.(() => { if (epoch === this.epoch) this.patch(signals()); });
-    const { composing, replyHandoff, working } = signals();
-    if (changedOutbox || changedMessages || changedCursor || composing!==this.value.composing || replyHandoff !== this.value.replyHandoff || working !== this.value.working)
-      this.patch({composing, replyHandoff, working, ...(changedOutbox ? { outbox } : {}), ...(changedMessages ? { messages } : {}), ...(changedCursor ? { syncedCursor } : {}) });
+    const { composing, replyHandoff, working, background } = signals();
+    if (changedOutbox || changedMessages || changedCursor || composing!==this.value.composing || replyHandoff !== this.value.replyHandoff || working !== this.value.working || background!==this.value.background)
+      this.patch({composing, replyHandoff, working, background, ...(changedOutbox ? { outbox } : {}), ...(changedMessages ? { messages } : {}), ...(changedCursor ? { syncedCursor } : {}) });
     if (changedOutbox) this.persist();
   }
   async send(content: string, attachments: Artifact[] = [], reply?: Pending['reply']) {

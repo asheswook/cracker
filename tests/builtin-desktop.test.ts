@@ -10,7 +10,8 @@ test("parses the X root AT-SPI address without accepting missing or unrelated pr
 test("prefixes provider tools and preserves schemas and MCP descriptions", () => {
   const inputSchema = { type: "object", properties: { app: { type: "string" } }, required: ["app"] };
   expect(desktopTool({ name: "click", description: "Click an element", inputSchema })).toEqual({ type: "function", name: "desktop_click", description: "Click an element", strict: false, parameters: inputSchema });
-  expect(desktopTool({ name: "get_app_state", description: "Original description", inputSchema }).description).toBe("Returns the window's accessibility tree with element indexes plus a screenshot; prefer element_index targets over coordinates. Original description");
+  expect(desktopTool({ name: "get_app_state", description: "Original description", inputSchema }).description).toMatch(/^Returns the window's accessibility tree.*desktop_list_apps names it.*Original description$/);
+  expect(desktopTool({ name: "list_apps", description: "List", inputSchema }).description).toBe("Call first to learn exact app names for the other desktop_ tools. List");
 });
 
 test("only desktop observations are read-only; captures include state and mutations", () => {

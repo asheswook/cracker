@@ -3,8 +3,9 @@ import { useNativeRootReader } from './useNativeRootReader';
 import { MessageList } from './MessageList';
 import { LoadingSkeleton } from './LoadingSkeleton';
 import {WorkingBubble} from './WorkingBubble';
+import { BackgroundWork } from './BackgroundWork';
 import { PersonaOnboarding } from './settings/PersonaOnboarding';
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { useReducedMotion } from './useReducedMotion';
 import { newTailMessageKeys } from './messageArrivals';
 import type { MessageArrivalSnapshot } from './messageArrivals';
@@ -44,6 +45,8 @@ export const Chat = memo(function Chat({
   focusTask = null,
   focusMessage = null,
   timeControlRoot = null,
+  background,
+  onOpenTasks,
 }: {
   messages: Message[];
   syncedCursor: number | null;
@@ -61,6 +64,8 @@ export const Chat = memo(function Chat({
   focusTask?: string | null;
   focusMessage?: string | null;
   timeControlRoot?: HTMLElement | null;
+  background?: ComponentProps<typeof BackgroundWork>['background'];
+  onOpenTasks?: () => void;
 }) {
   const workspace = client.snapshot().workspace;
   const files = useAttachmentDrafts(client.snapshot().workspace, selected);
@@ -553,6 +558,7 @@ export const Chat = memo(function Chat({
             scrollEnd(true);
           }} />
         )}
+        {!readOnly && onOpenTasks && <BackgroundWork background={background} onOpenTasks={onOpenTasks} />}
         {readOnly ? (
           <p className="archive-footnote">
             보관된 대화예요. 이어서 말하려면 지금 대화로 돌아가세요.

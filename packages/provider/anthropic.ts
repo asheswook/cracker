@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { retryProvider, type ProviderRetryObserver } from "./retry.ts";
+import { retryProvider, type ProviderRetryObserver, type RetryBudget } from "./retry.ts";
 import type { Response, ResponseInputItem, Tool } from "openai/resources/responses/responses";
 import type { Provider, ProviderResponseObserver } from "./index.ts";
 import { ProviderError } from "./errors.ts";
@@ -32,15 +32,15 @@ export class AnthropicProvider implements Provider {
       throw new ProviderError("configuration", "Claude maxTokens must be a positive integer");
     this.client =
       client?.withOptions({maxRetries:0}) ?? new Anthropic({ apiKey: config.apiKey, maxRetries: 0, timeout: 120000 });
-    this.nativeContext = new AnthropicNativeContext(this.client, config, (signal, work) => this.flight(signal, work));
+    this.nativeContext = new AnthropicNativeContext(this.client, config, (signal, work, budget) => this.flight(signal, work, budget));
   }
-  private async flight<T>(signal: AbortSignal, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  private async flight<T>(signal: AbortSignal, work: (signal: AbortSignal) => Promise<T>,budget?:RetryBudget): Promise<T> {
     if (this.closed) throw new ProviderError("configuration", "Provider is closed");
     signal.throwIfAborted();
     const controller = new AbortController();
     this.flights.add(controller);
     const combined = AbortSignal.any([signal, controller.signal]);
-    try { const result = await retryProvider(() => work(combined), {signal:combined,onRetry:this.config.onRetry}); combined.throwIfAborted(); return result; }
+    try { const result = await retryProvider(() => work(combined), {signal:combined,onRetry:this.config.onRetry,budget}); combined.throwIfAborted(); return result; }
     finally { controller.abort(); this.flights.delete(controller); }
   }
   close(): void {
@@ -52,6 +52,7 @@ export class AnthropicProvider implements Provider {
     tools: Tool[],
     signal: AbortSignal,
     observer?: ProviderResponseObserver,
+    budget?: RetryBudget,
   ): Promise<Response> {
     if (this.closed) throw new ProviderError("configuration", "Provider is closed");
     signal.throwIfAborted();
@@ -101,6 +102,6 @@ export class AnthropicProvider implements Provider {
       } finally {
         if (responseId) observer?.({ type: "response_done", response_id: responseId });
       }
-    });
+    },budget);
   }
 }

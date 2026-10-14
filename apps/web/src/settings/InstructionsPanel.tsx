@@ -7,6 +7,7 @@ import { client } from '../store';
 import './persona.css';
 import type { Instructions, Persona } from './types';
 import { InstructionsEditor } from './InstructionsEditor';
+import { isDefaultAssistantName } from '../../../../packages/appearance/schema';
 import { onboardingDraftKey, readOnboardingDraft } from './onboardingDraft';
 export function InstructionsPanel() {
   const workspace = client.snapshot().workspace;
@@ -29,7 +30,7 @@ export function InstructionsPanel() {
       setValue(settings);
       setOnboardingDraft(
         workspace && settings.onboarding?.status !== 'completed' &&
-          settings.persona.name === 'Assistant' && !settings.persona.role && !settings.persona.style
+          isDefaultAssistantName(settings.persona.name) && !settings.persona.role && !settings.persona.style
           ? readOnboardingDraft(workspace)?.persona ?? null : null,
       );
     } catch (failure) {
@@ -109,7 +110,7 @@ export function InstructionsPanel() {
           onClose={() => setEditing(false)}
           onSaved={(next) => {
             setValue(next);
-            if (next.persona.name !== 'Assistant' || next.persona.role || next.persona.style || next.onboarding?.status === 'completed') setOnboardingDraft(null);
+            if (!isDefaultAssistantName(next.persona.name) || next.persona.role || next.persona.style || next.onboarding?.status === 'completed') setOnboardingDraft(null);
             setEditing(false);
             setNotice('페르소나를 저장했어요. 다음에 시작하는 작업부터 적용돼요.');
             void load('저장됐지만 화면의 이름을 갱신하지 못했어요. ');

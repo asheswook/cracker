@@ -49,7 +49,7 @@ async function capsules(
   const tasks = z
     .array(Task)
     .parse(
-      await sql`SELECT * FROM assistant.tasks t WHERE t.workspace_id=${principal.workspace_id} AND t.conversation_id=${current.conversation_id} AND t.id<>${current.id} AND (t.created_at,t.id)<(${current.created_at}::timestamptz,${current.id}::uuid) AND (${before}::uuid IS NULL OR (t.created_at,t.id)<(SELECT created_at,id FROM assistant.tasks WHERE id=${before})) ORDER BY t.created_at DESC,t.id DESC LIMIT 9`,
+      await sql`SELECT * FROM assistant.tasks t WHERE t.workspace_id=${principal.workspace_id} AND t.conversation_id=${current.conversation_id} AND t.id<>${current.id} AND (${current.lane!=='background'} OR t.state IN ('cancelled','succeeded','failed','unknown')) AND (t.created_at,t.id)<(${current.created_at}::timestamptz,${current.id}::uuid) AND (${before}::uuid IS NULL OR (t.created_at,t.id)<(SELECT created_at,id FROM assistant.tasks WHERE id=${before})) ORDER BY t.created_at DESC,t.id DESC LIMIT 9`,
     );
   const page = tasks.slice(0, 8);
   const records = await Promise.all(
@@ -94,6 +94,7 @@ export async function workContext(sql: Query, principal: Principal, run: string)
     model_binding: await runModelBinding(sql, principal, run),
     skill_binding: await taskSkill(sql,principal.workspace_id,task.id),
     task,
+    lane: task.lane ?? 'foreground',
     run_id: run,
     messages: await taskMessages(sql, principal.workspace_id, task.id),
     ...workspace,

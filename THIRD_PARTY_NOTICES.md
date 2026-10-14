@@ -6,6 +6,6 @@ JavaScript dependency versions are recorded in `pnpm-lock.yaml`; each dependency
 
 The Apple project resolves FirebaseCore and FirebaseMessaging through Swift Package Manager. Firebase SDK license and notice files remain with that dependency. Linux installation scripts install system packages, including Chromium-related tooling, FFmpeg and Xfce; those packages are distributed under their respective licenses and are not bundled here.
 
-The app icons are generated from `apps/web/public/icon.svg` by `apps/apple/generate-icons.rb`. No screenshots, logos or downloaded assets from a reference product are included. Font dependencies are distributed through their packages with their own notices.
+The web and app icons are generated from the character drawing in `apps/web/src/appearance/character-svg.ts` by `scripts/generate-icons.ts`. No screenshots, logos or downloaded assets from a reference product are included. Font dependencies are distributed through their packages with their own notices.
 
 When distributing built applications, retain the license and notice files required by the actual dependency versions and bundled system components. This source snapshot does not bundle dependency binaries.

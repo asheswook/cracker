@@ -48,7 +48,7 @@ test("ensure creates one new canonical conversation concurrently, preserves hist
 test("persona persists without clobbering legacy instructions and assignments/context include it", async () => {
   expect(Settings.parse(await (await f.request("/v1/settings")).json())).toEqual({
     instructions: "",
-    persona: { name: "Assistant", role: "", style: "" },
+    persona: { name: "크래커", role: "", style: "" },
   });
   const persona = { name: "동료", role: "개발 보조", style: "간결하게" };
   expect((await saveSettings({ persona })).status).toBe(200);
@@ -57,7 +57,7 @@ test("persona persists without clobbering legacy instructions and assignments/co
   );
   expect(changed).toEqual({ instructions: "Use Korean", persona });
   const alien = Settings.parse(await (await f.request("/v1/settings", f.alienToken)).json());
-  expect(alien.persona.name).toBe("Assistant");
+  expect(alien.persona.name).toBe("크래커");
   expect(alien.instructions).toBe("");
   await f.newTask();
   const poll = DaemonPoll.parse(await (await f.request("/v1/daemon/poll", f.machine)).json());

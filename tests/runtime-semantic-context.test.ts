@@ -85,7 +85,7 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
     await Bun.sleep(10);
   }
 }
-async function fixture(options: { readonly structureMode?: 'shadow'|'on'; readonly main: (input: ResponseInputItem[], fixture: Awaited<ReturnType<typeof databaseFixture>>) => Promise<Response>; readonly malformedRoute?: boolean; readonly beforeNotes?: (signal: AbortSignal) => Promise<void>; readonly dropNotesOnce?: boolean; readonly failPrepareOnce?: boolean; readonly staleLinkOnce?: boolean }) {
+async function fixture(options: { readonly structureMode?: 'shadow'|'on'; readonly main: (input: ResponseInputItem[], fixture: Awaited<ReturnType<typeof databaseFixture>>) => Promise<Response>; readonly malformedRoute?: boolean; readonly beforeNotes?: (signal: AbortSignal) => Promise<void>; readonly dropNotesOnce?: boolean; readonly failPrepareOnce?: boolean; readonly staleLinkOnce?: boolean; readonly beforePrepare?: () => Promise<void> }) {
   const data = await databaseFixture();
   const directory = await mkdtemp(join(tmpdir(), "semantic-runtime-"));
   const journal = new CompletionJournal(":memory:");
@@ -120,6 +120,7 @@ async function fixture(options: { readonly structureMode?: 'shadow'|'on'; readon
   } } });
   let dropped = false, prepareFailed = false, staleLink = false;
   const server = Bun.serve({ port: 0, fetch: async request => {
+    if (options.beforePrepare && new URL(request.url).pathname.endsWith("/semantic/prepare")) await options.beforePrepare();
     if (options.failPrepareOnce && !prepareFailed && new URL(request.url).pathname.endsWith("/semantic/prepare")) { prepareFailed = true; return globalThis.Response.json({ error: { code: "unavailable" } }, { status: 503 }); }
     if (options.staleLinkOnce && !staleLink && new URL(request.url).pathname.endsWith("/semantic/link")) { staleLink = true; return globalThis.Response.json({ error: { code: "stale_revision" } }, { status: 409 }); }
     const result = await app.fetch(request);
@@ -389,3 +390,22 @@ test('runtime recovery appends revalidated authority after saved reference packe
   expect(references.slice(0,1)).toEqual(prior);expect(references.length).toBe(2);expect(calls).toBe(2);
  }finally{release.resolve();await resumed?.stop();await f.close();}
 },20000);
+
+test("the user's message is marked read before slow context lookup finishes", async () => {
+  // Given context preparation that stalls until the test observes the read receipt.
+  const release = Promise.withResolvers<void>(), prepared = Promise.withResolvers<void>();
+  const f = await fixture({ beforePrepare: async () => { prepared.resolve(); await release.promise; }, main: async () => response([answer("done")]) });
+  try {
+    const source = await f.message("Slow context lookup question");
+    const run = f.runtime.tick();
+    // When the runtime is still waiting on context lookup.
+    await prepared.promise;
+    let receipt: readonly unknown[] = [];
+    for (let i = 0; i < 100 && !receipt.length; i++) { receipt = await f.sql`SELECT 1 FROM assistant.input_receipts WHERE message_id=${source}`; if (!receipt.length) await Bun.sleep(20); }
+    // Then the read receipt already exists, and the run still completes afterwards.
+    expect(receipt).toHaveLength(1);
+    release.resolve();
+    await run; await f.journal.next.promise; await f.runtime.flush();
+    expect((await f.sql`SELECT state FROM assistant.tasks WHERE id=${f.task}`)[0]?.["state"]).toBe("succeeded");
+  } finally { release.resolve(); await f.close(); }
+}, 20000);

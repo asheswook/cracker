@@ -146,19 +146,20 @@ test("follow-up action creates exactly one queued task and durable binding", asy
   expect(z.object({ count: z.coerce.number() }).parse((await sql`SELECT count(*) AS count FROM assistant.tasks WHERE conversation_id=${conversation} AND state='queued'`)[0]).count).toBe(1);
   expect(z.object({ state: z.string(), linked: z.boolean() }).parse((await sql`SELECT state,task_id IS NOT NULL AS linked FROM assistant.responsibility_actions WHERE responsibility_id=${row.id}`)[0])).toEqual({ state: "dispatched", linked: true });
 });
-test("an active task prevents duplicate follow-up dispatch", async () => {
+test("an active foreground task coexists with exactly one background follow-up", async () => {
   // Given
   const { row, conversation } = await fixture(), current = await snapshot(sql, row);
   // When
   await recordEvaluation(sql, machine, { responsibility_id: row.id, context_hash: current.context_hash, evaluation: { outcome: "action", reason: "Follow up", notification: null, action_objective: "Inspect source", next_review_minutes: 5 } });
-  // Then the action is durable but has not created another active task.
-  expect(z.object({ count: z.coerce.number() }).parse((await sql`SELECT count(*) AS count FROM assistant.tasks WHERE conversation_id=${conversation} AND state NOT IN ('cancelled','succeeded','failed')`)[0]).count).toBe(1);
-  expect(z.object({ state: z.string() }).parse((await sql`SELECT state FROM assistant.responsibility_actions WHERE responsibility_id=${row.id}`)[0]).state).toBe("pending");
+  await dueResponsibilities(sql,machine);
+  expect(z.object({ count: z.coerce.number() }).parse((await sql`SELECT count(*) AS count FROM assistant.tasks WHERE conversation_id=${conversation} AND state NOT IN ('cancelled','succeeded','failed')`)[0]).count).toBe(2);
+  expect(z.object({ state: z.string() }).parse((await sql`SELECT state FROM assistant.responsibility_actions WHERE responsibility_id=${row.id}`)[0]).state).toBe("dispatched");
+  expect(await sql`SELECT t.lane,m.hidden,m.role FROM assistant.tasks t JOIN assistant.messages m ON m.task_id=t.id WHERE t.conversation_id=${conversation} AND t.lane='background'`).toMatchObject([{lane:'background',hidden:true,role:'system'}]);
 });
 test("responsibility cancellation prevents pending action dispatch", async () => {
   // Given
   const { row } = await fixture(), current = await snapshot(sql, row);
-  await recordEvaluation(sql, machine, { responsibility_id: row.id, context_hash: current.context_hash, evaluation: { outcome: "action", reason: "Follow up", notification: null, action_objective: "Inspect source", next_review_minutes: 5 } });
+  await sql`INSERT INTO assistant.responsibility_actions(workspace_id,responsibility_id,context_hash,objective) VALUES(${workspace},${row.id},${current.context_hash},'Inspect source')`;
   // When
   await app.request(`/v1/responsibilities/${row.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${clientToken}` } }); await dueResponsibilities(sql, machine);
   // Then

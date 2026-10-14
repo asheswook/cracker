@@ -11,6 +11,7 @@ import { stdioTransport } from "./mcp-stdio.ts";
 import { httpTransport } from "./mcp-http.ts";
 import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { BuiltinBrowser } from "./builtin-browser";
+import { BuiltinDesktop, desktopReadOnly } from "./builtin-desktop";
 import { ComputerControl } from './computer-control';
 import { callMcp } from './mcp-call';
 import { McpHttpSession } from './mcp-session';
@@ -29,6 +30,18 @@ export class ToolExecutor {
   async revokeDesktopInputs(): Promise<void> { await this.control.revoke(); }
   desktopInputsReleased(): void { this.control.released(); }
   private browser: BuiltinBrowser | undefined;
+  private builtinDesktop: BuiltinDesktop | undefined;
+  async enableBuiltinDesktop(): Promise<void> {
+    const desktop = new BuiltinDesktop();
+    try {
+      await desktop.initialize(); this.builtinDesktop = desktop;
+      this.definitions.push(...desktop.definitions);
+    } catch (error) {
+      console.error(JSON.stringify({ event: "desktop.connection_failed", error: error instanceof Error ? error.message : String(error) }));
+      try { await desktop.close(); }
+      catch (error) { console.error(JSON.stringify({ event: "desktop.cleanup_failed", error: error instanceof Error ? error.message : String(error) })); }
+    }
+  }
   async enableBuiltinBrowser(): Promise<void> {
     const browser = new BuiltinBrowser();
     await browser.initialize(); this.browser = browser;
@@ -38,7 +51,7 @@ export class ToolExecutor {
   async resetShellSessions(): Promise<void> { await this.shells.close(); }
   hasPendingShellSessions(): boolean { return this.shells.hasPending(); }
   private readonly desktop = new PersistentDesktop();
-  async releaseDesktopInputs():Promise<void>{await this.browser?.close();await this.desktop.releaseInputs();}
+  async releaseDesktopInputs():Promise<void>{await this.browser?.close();await this.builtinDesktop?.close();await this.desktop.releaseInputs();}
   async resetDesktop(workspace?:string):Promise<void>{await this.desktop.reset(workspace);}
   private readonly remoteSessions = new Map<Client,McpHttpSession>();
   private readonly connections = new Map<Client, string>();
@@ -123,12 +136,13 @@ export class ToolExecutor {
   }
   async refreshAll(): Promise<void> { for (const [client, server] of this.connections) await this.refresh(client, server); }
   async close(): Promise<void> {
-    const closed=await Promise.allSettled([this.browser?.close(),this.resetShellSessions(),this.desktop.close(),...[...this.connections.values()].map(name=>this.removeMcp(name))]);
+    const closed=await Promise.allSettled([this.browser?.close(),this.builtinDesktop?.close(),this.resetShellSessions(),this.desktop.close(),...[...this.connections.values()].map(name=>this.removeMcp(name))]);
     const failed=closed.flatMap(result=>result.status==="rejected"?[result.reason]:[]);
     if(failed.length)throw new AggregateError(failed,"Tool cleanup failed");
   }
   async run(name: string, args: string, signal: AbortSignal): Promise<ToolResult> {
     signal.throwIfAborted();
+    if (this.builtinDesktop?.has(name)) return this.control.run(!desktopReadOnly(name), signal, next => this.execute(name, args, next));
     if (this.browser?.has(name)) {
       const readOnly = ['browser_snapshot', 'browser_take_screenshot', 'browser_console_messages', 'browser_network_requests'].includes(name) ||
         name === 'browser_tabs' && z.object({ action: z.string() }).parse(JSON.parse(args)).action === 'list';
@@ -142,6 +156,10 @@ export class ToolExecutor {
     return this.execute(name, args, signal);
   }
   private async execute(name: string, args: string, signal: AbortSignal): Promise<ToolResult> {
+    if (this.builtinDesktop?.has(name)) {
+      try { return await this.builtinDesktop.run(name,args,signal); }
+      finally { if (!desktopReadOnly(name)) await this.browser?.invalidateReferences(); }
+    }
     if (this.browser?.has(name)) return this.browser.run(name,args,signal);
     switch (name) {
       case "shell": return { text: await execute(["bash", "-lc", z.object({ command: z.string() }).parse(JSON.parse(args)).command], signal, this.workspace) };

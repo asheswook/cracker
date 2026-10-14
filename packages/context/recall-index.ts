@@ -46,9 +46,10 @@ async function contextDocuments(sql:Query,scope:SearchScope,context:string,throu
 async function synchronizeContext(sql:Database,embed:ContextEmbed,head:z.infer<typeof Head>,through:number) {
   const scope={workspace:head.workspace_id,conversation:head.conversation_id};
   const documents=await contextDocuments(sql,scope,head.id,through);
-  const prior=z.array(SearchDocument).parse(await sql`SELECT *,vector::text::jsonb AS vector FROM assistant.semantic_search_documents WHERE workspace_id=${scope.workspace} AND context_id=${head.id}`);
-  const cached=new Map(prior.map(document=>[document.id,document]));
-  const missing=documents.filter(document=>!cached.has(document.id));
+  // Only identities are needed to find unindexed text; reading stored vectors back cost seconds per context.
+  const indexed=new Set(z.array(z.object({id:z.string()})).parse(await sql`SELECT id FROM assistant.semantic_search_documents WHERE workspace_id=${scope.workspace} AND context_id=${head.id}`).map(document=>document.id));
+  const cached=new Map<string,z.infer<typeof SearchDocument>>();
+  const missing=documents.filter(document=>!indexed.has(document.id));
   for(let offset=0;offset<missing.length;offset+=32) {
     const batch=missing.slice(offset,offset+32),vectors=await encodeContext(embed,batch.map(document=>document.text));
     batch.forEach((document,i)=>{
@@ -65,11 +66,17 @@ async function synchronizeContext(sql:Database,embed:ContextEmbed,head:z.infer<t
     const currentIds=z.array(z.object({id:z.string()})).parse(await tx`SELECT id FROM assistant.semantic_search_documents WHERE workspace_id=${scope.workspace} AND context_id=${head.id}`);
     const existingIds=new Set(currentIds.map(document=>document.id));
     const insertions=documents.filter(document=>!existingIds.has(document.id));
-    for(const document of insertions) {
-      const stored=cached.get(document.id);if(!stored)throw new ContextRecallError('invalid_embeddings');
-      await tx`INSERT INTO assistant.semantic_search_documents(id,workspace_id,conversation_id,context_id,kind,reference_id,source_sequence,input_hash,start_offset,end_offset,vector)
-        VALUES(${stored.id},${scope.workspace},${scope.conversation},${head.id},${stored.kind},${stored.reference_id},${stored.source_sequence},${stored.input_hash},${stored.start_offset},${stored.end_offset},${JSON.stringify(stored.vector)}::vector) ON CONFLICT(id) DO NOTHING`;
+    // A concurrent historical sync may have removed rows we saw earlier; re-embed only those.
+    const lost=insertions.filter(document=>!cached.has(document.id));
+    for(let offset=0;offset<lost.length;offset+=32) {
+      const batch=lost.slice(offset,offset+32),vectors=await encodeContext(embed,batch.map(document=>document.text));
+      batch.forEach((document,i)=>{const vector=vectors[i];if(!vector)throw new ContextRecallError('invalid_embeddings');cached.set(document.id,SearchDocument.parse({...document,vector}));});
     }
+    await Promise.all(insertions.map(document=>{
+      const stored=cached.get(document.id);if(!stored)throw new ContextRecallError('invalid_embeddings');
+      return tx`INSERT INTO assistant.semantic_search_documents(id,workspace_id,conversation_id,context_id,kind,reference_id,source_sequence,input_hash,start_offset,end_offset,vector)
+        VALUES(${stored.id},${scope.workspace},${scope.conversation},${head.id},${stored.kind},${stored.reference_id},${stored.source_sequence},${stored.input_hash},${stored.start_offset},${stored.end_offset},${JSON.stringify(stored.vector)}::vector) ON CONFLICT(id) DO NOTHING`;
+    }));
     await tx`DELETE FROM assistant.semantic_search_documents WHERE workspace_id=${scope.workspace} AND context_id=${head.id} AND NOT(id=ANY(${tx.array(ids)}::text[]))`;
     await tx`INSERT INTO assistant.semantic_search_state(workspace_id,conversation_id,context_id,revision,search_revision,through_sequence) VALUES(${scope.workspace},${scope.conversation},${head.id},${head.revision},${head.search_revision},${through})
       ON CONFLICT(workspace_id,context_id) DO UPDATE SET revision=excluded.revision,search_revision=excluded.search_revision,through_sequence=excluded.through_sequence,updated_at=now()`;

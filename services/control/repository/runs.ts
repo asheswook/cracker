@@ -7,7 +7,7 @@ import { Assignment, Command, DomainError, Persona, Task } from "../../../packag
 import type { Principal } from "../auth";
 import type { Query } from "../db";
 import { messages } from "./common";
-import { workContext } from "./task-context";
+import { workContext, workMailbox } from "./task-context";
 import { validationRecoveryInput } from "./validation-recovery";
 export const Run = z.object({
   id: z.uuid(),
@@ -25,6 +25,10 @@ export async function context(sql: Query, principal: Principal, id: string, afte
   const run = await loadRun(sql, principal, id);
   const rows = await sql`SELECT * FROM assistant.tasks WHERE id=${run.task_id}`;
   const task = Task.parse(rows[0]);
+  if(task.lane==='background'){
+    const assignment=await workContext(sql,principal,id);
+    return {...assignment,messages:assignment.messages.filter(message=>message.sequence>after)};
+  }
   const workspace = z
     .object({ instructions: z.string(), persona: Persona })
     .parse(
@@ -37,6 +41,7 @@ export async function context(sql: Query, principal: Principal, id: string, afte
     model_binding: await runModelBinding(sql, principal, run.id),
     skill_binding: await taskSkill(sql, principal.workspace_id, task.id),
     task,
+    lane: task.lane ?? 'foreground',
     run_id: run.id,
     messages: await messages(sql, principal.workspace_id, task.conversation_id, after),
     instructions: workspace.instructions,
@@ -50,9 +55,10 @@ export async function mailbox(
   cursor: { readonly runId: string; readonly after: number },
 ) {
   const rows =
-    await sql`SELECT t.conversation_id FROM assistant.runs r JOIN assistant.tasks t ON t.id=r.task_id AND t.workspace_id=r.workspace_id WHERE r.id=${cursor.runId} AND r.workspace_id=${principal.workspace_id} AND r.vm_id=${principal.vm_id} FOR UPDATE OF r`;
+    await sql`SELECT t.conversation_id,t.lane FROM assistant.runs r JOIN assistant.tasks t ON t.id=r.task_id AND t.workspace_id=r.workspace_id WHERE r.id=${cursor.runId} AND r.workspace_id=${principal.workspace_id} AND r.vm_id=${principal.vm_id} FOR UPDATE OF r`;
   if (!rows[0]) throw new DomainError("not_found", "Run not found", 404);
-  const task = z.object({ conversation_id: z.uuid() }).parse(rows[0]);
+  const task = z.object({ conversation_id: z.uuid(), lane: z.enum(['foreground','background']) }).parse(rows[0]);
+  if(task.lane==='background')return workMailbox(sql,principal,cursor.runId,cursor.after);
   return {
     messages: await messages(sql, principal.workspace_id, task.conversation_id, cursor.after),
   };
@@ -108,7 +114,7 @@ export async function poll(
   if ((vm.control_state !== "agent" && !(desktopControlScoped && vm.control_state === "user")) || commands.length > 0)
     return { assignment: null, commands, messages: [] };
   const queued =
-    await sql`SELECT * FROM assistant.tasks WHERE workspace_id=${principal.workspace_id} AND state='queued' AND NOT EXISTS(SELECT 1 FROM assistant.skill_executions e WHERE e.task_id=assistant.tasks.id AND e.vm_id<>${principal.vm_id}) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`;
+    await sql`SELECT * FROM assistant.tasks WHERE workspace_id=${principal.workspace_id} AND state='queued' AND NOT EXISTS(SELECT 1 FROM assistant.skill_executions e WHERE e.task_id=assistant.tasks.id AND e.vm_id<>${principal.vm_id}) ORDER BY (lane='background'),created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`;
   if (!queued[0]) {
     const quarantined = z
       .array(Run)
