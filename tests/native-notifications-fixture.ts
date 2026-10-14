@@ -32,6 +32,7 @@ export function createNotificationFixtures(notificationConfig: NotificationConfi
         await tx`DELETE FROM artifacts WHERE workspace_id=${workspace}`;
         await tx`DELETE FROM messages WHERE workspace_id=${workspace}`;
         await tx`DELETE FROM runs WHERE workspace_id=${workspace}`;
+        await tx`DELETE FROM daemon_sessions WHERE vm_id IN (SELECT id FROM vms WHERE workspace_id=${workspace})`;
         await tx`DELETE FROM tasks WHERE workspace_id=${workspace}`;
         await tx`DELETE FROM credentials WHERE workspace_id=${workspace}`;
         await tx`DELETE FROM conversations WHERE workspace_id=${workspace}`;

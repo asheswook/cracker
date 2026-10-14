@@ -4,11 +4,13 @@ import type { Query } from "../../services/control/db.ts";
 import { DomainError } from "../protocol/index.ts";
 import { seal, unseal } from "../extensions/secrets.ts";
 import { ModelAccess, ModelBinding, ModelDefaults, ModelSelection, ModelSettings, SaveModelSettings } from "./schema.ts";
+import { lockWorkspace } from '../../services/control/repository/lock-order';
 
 const Revision = z.object({ id: z.uuid(), selection: ModelSelection, secret_cipher: z.string().nullable() });
 export type ModelScope = { readonly workspace: string; readonly vm: string };
 
 export async function ownModelVm(sql: Query, scope: ModelScope): Promise<void> {
+  await lockWorkspace(sql,scope.workspace);
   const rows = await sql`SELECT id FROM assistant.vms WHERE id=${scope.vm} AND workspace_id=${scope.workspace} FOR UPDATE`;
   if (!rows[0]) throw new DomainError("not_found", "Computer not found", 404);
 }

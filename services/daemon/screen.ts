@@ -15,6 +15,7 @@ import { MAX_SCREEN_VIEWERS } from "../../packages/screen/session-protocol";
 export type ScreenConfig = {
   readonly controlUrl: string;
   readonly token: string;
+  readonly sessionId?:string;
   readonly vmId: string;
   readonly journal: ControlOwner;
   readonly iceServers: readonly z.infer<typeof IceServer>[];
@@ -62,14 +63,14 @@ export async function startScreen(config: ScreenConfig) {
   };
   const connect = () => {
     if (stopped) return;
-    const ws = new WebSocket(endpoint, { headers: { Authorization: `Bearer ${config.token}` } });
+    const ws = new WebSocket(endpoint, { headers: { Authorization: `Bearer ${config.token}`,...(config.sessionId?{'x-daemon-session':config.sessionId}:{}) } });
     socket = ws;
     const createSession = (viewerId: string) => new ScreenSignaling(
       async (current, signal, offer) => {
         clearTimeout(refresh.get(viewerId));
         let servers = iceServers;
         if (servers.length === 0) {
-          const credentials = await fetchScreenIce(new URL(`/v1/daemon/vms/${vmId}/screen/ice`, config.controlUrl), { signal, token: config.token });
+          const credentials = await fetchScreenIce(new URL(`/v1/daemon/vms/${vmId}/screen/ice`, config.controlUrl), { signal, token: config.token,...(config.sessionId?{sessionId:config.sessionId}:{}) });
           if (!current() || stopped || ws !== socket) throw new ScreenError("ice_request_aborted");
           servers = rtcIceServers(daemonIceServers(credentials));
           const delay = refreshDelay(credentials);

@@ -49,5 +49,6 @@ test('real shell and filesystem operations remain usable while desktop input is 
     // Then computation succeeds while desktop input has no external effect.
     expect(shell.text).toContain('42');
     expect(JSON.parse(desktop.text)).toMatchObject({status:'computer_control_required',executed:false});
+    expect(tools.desktopLease.current()).toBeUndefined();
   } finally { await tools.close(); }
 });

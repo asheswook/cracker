@@ -4,7 +4,7 @@ import { Artifact, DomainError, Id } from "../protocol";
 import { purgeArtifact } from "./cleanup";
 import { artifactSearchText } from "./search-text.ts";
 import { documentFormat } from "./document-types.ts";
-import { type ArtifactScope, reserveUpload } from "./reservation";
+import { type ArtifactScope, reserveUpload, authorizeArtifactRun } from "./reservation";
 import { type ArtifactStore } from "./store";
 import { LEGACY_ARTIFACT_BYTES } from "./limits";
 import { streamingUpload } from "./streaming-upload";
@@ -106,7 +106,11 @@ export async function uploadArtifact(
     });
     const indexed = data.finish(mediaType);
     const ready =
-      await sql`UPDATE assistant.artifacts SET state='ready',search_text=${indexed.text},search_text_truncated=${indexed.truncated},search_indexed=${documentFormat(mediaType,name) === null} WHERE id=${id} AND state='uploading' AND lease_id=${reserved.leaseId} RETURNING *`;
+      await sql.begin(async tx=>{
+        await tx`SELECT id FROM assistant.workspaces WHERE id=${input.scope.principal.workspace_id} FOR UPDATE`;
+        await authorizeArtifactRun(tx,input.scope,true);
+        return tx`UPDATE assistant.artifacts SET state='ready',search_text=${indexed.text},search_text_truncated=${indexed.truncated},search_indexed=${documentFormat(mediaType,name) === null} WHERE id=${id} AND state='uploading' AND lease_id=${reserved.leaseId} RETURNING *`;
+      });
     if (!ready[0])
       throw new DomainError(
         "artifact_lease_expired",
@@ -115,8 +119,13 @@ export async function uploadArtifact(
       );
     return Artifact.parse(ready[0]);
   } catch (error) {
+    if(error instanceof DomainError&&['stale_session','stale_run'].includes(error.code))throw error;
     const failed =
-      await sql`UPDATE assistant.artifacts SET state=CASE WHEN state='deleted' THEN 'deleted' ELSE 'failed' END,purged_at=NULL WHERE id=${id} AND (lease_id=${reserved.leaseId} OR state IN ('failed','deleted')) AND state IN ('uploading','failed','deleted') RETURNING id`;
+      await sql.begin(async tx=>{
+        await tx`SELECT id FROM assistant.workspaces WHERE id=${input.scope.principal.workspace_id} FOR UPDATE`;
+        await authorizeArtifactRun(tx,input.scope);
+        return tx`UPDATE assistant.artifacts SET state=CASE WHEN state='deleted' THEN 'deleted' ELSE 'failed' END,purged_at=NULL WHERE id=${id} AND (lease_id=${reserved.leaseId} OR state IN ('failed','deleted')) AND state IN ('uploading','failed','deleted') RETURNING id`;
+      });
     if (failed[0]) {
       try {
         await purgeArtifact(sql, store, id);

@@ -44,7 +44,7 @@ export function artifactRoutes(sql: Database, store: ArtifactStore | undefined, 
       principal,
       conversation: artifact.conversation_id,
       ...(runId ? { runId } : {}),
-    });
+    },false,false);
     const object = await storage().get(artifact.object_key);
     if (!object || object.size !== artifact.bytes)
       throw new DomainError("artifact_storage_unavailable", "Stored file unavailable", 503);

@@ -81,3 +81,24 @@ test("generation changes on every grant so stale observations can be detected", 
   if (!first.granted || !second.granted) throw new Error("expected grants");
   expect(second.generation).toBeGreaterThan(first.generation);
 });
+
+test('an aborted waiter never acquires after revocation or release',async()=>{
+  const lease=new DesktopLease();lease.acquire('holder','foreground');
+  const abort=new AbortController();const waiting=lease.wait('cancelled','background',5000,abort.signal);
+  abort.abort();lease.release('holder');expect((await waiting).granted).toBe(false);expect(lease.current()).toBeUndefined();
+  lease.revokeAll();expect(lease.acquire('new','foreground').granted).toBe(false);lease.allowGrants();expect(lease.acquire('new','foreground').granted).toBe(true);
+});
+
+test('P2-2 an idle holder expires while a background waiter is waiting without any other calls',async()=>{
+  const lease=new DesktopLease(30);lease.acquire('fg','foreground');
+  const started=Date.now(),grant=await lease.wait('bg','background',300,never());
+  expect(grant.granted).toBe(true);expect(Date.now()-started).toBeLessThan(200);lease.release('bg');
+});
+
+test('P2-2 idle-expiry timers cannot grant after abort or revocation, or during an action',async()=>{
+  const lease=new DesktopLease(25);lease.acquire('fg','foreground');lease.begin('fg');
+  const abort=new AbortController();const waiting=lease.wait('bg','background',300,abort.signal);
+  await Bun.sleep(50);expect(lease.current()?.runId).toBe('fg');abort.abort();expect((await waiting).granted).toBe(false);
+  lease.end('fg');const revoked=lease.wait('later','background',300,never());lease.revokeAll();expect((await revoked).granted).toBe(false);
+  await Bun.sleep(60);expect(lease.current()).toBeUndefined();expect(lease.acquire('later','background').granted).toBe(false);
+});

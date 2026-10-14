@@ -3,6 +3,7 @@ import { Command, DomainError, Id } from "../../../packages/protocol";
 import type { Principal } from "../auth";
 import type { Query } from "../db";
 import { loadRun } from "./runs";
+import { lockWorkspace } from './lock-order';
 
 export const ComputerControlRequest = z.object({
   run_id: Id,
@@ -16,6 +17,7 @@ const Receipt = z.object({
 });
 
 export async function requestComputerControl(sql: Query, principal: Principal, request: z.infer<typeof ComputerControlRequest>) {
+  await lockWorkspace(sql,principal.workspace_id);
   const vm = z.object({ control_state: z.string() }).parse((await sql`
     SELECT control_state FROM assistant.vms WHERE id=${principal.vm_id}
       AND workspace_id=${principal.workspace_id} FOR UPDATE`)[0]);

@@ -8,11 +8,13 @@ import type { Database, Query, Transaction } from "../../services/control/db.ts"
 import { DomainError } from "../protocol/index.ts";
 import { hashToken } from "../../services/control/auth.ts";
 import { recordEvent } from "../../services/control/repository/common.ts";
+import { fenceRun } from '../../services/control/repository/daemon-session';
 import { QuietHours, Trigger, type ResponsibilitySnapshot, ResponsibilityInput, type EvaluationRequest, quietNow } from "./responsibility-schema.ts";
 export const ResponsibilityRow = z.object({ skill_id:z.uuid().nullable().default(null),skill_revision:z.number().int().positive().nullable().default(null), id: z.uuid(), workspace_id: z.uuid(), conversation_id: z.uuid(), vm_id: z.uuid(), client_responsibility_id: z.uuid(), source_message_id: z.uuid(), source_quote: z.string(), objective: z.string(), trigger: Trigger, notification_mode: z.enum(["enabled", "quiet"]), quiet_hours: QuietHours.nullable(), state: z.enum(["active", "complete", "cancelled"]), next_review_at: z.string() });
 export async function createResponsibility(sql: Database, principal: Principal, input: ResponsibilityInput & { readonly run_id?: string }) {
   return sql.begin(async tx => {
     await tx`SELECT id FROM assistant.workspaces WHERE id=${principal.workspace_id} FOR UPDATE`;
+    await fenceRun(tx,principal,input.run_id);
     if (input.run_id) {
       const owned = await tx`SELECT r.id FROM assistant.runs r JOIN assistant.tasks t ON t.id=r.task_id JOIN assistant.messages m ON m.task_id=t.id WHERE r.id=${input.run_id} AND r.workspace_id=${principal.workspace_id} AND r.vm_id=${principal.vm_id} AND t.conversation_id=${input.conversation_id} AND r.state IN ('running','waiting') AND t.state IN ('running','waiting') AND m.id=${input.source_message_id} AND m.role='user' FOR UPDATE OF r,t`;
       if (!owned[0] || principal.vm_id !== input.vm_id) throw new DomainError("stale_run", "Owned active run and current user source required", 409);
@@ -46,6 +48,7 @@ export async function snapshot(sql: Query, row: z.infer<typeof ResponsibilityRow
 export async function dueResponsibilities(sql: Database, principal: Principal): Promise<readonly ResponsibilitySnapshot[]> {
   return sql.begin(async tx => {
     await tx`SELECT id FROM assistant.workspaces WHERE id=${principal.workspace_id} FOR UPDATE`;
+    await fenceRun(tx,principal);
     await dispatchActions(tx, principal);
     await deliverNotifications(tx, principal);
     const rows = z.array(ResponsibilityRow).parse(await tx`SELECT * FROM assistant.responsibilities WHERE workspace_id=${principal.workspace_id} AND vm_id=${principal.vm_id} AND state='active' AND (next_review_at<=now() OR (trigger->>'kind'='task_change' AND failure_count=0)) ORDER BY next_review_at LIMIT 10 FOR UPDATE`);
@@ -64,6 +67,7 @@ export async function dueResponsibilities(sql: Database, principal: Principal): 
 export async function recordEvaluation(sql: Database, principal: Principal, request: EvaluationRequest): Promise<void> {
   await sql.begin(async tx => {
     await tx`SELECT id FROM assistant.workspaces WHERE id=${principal.workspace_id} FOR UPDATE`;
+    await fenceRun(tx,principal);
     const found = await tx`SELECT * FROM assistant.responsibilities WHERE workspace_id=${principal.workspace_id} AND vm_id=${principal.vm_id} AND id=${request.responsibility_id} FOR UPDATE`;
     if (!found[0]) throw new DomainError("not_found", "Responsibility not found", 404);
     const row = ResponsibilityRow.parse(found[0]);

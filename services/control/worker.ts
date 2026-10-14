@@ -15,6 +15,7 @@ import type { SemanticClassifier } from "../../packages/context/schema";
 import { CONTEXT_EMBEDDING_MODEL, createSemanticRetriever } from "../../packages/context/recall";
 import { synchronizeContextIndex } from "../../packages/context/recall-index";
 import { z } from 'zod';
+import { screenUpgrade } from './screen-upgrade';
 
 export { AssistantRoom, ScreenRoom };
 type Environment = {
@@ -83,31 +84,7 @@ export default {
       const screenPath = /^\/v1\/vms\/([^/]+)\/screen$/.exec(new URL(request.url).pathname);
       if (screenPath) {
         const vm = Id.parse(screenPath[1]);
-        const authorization = request.headers.get("Authorization");
-        if (!authorization) requireOrigin(request);
-        const principal = await authenticate(
-          sql,
-          authorization ?? undefined,
-          request.headers.get("Cookie") ?? undefined,
-        );
-        const rows =
-          await sql`SELECT id FROM assistant.vms WHERE id=${vm} AND workspace_id=${principal.workspace_id}`;
-        if (!rows.length || (principal.role === "vm" && principal.vm_id !== vm))
-          throw new DomainError("not_found", "VM not found", 404);
-        const headers = new Headers(request.headers);
-        headers.delete("Authorization");
-        headers.delete("Cookie");
-        headers.set("X-Screen-Role", principal.role);
-        headers.set("X-Screen-Workspace", principal.workspace_id);
-        headers.set("X-Screen-VM", vm);
-        if (!principal.credential_hash)
-          throw new DomainError("unauthorized", "Credential identity missing", 401);
-        headers.set("X-Screen-Token-Hash", principal.credential_hash);
-        headers.delete("X-Screen-Session-Hash");
-        if (principal.session_hash) headers.set("X-Screen-Session-Hash", principal.session_hash);
-        return await env.SCREENS.getByName(`${principal.workspace_id}:${vm}`).fetch(
-          new Request(request, { headers }),
-        );
+        return await screenUpgrade(sql,request,vm,(key,upgrade)=>env.SCREENS.getByName(key).fetch(upgrade));
       }
       if (new URL(request.url).pathname === "/v1/connect") {
         const authorization = request.headers.get("Authorization") ?? undefined;

@@ -7,6 +7,8 @@ import { recordEvent } from "./common";
 import { loadRun } from "./runs";
 import { workContext } from "./task-context";
 import { validationRecoveryInput } from "./validation-recovery";
+import { admission } from './run-admission';
+import { lockWorkspace } from './lock-order';
 
 export async function resumeRun(
   sql: Query,
@@ -15,6 +17,7 @@ export async function resumeRun(
   checkpointCursor?: number,
   desktopControlScoped = false,
 ) {
+  await lockWorkspace(sql,principal.workspace_id);
   const vm = z
     .object({ control_state: z.string() })
     .parse(
@@ -37,15 +40,14 @@ export async function resumeRun(
       "Computer control has not returned to the assistant",
       409,
     );
-  const active =
-    await sql`SELECT id FROM assistant.runs WHERE vm_id=${principal.vm_id} AND id<>${runId} AND state NOT IN ('cancelled','succeeded','failed','unknown') LIMIT 1`;
-  if (active.length) throw new DomainError("run_busy", "Another run occupies this computer", 409);
-  const conversation = z.object({conversation_id:z.uuid()}).parse((await sql`SELECT conversation_id FROM assistant.tasks WHERE id=${run.task_id}`)[0]);
+  const slots=await admission(sql,principal,runId);
+  const conversation = z.object({conversation_id:z.uuid(),lane:z.enum(['foreground','background'])}).parse((await sql`SELECT conversation_id,lane FROM assistant.tasks WHERE id=${run.task_id}`)[0]);
+  if(!slots[conversation.lane])throw new DomainError('run_busy','Run lane is occupied',409);
   await sql`SELECT id FROM assistant.conversations WHERE id=${conversation.conversation_id} AND workspace_id=${principal.workspace_id} FOR UPDATE`;
-  const occupied = await sql`SELECT id FROM assistant.tasks WHERE conversation_id=${conversation.conversation_id} AND id<>${run.task_id} AND state NOT IN ('cancelled','succeeded','failed','unknown') LIMIT 1`;
+  const occupied = await sql`SELECT id FROM assistant.tasks WHERE conversation_id=${conversation.conversation_id} AND lane='foreground' AND ${conversation.lane==='foreground'} AND id<>${run.task_id} AND state NOT IN ('cancelled','succeeded','failed','unknown') LIMIT 1`;
   if(occupied.length)throw new DomainError('run_busy','Another task occupies this conversation',409);
   const commands =
-    await sql`SELECT id FROM assistant.commands WHERE vm_id=${principal.vm_id} AND status='pending' LIMIT 1`;
+    await sql`SELECT id FROM assistant.commands WHERE vm_id=${principal.vm_id} AND status='pending' AND (kind<>'stop' OR task_id IS NULL OR task_id=${run.task_id}) LIMIT 1`;
   if (commands.length)
     throw new DomainError("command_pending", "Apply pending control commands before resuming", 409);
   const task = z

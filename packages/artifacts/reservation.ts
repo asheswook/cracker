@@ -4,6 +4,7 @@ import type { Database, Query } from "../../services/control/db";
 import { conversation } from "../../services/control/repository/common";
 import { Artifact, DomainError, Id } from "../protocol";
 import { WORKSPACE_ARTIFACT_BYTES } from "./store";
+import { fenceRun } from '../../services/control/repository/daemon-session';
 export const ArtifactRow = Artifact.extend({
   state: z.enum(["uploading", "ready", "failed", "deleted"]),
   object_key: z.string(),
@@ -28,11 +29,13 @@ export type UploadMetadata = {
 type Reservation =
   | { readonly kind: "existing"; readonly artifact: z.infer<typeof Artifact> }
   | { readonly kind: "reserved"; readonly leaseId: string; readonly objectKey: string };
-export async function authorizeArtifactRun(sql: Query, scope: ArtifactScope, upload = false) {
+export async function authorizeArtifactRun(sql: Query, scope: ArtifactScope, upload = false,lock=true) {
   if (scope.principal.role === "client") return;
   const runId = Id.parse(scope.runId);
+  await fenceRun(sql,scope.principal,runId,lock);
   const runs =
-    await sql`SELECT r.id FROM assistant.runs r JOIN assistant.tasks t ON t.id=r.task_id WHERE r.workspace_id=${scope.principal.workspace_id} AND r.vm_id=${scope.principal.vm_id} AND r.id=${runId} AND t.conversation_id=${scope.conversation} AND (${upload}::boolean=false OR (r.state IN ('running','waiting') AND t.state IN ('running','waiting'))) FOR UPDATE OF r`;
+    lock?await sql`SELECT r.id FROM assistant.runs r JOIN assistant.tasks t ON t.id=r.task_id WHERE r.workspace_id=${scope.principal.workspace_id} AND r.vm_id=${scope.principal.vm_id} AND r.id=${runId} AND t.conversation_id=${scope.conversation} AND (${upload}::boolean=false OR (r.state IN ('running','waiting') AND t.state IN ('running','waiting'))) FOR UPDATE OF r`
+      :await sql`SELECT r.id FROM assistant.runs r JOIN assistant.tasks t ON t.id=r.task_id WHERE r.workspace_id=${scope.principal.workspace_id} AND r.vm_id=${scope.principal.vm_id} AND r.id=${runId} AND t.conversation_id=${scope.conversation}`;
   if (!runs[0]) throw new DomainError("not_found", "Active owned run not found", 404);
 }
 export async function reserveUpload(

@@ -75,6 +75,10 @@ test("daemon cleanly shuts down its journal after SIGTERM with screen disabled",
   const server = Bun.serve({
     port: 0,
     fetch: (request) => {
+      if (new URL(request.url).pathname === "/v1/daemon/session") {
+        expect(request.headers.get("x-daemon-session")).not.toBeNull();
+        return Response.json({ reconciled: true, epoch: 1, adopted: [], quarantined: [] });
+      }
       if (new URL(request.url).pathname === "/v1/daemon/poll") {
         observed();
         return Response.json({ assignment: null, commands: [], messages: [] });
@@ -109,6 +113,43 @@ test("daemon cleanly shuts down its journal after SIGTERM with screen disabled",
       child.kill("SIGKILL");
       await child.exited;
     }
+    await server.stop(true);
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 15000);
+test("SIGTERM closes the journal during session registration backoff without polling", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "assistant-registration-lifecycle-"));
+  const path = join(dir, "journal.sqlite");
+  const retrying = Promise.withResolvers<void>();
+  let polls = 0;
+  const server = Bun.serve({
+    port: 0,
+    fetch: request => {
+      if (new URL(request.url).pathname === "/v1/daemon/session") {
+        retrying.resolve();
+        return Response.json({ error: { code: "unavailable" } }, { status: 503 });
+      }
+      polls++;
+      return Response.json({ assignment: null, commands: [], messages: [] });
+    },
+  });
+  const child = Bun.spawn(["bun", "services/daemon/main.ts"], {
+    env: { ...process.env, ...base, CONTROL_URL: server.url.toString(), JOURNAL_PATH: path, SCREEN_ENABLED: "false" },
+    stdout: "pipe", stderr: "pipe",
+  });
+  try {
+    await retrying.promise;
+    // Allow the rejected registration to enter its abortable retry delay.
+    await Bun.sleep(100);
+    child.kill("SIGTERM");
+    expect(await child.exited).toBe(0);
+    expect(polls).toBe(0);
+    expect(await new Response(child.stderr).text()).toContain("daemon.registration_retry");
+    const journal = new Journal(path);
+    expect(journal.interrupted()).toEqual([]);
+    journal.close();
+  } finally {
+    if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; }
     await server.stop(true);
     await rm(dir, { recursive: true, force: true });
   }

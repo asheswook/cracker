@@ -15,19 +15,26 @@ import { BuiltinDesktop, desktopReadOnly } from "./builtin-desktop";
 import { ComputerControl } from './computer-control';
 import { callMcp } from './mcp-call';
 import { McpHttpSession } from './mcp-session';
+import { DesktopLease, desktopBusy, waitForDesktopTool, type Lane } from './desktop-lease';
+export type ToolScope={readonly runId:string;readonly lane:Lane;readonly workspace?:string|undefined};
 
 export const toolDefinitions: Tool[] = [
   { type: "function", name: "shell", description: "Run bash in the dedicated Linux VM on the same filesystem as the desktop. Read/search/edit files, write and run Python for data, image or document processing, execute scripts and tests. Use python3 to run Python scripts. OUTPUT_DIR is the task output directory for publish_artifact. Blocks until exit; use shell_start for long or interactive commands. Broad autonomy; effects are journaled.", strict: true, parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"], additionalProperties: false } },
   { type: "function", name: "shell_start", description: "Start a command in this Linux VM, sharing the desktop filesystem. Returns promptly with a session ID; poll until exited. cwd is absolute or relative to OUTPUT_DIR (null uses OUTPUT_DIR). Pipes, not a TTY; use bash for a persistent shell and send newline-terminated commands. Sessions expire at task end/restart. Output is bounded: check remaining_output_chars and dropped_output_chars; redirect large logs to a file. Close unused sessions.", strict: true, parameters: { type: "object", properties: { command: { type: "string" }, cwd: { type: ["string", "null"] }, yield_ms: { type: "integer", minimum: 0, maximum: 10000 }, max_output_chars: { type: "integer", minimum: 1, maximum: 100000 } }, required: ["command", "cwd", "yield_ms", "max_output_chars"], additionalProperties: false } },
   { type: "function", name: "shell_session", description: "Read the next output chunk, send stdin, interrupt (SIGINT), or close (terminate process group) a task-scoped shell session. input requires text including newlines when needed; otherwise null. Poll until exited and remaining_output_chars is zero. close discards unread output beyond this result. Never rerun an uncertain command to recover a lost session.", strict: true, parameters: { type: "object", properties: { session_id: { type: "string" }, action: { type: "string", enum: ["poll", "input", "interrupt", "close"] }, input: { type: ["string", "null"] }, yield_ms: { type: "integer", minimum: 0, maximum: 10000 }, max_output_chars: { type: "integer", minimum: 1, maximum: 100000 } }, required: ["session_id", "action", "input", "yield_ms", "max_output_chars"], additionalProperties: false } },
-  computerExecTool, computerTool
+  computerExecTool, computerTool, waitForDesktopTool
 ];
 
 export type ToolResult = { readonly text: string; readonly image?: string; readonly images?: readonly string[] };
 export class ToolExecutor {
   private readonly control = new ComputerControl();
-  setDesktopOwner(owner: 'agent' | 'user'): void { this.control.setOwner(owner); }
-  async revokeDesktopInputs(): Promise<void> { await this.control.revoke(); }
+  readonly desktopLease = new DesktopLease();
+  private desktopRun:string|undefined;
+  private referenceGeneration=0;
+  private desktopGeneration=0;
+  private readonly observedGeneration=new Map<string,number>();
+  setDesktopOwner(owner: 'agent' | 'user'): void { this.control.setOwner(owner);if(owner==='user')this.desktopLease.revokeAll();else this.desktopLease.allowGrants(); }
+  async revokeDesktopInputs(): Promise<void> { this.desktopLease.revokeAll();await this.control.revoke(); }
   desktopInputsReleased(): void { this.control.released(); }
   private browser: BuiltinBrowser | undefined;
   private builtinDesktop: BuiltinDesktop | undefined;
@@ -48,8 +55,24 @@ export class ToolExecutor {
     this.definitions.push(...browser.definitions);
   }
   private readonly shells = new ShellSessions();
-  async resetShellSessions(): Promise<void> { await this.shells.close(); }
-  hasPendingShellSessions(): boolean { return this.shells.hasPending(); }
+  private readonly runShells=new Map<string,ShellSessions>();
+  private shellScope(runId?:string):ShellSessions{if(!runId)return this.shells;let sessions=this.runShells.get(runId);if(!sessions){sessions=new ShellSessions();this.runShells.set(runId,sessions);}return sessions;}
+  async resetShellSessions(runId?:string): Promise<void> {
+    if(runId){const sessions=this.runShells.get(runId);await sessions?.close();this.runShells.delete(runId);return;}
+    await Promise.all([this.shells.close(),...[...this.runShells.values()].map(sessions=>sessions.close())]);this.runShells.clear();
+  }
+  hasPendingShellSessions(runId?:string): boolean { return runId?this.runShells.get(runId)?.hasPending()??false:this.shells.hasPending(); }
+  async releaseRun(runId:string):Promise<void>{
+    await this.resetShellSessions(runId);
+    if(this.desktopRun===runId&&this.desktopLease.current()?.runId===runId){
+      this.desktopLease.begin(runId);
+      try{await this.desktop.reset();this.desktopRun=undefined;}
+      catch(error){this.desktopLease.revokeAll();throw error;}
+      finally{this.desktopLease.end(runId);}
+    }
+    this.desktopLease.release(runId);
+    this.observedGeneration.delete(runId);
+  }
   private readonly desktop = new PersistentDesktop();
   async releaseDesktopInputs():Promise<void>{await this.browser?.close();await this.builtinDesktop?.close();await this.desktop.releaseInputs();}
   async resetDesktop(workspace?:string):Promise<void>{await this.desktop.reset(workspace);}
@@ -136,35 +159,52 @@ export class ToolExecutor {
   }
   async refreshAll(): Promise<void> { for (const [client, server] of this.connections) await this.refresh(client, server); }
   async close(): Promise<void> {
+    this.desktopLease.revokeAll();this.observedGeneration.clear();
     const closed=await Promise.allSettled([this.browser?.close(),this.builtinDesktop?.close(),this.resetShellSessions(),this.desktop.close(),...[...this.connections.values()].map(name=>this.removeMcp(name))]);
     const failed=closed.flatMap(result=>result.status==="rejected"?[result.reason]:[]);
     if(failed.length)throw new AggregateError(failed,"Tool cleanup failed");
   }
-  async run(name: string, args: string, signal: AbortSignal): Promise<ToolResult> {
+  async run(name: string, args: string, signal: AbortSignal,scope?:ToolScope): Promise<ToolResult> {
     signal.throwIfAborted();
-    if (this.builtinDesktop?.has(name)) return this.control.run(!desktopReadOnly(name), signal, next => this.execute(name, args, next));
-    if (this.browser?.has(name)) {
-      const readOnly = ['browser_snapshot', 'browser_take_screenshot', 'browser_console_messages', 'browser_network_requests'].includes(name) ||
-        name === 'browser_tabs' && z.object({ action: z.string() }).parse(JSON.parse(args)).action === 'list';
-      return this.control.run(!readOnly, signal, next => this.execute(name, args, next));
+    const owner=scope??{runId:'legacy',lane:'foreground' as const,workspace:this.workspace};
+    if(name==='wait_for_desktop'){
+      const {max_seconds}=z.object({max_seconds:z.number().int().min(1).max(600)}).strict().parse(JSON.parse(args));
+      const grant=await this.desktopLease.wait(owner.runId,owner.lane,max_seconds*1000,signal);signal.throwIfAborted();
+      return grant.granted?{text:JSON.stringify({...grant,instruction:'Fresh observation required. Inspect the desktop or browser before acting; earlier references are stale.'})}:desktopBusy(grant);
     }
-    if (name === 'computer_exec') return this.control.run(true, signal, next => this.execute(name, args, next));
-    if (name === 'computer') {
-      const { action } = z.object({ action: z.string() }).parse(JSON.parse(args));
-      return this.control.run(action !== 'screenshot', signal, next => this.execute(name, args, next));
+    const shared=name==='computer'||name==='computer_exec'||name.startsWith('desktop_')||name.startsWith('browser_');
+    if(shared){
+      const grant=this.desktopLease.acquire(owner.runId,owner.lane);if(!grant.granted)return desktopBusy(grant);
+      this.desktopLease.begin(owner.runId);
+      try{
+        return await this.control.run(true,signal,async next=>{
+          if(this.referenceGeneration!==grant.generation){
+            await this.builtinDesktop?.invalidateReferences();await this.browser?.invalidateReferences();this.referenceGeneration=grant.generation;
+          }
+          if(desktopMutation(name,args)&&this.observedGeneration.get(owner.runId)!==grant.generation)
+            return {text:JSON.stringify({status:'desktop_observation_stale',executed:false,instruction:'inspect again'})};
+          if(name==='computer_exec'&&(this.desktopRun!==owner.runId||this.desktopGeneration!==grant.generation)){
+            await this.desktop.reset(owner.workspace);this.desktopRun=owner.runId;this.desktopGeneration=grant.generation;
+          }
+          const result=await this.execute(name,args,next,owner);
+          next.throwIfAborted();
+          if(desktopObservation(name,args,result)&&this.desktopLease.owns(owner.runId,grant.generation))this.observedGeneration.set(owner.runId,grant.generation);
+          return result;
+        });
+      }finally{this.desktopLease.end(owner.runId);}
     }
-    return this.execute(name, args, signal);
+    return this.execute(name,args,signal,scope);
   }
-  private async execute(name: string, args: string, signal: AbortSignal): Promise<ToolResult> {
+  private async execute(name: string, args: string, signal: AbortSignal,scope?:ToolScope): Promise<ToolResult> {
     if (this.builtinDesktop?.has(name)) {
       try { return await this.builtinDesktop.run(name,args,signal); }
       finally { if (!desktopReadOnly(name)) await this.browser?.invalidateReferences(); }
     }
-    if (this.browser?.has(name)) return this.browser.run(name,args,signal);
+    if (this.browser?.has(name)) return this.browser.run(name,args,signal,scope?.workspace??this.workspace);
     switch (name) {
-      case "shell": return { text: await execute(["bash", "-lc", z.object({ command: z.string() }).parse(JSON.parse(args)).command], signal, this.workspace) };
-      case "shell_start": return { text: await this.shells.start(args, { workspace: this.workspace, signal }) };
-      case "shell_session": return { text: await this.shells.run(args, signal) };
+      case "shell": return { text: await execute(["bash", "-lc", z.object({ command: z.string() }).parse(JSON.parse(args)).command], signal, scope?.workspace??this.workspace) };
+      case "shell_start": return { text: await this.shellScope(scope?.runId).start(args, { workspace: scope?.workspace??this.workspace, signal }) };
+      case "shell_session": return { text: await this.shellScope(scope?.runId).run(args, signal) };
       case "computer": try { return await runComputer(args,signal); } finally { await this.browser?.invalidateReferences(); }
       case "computer_exec": try { return await this.desktop.run(args,signal); } finally { await this.browser?.invalidateReferences(); }
       default: {
@@ -185,5 +225,23 @@ export class ToolExecutor {
       }
     }
   }
+}
+function desktopMutation(name:string,args:string):boolean{
+  if(name.startsWith('desktop_'))return !desktopReadOnly(name);
+  if(name==='computer')return z.object({action:z.string()}).parse(JSON.parse(args)).action!=='screenshot';
+  if(name==='computer_exec')return !/^\s*return\s+null\s*;?\s*$/.test(z.object({code:z.string()}).parse(JSON.parse(args)).code);
+  if(['browser_snapshot','browser_take_screenshot','browser_console_messages','browser_network_requests','browser_network_request','browser_find'].includes(name))return false;
+  if(name==='browser_tabs')return z.object({action:z.string()}).parse(JSON.parse(args)).action!=='list';
+  return name.startsWith('browser_');
+}
+function desktopObservation(name:string,args:string,result:ToolResult):boolean{
+  const image=(result.images?.length??0)>0||!!result.image;
+  const observation=name==='desktop_get_app_state'||name==='desktop_query'||name==='browser_snapshot'
+    ||name==='computer_exec'&&image||name==='computer'&&image&&z.object({action:z.string()}).parse(JSON.parse(args)).action==='screenshot';
+  if(!observation)return false;
+  try{
+    const metadata=z.object({isError:z.boolean().optional(),executed:z.boolean().optional(),status:z.string().optional()}).safeParse(JSON.parse(result.text));
+    return metadata.success&&metadata.data.isError!==true&&metadata.data.executed!==false&&metadata.data.status!=='computer_action_interrupted';
+  }catch(error){if(!(error instanceof SyntaxError))throw error;return false;}
 }
 function assertNever(value: never): never { throw new ShellError(`invalid_action:${String(value)}`); }

@@ -81,6 +81,7 @@ export const PriorWorkRequest = z.object({ task_id: Id.nullable(), before_task_i
 export const PriorWorkPage = z.object({ capsules: z.array(WorkCapsule).max(8), messages: z.array(Message).max(100), has_more: z.boolean(), next_before_task_id: Id.nullable(), next_after_sequence: z.number().int().nullable() });
 export const TaskSourcePage = z.object({ retention_context: RetentionContext.optional(), messages: z.array(Message).max(100), memory: z.array(z.object({ id: Id, text: z.string() })), next_after_sequence: z.number().int().nullable() });
 export const Assignment = z.object({
+  offered: z.boolean().optional(),
   lane: TaskLane.optional(),
   semantic_structure_mode: z.enum(['off','shadow','on']).optional(),
   semantic_context_enabled: z.boolean().optional(),

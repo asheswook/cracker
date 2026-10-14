@@ -26,9 +26,11 @@ for(const mode of ["final","multi-item","commentary","calls-no-reply","withheld"
   const earlyComposing=Promise.withResolvers<void>(),earlySettling=Promise.withResolvers<void>();
   const endedStored=Promise.withResolvers<void>();
   const publication=Promise.withResolvers<void>(),releasePublication=Promise.withResolvers<void>();
+  const deliveryFailed=Promise.withResolvers<void>();let locallyFinished=false;
   const terminalBoundary=Promise.withResolvers<void>(),releaseBoundary=Promise.withResolvers<void>();
   const updates:ComposingRequest[]=[],messageIds:string[]=[];
   const root=await mkdtemp(join(tmpdir(),"reply-handoff-")),journal=new ObservedJournal(":memory:");
+  void journal.finished.promise.then(()=>{locallyFinished=true;});
   let failDelivery=mode==="retry",round=0;
   const server=Bun.serve({port:0,async fetch(request){
     const path=new URL(request.url).pathname;
@@ -47,7 +49,7 @@ for(const mode of ["final","multi-item","commentary","calls-no-reply","withheld"
       const event=DaemonEvent.parse(await request.clone().json());
       if(event.kind==="message"){
         messageIds.push(event.event_id);publication.resolve();await releasePublication.promise;
-        if(failDelivery)return new Response("retry fixture",{status:503});
+        if(failDelivery){deliveryFailed.resolve();return new Response("retry fixture",{status:503});}
       }
     }
     return f.app.fetch(request);
@@ -108,11 +110,12 @@ for(const mode of ["final","multi-item","commentary","calls-no-reply","withheld"
       const boundary=await page();expect(boundary.composing).toBeNull();expect(boundary.reply_handoff).toBeNull();
       releaseBoundary.resolve();
     }
-    await journal.finished.promise;
     if(mode==="retry"){
+      await deliveryFailed.promise;expect(locallyFinished).toBe(false);
       expect(journal.pending().filter(event=>event.kind==="message").map(event=>event.event_id)).toEqual(messageIds);
       failDelivery=false;
     }
+    await journal.finished.promise;
     await runtime.flush();
     const final=await page();expect(final.composing).toBeNull();expect(final.reply_handoff).toBeNull();
     const expected=mode==="refusal"?["Refused fixture"]:mode==="multi-item"?["Early fixture","Validated fixture"]:["final","commentary","abort-delivery","retry"].includes(mode)?["Validated fixture"]:[];

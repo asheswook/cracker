@@ -10,6 +10,7 @@ import {composingState,replyHandoffState} from "../repository/composing";
 import { backgroundState, workingState } from "../repository/working";
 import { appearanceRoutes } from "./appearance";
 import { TaskNavigation } from "../../../packages/protocol/task-navigation";
+import { lockWorkspace } from '../repository/lock-order';
 export function clientRoutes(sql: Database) {
   const app = new Hono<AppEnv>();
   app.get("/commands/:id", async (c) => {
@@ -115,6 +116,13 @@ export function clientRoutes(sql: Database) {
     const workspace = c.get("principal").workspace_id,
       id = Id.parse(c.req.param("id"));
     const command = await sql.begin(async (tx) => {
+      await lockWorkspace(tx,workspace,'update');
+      const assigned=await tx`SELECT id,vm_id FROM assistant.runs WHERE task_id=${id} AND workspace_id=${workspace} AND state NOT IN ('cancelled','succeeded','failed') ORDER BY (state='unknown'),created_at DESC,id DESC LIMIT 1`;
+      if(assigned[0]){
+        const run=z.object({id:Id,vm_id:Id}).parse(assigned[0]);
+        await tx`SELECT id FROM assistant.vms WHERE id=${run.vm_id} AND workspace_id=${workspace} FOR UPDATE`;
+        await tx`SELECT id FROM assistant.runs WHERE id=${run.id} FOR UPDATE`;
+      }
       const rows =
         await tx`SELECT * FROM assistant.tasks WHERE workspace_id=${workspace} AND id=${id} FOR UPDATE`;
       if (!rows[0]) throw new DomainError("not_found", "Task not found", 404);
@@ -125,7 +133,7 @@ export function clientRoutes(sql: Database) {
         await tx`SELECT * FROM assistant.commands WHERE task_id=${id} AND kind='stop' AND status='pending'`;
       if (pending[0]) return Command.parse(pending[0]);
       const runs =
-        await tx`SELECT id,vm_id FROM assistant.runs WHERE task_id=${id} AND state NOT IN ('cancelled','succeeded','failed')`;
+        await tx`SELECT id,vm_id FROM assistant.runs WHERE task_id=${id} AND state NOT IN ('cancelled','succeeded','failed') ORDER BY (state='unknown'),created_at DESC,id DESC LIMIT 1`;
       if (!runs[0]) {
         if (task.state !== "queued")
           throw new DomainError("not_assigned", "Task has no VM to acknowledge stop", 409);
@@ -169,6 +177,7 @@ export function clientRoutes(sql: Database) {
       .object({ kind: z.enum(["takeover", "return_control"]), client_command_id: Id.optional() })
       .parse(await c.req.json());
     const command = await sql.begin(async (tx) => {
+      await lockWorkspace(tx,workspace);
       const vms =
         await tx`SELECT id FROM assistant.vms WHERE workspace_id=${workspace} AND id=${id} FOR UPDATE`;
       if (!vms[0]) throw new DomainError("not_found", "VM not found", 404);

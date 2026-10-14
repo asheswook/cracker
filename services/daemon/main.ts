@@ -7,6 +7,7 @@ import { OpenAIProvider } from "../../packages/provider/index.ts";
 import { preflightScreen } from "../../packages/screen/preflight.ts";
 import { IceServer, ScreenError } from "../../packages/screen/protocol.ts";
 import { controlErrorCode, controlErrorSummary } from "./control-diagnostic.ts";
+import { controlFailureAction } from './control-failure-policy';
 import { Journal } from "./journal.ts";
 import { Runtime, type RuntimeTiming, type ControlTiming } from "./runtime.ts";
 import { startScreen } from "./screen.ts";
@@ -96,14 +97,17 @@ export async function main(): Promise<void> {
     ...(config.CHATGPT_TOKEN_FILE ? { tokenFile: config.CHATGPT_TOKEN_FILE } : {}),
   };
   const provider = new OpenAIProvider(providerConfig);
+  const sessionId=crypto.randomUUID();
+  const daemonHeaders={authorization:`Bearer ${config.VM_TOKEN}`,'x-daemon-session':sessionId};
   const subscription = new SubscriptionProxy(config);
-  const models = new ModelResolver({ defaultProvider: provider, defaultConfig: providerConfig, subscription, http: ky.create({ prefixUrl: config.CONTROL_URL, headers: { authorization: `Bearer ${config.VM_TOKEN}` }, retry: 0, timeout: 15000 }), ...(config.ANTHROPIC_API_KEY ? { anthropicKey: config.ANTHROPIC_API_KEY } : {}) });
+  const models = new ModelResolver({ defaultProvider: provider, defaultConfig: providerConfig, subscription, http: ky.create({ prefixUrl: config.CONTROL_URL, headers:daemonHeaders, retry: 0, timeout: 15000 }), ...(config.ANTHROPIC_API_KEY ? { anthropicKey: config.ANTHROPIC_API_KEY } : {}) });
   await mkdir(dirname(config.JOURNAL_PATH), { recursive: true, mode: 0o700 });
   const journal = new Journal(config.JOURNAL_PATH);
   await chmod(config.JOURNAL_PATH, 0o600);
   const tools = new ToolExecutor();
   let screen: Awaited<ReturnType<typeof startScreen>> | undefined;
   const runtime = new Runtime({
+    sessionProtocol:true,sessionId,
     controlUrl: config.CONTROL_URL,
     token: config.VM_TOKEN,
     journal,
@@ -120,7 +124,7 @@ export async function main(): Promise<void> {
     },
   });
   const shutdown = new AbortController();
-  const accountHttp = ky.create({ prefixUrl: config.CONTROL_URL, headers: { authorization: `Bearer ${config.VM_TOKEN}` }, retry: 0, timeout: 15000 });
+  const accountHttp = ky.create({ prefixUrl: config.CONTROL_URL, headers:daemonHeaders, retry: 0, timeout: 15000 });
   const account = config.CHATGPT_TOKEN_FILE ? new ModelAccountManager(accountHttp, accountOperations(config.CHATGPT_TOKEN_FILE, accountHttp), () => models.advertise()) : undefined;
   const subscriptions = new SubscriptionAccountManager(accountHttp, subscription, () => models.advertise());
   const requestShutdown = () => shutdown.abort();
@@ -135,12 +139,14 @@ export async function main(): Promise<void> {
     while (!shutdown.signal.aborted) {
       try {
         if (!recovered) {
+          await runtime.initializeSession();
           await models.advertise();
           await runtime.recover();
           if (config.screen)
             screen = await startScreen({
               controlUrl: config.CONTROL_URL,
               token: config.VM_TOKEN,
+              sessionId,
               vmId: config.screen.vmId,
               journal,
               iceServers: config.screen.iceServers,
@@ -155,10 +161,13 @@ export async function main(): Promise<void> {
         if (!(error instanceof Error)) throw error;
         console.error(JSON.stringify(controlErrorSummary(error)));
         const diagnostic = controlErrorCode(error);
-        await runtime.disconnect();
+        const action=await controlFailureAction(error,runtime.controlBarrierFailed());
+        if(action!=='retry')await runtime.disconnect();
         const code = await diagnostic;
         if (code) console.error(JSON.stringify({ event: "daemon.control.response", code }));
+        if(action==='exit'){console.error(JSON.stringify({event:'daemon.session_exit',code:code??'credential_rejected'}));throw error;}
         backoff = Math.min(backoff * 2, 30000);
+        if(action==='retry'&&!runtime.sessionRegistered())console.warn(JSON.stringify({event:'daemon.registration_retry',delay_ms:backoff}));
       }
       try {
         await delay(backoff, undefined, { signal: shutdown.signal });

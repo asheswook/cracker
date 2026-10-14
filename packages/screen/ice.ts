@@ -15,14 +15,14 @@ export function rtcIceServers(servers: readonly z.infer<typeof IceServer>[]) {
   }));
 }
 
-export async function fetchScreenIce(url: URL, options: { readonly signal: AbortSignal; readonly token?: string }): Promise<IceConfiguration> {
+export async function fetchScreenIce(url: URL, options: { readonly signal: AbortSignal; readonly token?: string;readonly sessionId?:string }): Promise<IceConfiguration> {
   try {
     const body = await ky.post(url, {
       signal: options.signal,
       cache: "no-store",
       timeout: 10000,
       retry: 0,
-      ...(options.token ? { headers: { Authorization: `Bearer ${options.token}` } } : {}),
+      headers:{...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),...(options.sessionId?{'x-daemon-session':options.sessionId}:{})},
     }).json();
     const config = IceConfiguration.parse(body);
     refreshDelay(config);

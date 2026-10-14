@@ -10,6 +10,8 @@ import { loadRun } from "./runs";
 import {clearComposing,clearDeliveredComposing} from "./composing";
 import { linkAssistantContext } from "../../../packages/context/store";
 import { validateResponseAttribution } from "../../../packages/context/structure-store";
+import { fenceSession } from './daemon-session';
+import { eventVmLock } from './event-lock';
 
 const terminal = ["cancelled", "succeeded", "failed"];
 function unreachable(value: never): never {
@@ -18,7 +20,15 @@ function unreachable(value: never): never {
 export async function applyEvent(sql: Query, principal: Principal, event: DaemonEvent) {
   // Event and semantic receipts reference the workspace; memory extraction locks it before conversations.
   await sql`SELECT id FROM assistant.workspaces WHERE id=${principal.workspace_id} FOR KEY SHARE`;
-  await sql`SELECT id FROM assistant.vms WHERE id=${principal.vm_id} FOR UPDATE`;
+  const vmLock=eventVmLock(event.kind);
+  if(vmLock==='update')await sql`SELECT id FROM assistant.vms WHERE id=${principal.vm_id} FOR UPDATE`;
+  else if(vmLock==='no-key-update')await sql`SELECT id FROM assistant.vms WHERE id=${principal.vm_id} FOR NO KEY UPDATE`;
+  else await sql`SELECT id FROM assistant.vms WHERE id=${principal.vm_id} FOR KEY SHARE`;
+  await fenceSession(sql,principal,principal.daemon_session_id,vmLock);
+  if('run_id' in event&&event.run_id&&principal.daemon_session_id){
+    const owner=await sql`SELECT id FROM assistant.runs WHERE id=${event.run_id} AND vm_id=${principal.vm_id} AND daemon_session_id=${principal.daemon_session_id} AND accepted_at IS NOT NULL`;
+    if(!owner.length)throw new DomainError('stale_run','Run is not accepted by this daemon session',409);
+  }
   const previous =
     await sql`SELECT workspace_id,vm_id,payload FROM assistant.events WHERE event_id=${event.event_id}`;
   if (previous[0]) {
@@ -35,18 +45,18 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
   }
   switch (event.kind) {
     case "skill_loaded": {
-      const run=await loadRun(sql,principal,event.run_id);
+      const run=await loadRun(sql,principal,event.run_id,vmLock);
       if(!['running','waiting'].includes(run.state))throw new DomainError('stale_run','Run cannot load skill',409);
       const rows=await sql`UPDATE assistant.skill_executions e SET loaded_at=COALESCE(e.loaded_at,now()),loaded_run_id=${run.id} FROM assistant.skill_versions v WHERE e.task_id=${run.task_id} AND e.workspace_id=${principal.workspace_id} AND e.vm_id=${principal.vm_id} AND e.skill_id=${event.skill_id} AND e.revision=${event.revision} AND v.workspace_id=e.workspace_id AND v.skill_id=e.skill_id AND v.revision=e.revision AND v.content_hash=${event.content_hash} RETURNING e.id`;
       if(!rows.length)throw new DomainError('skill_binding_mismatch','Skill load receipt mismatch',409);
       break;
     }
     case "heartbeat":
-      if (event.run_id) await loadRun(sql, principal, event.run_id);
+      if (event.run_id) await loadRun(sql, principal, event.run_id,vmLock);
       await sql`UPDATE assistant.vms SET last_seen_at=now() WHERE id=${principal.vm_id}`;
       break;
     case "message": {
-      const run = await loadRun(sql, principal, event.run_id);
+      const run = await loadRun(sql, principal, event.run_id,vmLock);
       if (terminal.includes(run.state) || run.state === "unknown")
         throw new DomainError("stale_run", "Run cannot emit messages", 409);
       await clearDeliveredComposing(sql,run.id,event.event_id);
@@ -102,7 +112,7 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
       break;
     }
     case "state": {
-      const run = await loadRun(sql, principal, event.run_id);
+      const run = await loadRun(sql, principal, event.run_id,vmLock);
       await clearComposing(sql,run.id);
       if (run.state === "unknown" && event.state === "unknown") break;
       const link = z
@@ -155,7 +165,7 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
       if (command.status !== "pending")
         throw new DomainError("stale_ack", "Command already acknowledged", 409);
       if (command.run_id) {
-        const run = await loadRun(sql, principal, command.run_id);
+        const run = await loadRun(sql, principal, command.run_id,vmLock);
         if (!(event.status === "applied" && event.execution_continues === true && command.kind !== "stop"))
           await clearComposing(sql,run.id);
         if (terminal.includes(run.state) && command.kind !== "return_control")
@@ -198,7 +208,7 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
       break;
     }
     case "input_applied": {
-      const run = await loadRun(sql, principal, event.run_id);
+      const run = await loadRun(sql, principal, event.run_id,vmLock);
       const rows =
         await sql`SELECT m.id FROM assistant.messages m WHERE m.id=${event.message_id} AND m.task_id=${run.task_id} AND m.workspace_id=${principal.workspace_id}`;
       if (!rows[0]) throw new DomainError("not_found", "Task input not found", 404);

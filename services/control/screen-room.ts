@@ -2,11 +2,13 @@ import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
 import { createDatabase } from "./db";
 import { MAX_SCREEN_VIEWERS } from "../../packages/screen/session-protocol";
+import { currentScreenSession } from './screen-upgrade';
 
 const Attachment = z.object({
   role: z.enum(["client", "vm"]),
   token_hash: z.string(),
   session_hash: z.string().nullable().default(null),
+  daemon_session_id:z.uuid().nullable().default(null),
   vm_id: z.uuid(),
   workspace_id: z.uuid(),
   last_activity: z.number().default(0),
@@ -47,6 +49,7 @@ export class ScreenRoom extends DurableObject<ScreenEnvironment> {
       role: request.headers.get("X-Screen-Role"),
       token_hash: request.headers.get("X-Screen-Token-Hash"),
       session_hash: request.headers.get("X-Screen-Session-Hash"),
+      daemon_session_id:request.headers.get('X-Screen-Daemon-Session'),
       vm_id: request.headers.get("X-Screen-VM"),
       workspace_id: request.headers.get("X-Screen-Workspace"),
       last_activity: Date.now(),
@@ -54,6 +57,11 @@ export class ScreenRoom extends DurableObject<ScreenEnvironment> {
       version: new URL(request.url).searchParams.get("screen_version") === "2" ? 2 : 1,
     });
     if (!connection.success) return new Response("Unauthorized", { status: 401 });
+    if(connection.data.role==='vm'){
+      const sql=createDatabase(this.env.DATABASE.connectionString);
+      try{if(!await currentScreenSession(sql,connection.data.workspace_id,connection.data.vm_id,connection.data.daemon_session_id))return new Response('Daemon session fenced',{status:409});}
+      finally{await sql.end();}
+    }
     if (connection.data.role === "vm") {
       for (const previous of this.ctx.getWebSockets("vm"))
         this.closeAndNotify(previous, 1000, "VM reconnected");
@@ -94,6 +102,7 @@ export class ScreenRoom extends DurableObject<ScreenEnvironment> {
     if (!peer.success) return false;
     const sql = createDatabase(this.env.DATABASE.connectionString);
     try {
+      if(peer.data.role==='vm'&&!await currentScreenSession(sql,peer.data.workspace_id,peer.data.vm_id,peer.data.daemon_session_id))return false;
       const rows =
         await sql`SELECT c.token_hash FROM assistant.credentials c WHERE c.token_hash=${peer.data.token_hash} AND c.workspace_id=${peer.data.workspace_id} AND c.role=${peer.data.role} AND c.revoked_at IS NULL AND (c.vm_id IS NULL OR c.vm_id=${peer.data.vm_id}) AND (${peer.data.session_hash}::text IS NULL OR EXISTS(SELECT 1 FROM assistant.browser_sessions s WHERE s.token_hash=${peer.data.session_hash} AND s.credential_hash=c.token_hash AND s.revoked_at IS NULL AND s.expires_at>now()))`;
       return rows.length === 1;
@@ -143,6 +152,7 @@ export class ScreenRoom extends DurableObject<ScreenEnvironment> {
     const targetRole = peer.role === "client" ? "vm" : "client";
     for (const target of this.ctx.getWebSockets(targetRole)) {
       if (target.readyState !== WebSocket.OPEN) continue;
+      if(!await this.authorized(target)){this.closeAndNotify(target,1008,'Credential or daemon session revoked');continue;}
       const recipient = this.attachment(target);
       if (peer.role === "vm" && peer.version === 2 && parsed.data.viewer_id !== recipient.viewer_id) continue;
       const { viewer_id: _ignored, ...frame } = parsed.data;

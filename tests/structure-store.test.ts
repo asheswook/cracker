@@ -169,7 +169,10 @@ test('registered routes enforce authentication, ownership, body validation and 4
  const changed=await request('edge',{...f.request,relation:'correction'});expect(changed.status).toBe(409);expect(await changed.json()).toMatchObject({error:{code:'idempotency_conflict'}});
  expect((await request('read',{through_sequence:f.child.sequence})).status).toBe(200);
  const other=await fixture();expect((await request('exchange',{user_message_id:await other.message('foreign')})).status).toBe(409);
- const foreignRun=await app.request(`/v1/daemon/context/${other.run}/structure/read`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({through_sequence:Number.MAX_SAFE_INTEGER})});expect(foreignRun.status).toBe(409);
+  const foreignRun=await app.request(`/v1/daemon/context/${other.run}/structure/read`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({through_sequence:Number.MAX_SAFE_INTEGER})});
+  // Run ownership is fenced at the route boundary, without exposing foreign data.
+  expect(foreignRun.status).toBe(404);
+  expect(await foreignRun.json()).toMatchObject({error:{code:'not_found'}});
 });
 
 test('W1b instruction, branch and reference evidence persist with exact validation and idempotency',async()=>{

@@ -14,8 +14,18 @@ function fixture(origin: 'user' | 'schedule' | 'responsibility' = 'schedule') {
   const calls: string[] = [];
   const sql = (async (parts: TemplateStringsArray, ...values: unknown[]) => {
     const text = parts.join('?'); calls.push(text);
+    if (text === 'SELECT id FROM assistant.workspaces WHERE id=? FOR KEY SHARE') {
+      expect(values).toEqual([principal.workspace_id]);
+      return [{ id: principal.workspace_id }];
+    }
+    if (text.startsWith('SELECT daemon_session_id,daemon_reconciled FROM assistant.vms')) {
+      expect(values).toEqual([principal.vm_id, principal.workspace_id]);
+      expect(calls.at(-2)).toBe('SELECT id FROM assistant.workspaces WHERE id=? FOR KEY SHARE');
+      return [{ daemon_session_id: null, daemon_reconciled: true }];
+    }
     if (text.startsWith('SELECT * FROM assistant.runs')) {
-      expect(values).toEqual([run.id, principal.workspace_id, principal.vm_id]);
+      expect(values).toEqual([run.id, principal.workspace_id, principal.vm_id, null]);
+      expect(text).toContain('daemon_session_id IS NOT DISTINCT FROM ?::uuid FOR UPDATE');
       return [run];
     }
     if (text.startsWith('SELECT conversation_id,state,origin')) return [task];

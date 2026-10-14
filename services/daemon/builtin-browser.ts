@@ -12,17 +12,17 @@ export class BuiltinBrowser {
   private connectedWorkspace: string | undefined;
   readonly definitions: Tool[] = [];
   setWorkspace(path: string | undefined) { this.workspace = path; }
-  private async connect() {
-    if (this.client && this.connectedWorkspace !== this.workspace) await this.close();
+  private async connect(workspace=this.workspace) {
+    if (this.client && this.connectedWorkspace !== workspace) await this.close();
     if (this.client) return this.client;
     const client = new Client({ name: "assistant-builtin-browser", version: "1.0.0" });
     const runtime = fileURLToPath(new URL("../../var/browser-runtime/bin/node", import.meta.url));
     const transport = stdioTransport({ command: existsSync(runtime) ? runtime : "node", args: [fileURLToPath(new URL("../../var/browser-worker.mjs", import.meta.url)), this.endpoint],
-      env: { ...(process.env["PATH"] ? { PATH: process.env["PATH"] } : {}), ...(this.workspace ? { OUTPUT_DIR: this.workspace } : {}) }, stderr: "inherit" });
+      env: { ...(process.env["PATH"] ? { PATH: process.env["PATH"] } : {}), ...(workspace ? { OUTPUT_DIR: workspace } : {}) }, stderr: "inherit" });
     client.onclose = () => { if (this.client === client) this.client = undefined; };
     await client.connect(transport, { timeout: 10000 });
     this.client = client;
-    this.connectedWorkspace = this.workspace;
+    this.connectedWorkspace = workspace;
     return client;
   }
   async initialize() {
@@ -38,9 +38,9 @@ export class BuiltinBrowser {
     try { await this.client.callTool({ name: "assistant_browser_invalidate", arguments: {} }, undefined, { timeout: 2000 }); }
     catch (error) { if (!(error instanceof Error)) throw error; await this.close(); }
   }
-  async run(name: string, args: string, signal: AbortSignal) {
+  async run(name: string, args: string, signal: AbortSignal,workspace=this.workspace) {
     signal.throwIfAborted();
-    const client = await this.connect();
+    const client = await this.connect(workspace);
     try {
       const result = await client.callTool({ name, arguments: z.record(z.string(), z.unknown()).parse(JSON.parse(args)) }, undefined, { signal, timeout: 45000 });
       const content = z.array(z.object({ type: z.string(), text: z.string().optional(), data: z.string().optional(), mimeType: z.string().optional() })).parse(result.content);

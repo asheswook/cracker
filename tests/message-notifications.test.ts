@@ -14,6 +14,7 @@ import {
   snapshot,
 } from "../packages/memory/responsibility-store.ts";
 import { ResponsibilityInput } from "../packages/memory/responsibility-schema.ts";
+import { hashToken } from "../services/control/auth.ts";
 
 const { sql, fixture, cleanup } = createNotificationFixtures();
 const config = { ...nativeConfig, private_key: `${nativeConfig.private_key}\n` };
@@ -56,6 +57,7 @@ test("commentary and final commit their own idempotent intents; heartbeat and su
   expect(
     wire.messages
       .slice(start)
+      .filter(message => message.data.url.startsWith(`/?conversation=${f.conversation}&`))
       .map((message) => message.data.url)
       .sort(),
   ).toEqual(
@@ -232,6 +234,22 @@ test("journal-mismatch poll keeps recovery blocked and publishes one status acro
   expect(first.status).toBe(200);
   expect(await first.json()).toMatchObject({ assignment: null, messages: [] });
   expect(await second.json()).toMatchObject({ assignment: null, messages: [] });
+  // Poll cursors cannot prove journal loss; legacy capacity remains reserved.
+  expect((await sql`SELECT state FROM runs WHERE id=${f.run}`)[0]?.["state"]).toBe("running");
+  expect(await f.deliveries()).toHaveLength(0);
+  const token = crypto.randomUUID(), session = crypto.randomUUID();
+  await sql`INSERT INTO credentials(token_hash,workspace_id,role,vm_id) VALUES(${await hashToken(token)},${f.workspace},'vm',${f.vm})`;
+  const headers = { authorization: `Bearer ${token}`, "content-type": "application/json", "x-daemon-session": session };
+  const register = () => f.app.request("/v1/daemon/session", { method: "POST", headers, body: JSON.stringify({ session_id: session, runs: [] }) });
+  expect((await register()).status).toBe(200);
+  expect((await register()).status).toBe(200);
+  for (let retry = 0; retry < 2; retry++) {
+    const response = await f.app.request("/v1/daemon/poll", { headers });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ assignment: null, messages: [] });
+  }
+  expect((await f.poll()).status).toBe(409);
+  // Explicit reconciliation quarantines unsafe work and publishes only one status.
   expect((await sql`SELECT state FROM runs WHERE id=${f.run}`)[0]?.["state"]).toBe("unknown");
   expect(await f.deliveries()).toHaveLength(1);
   const status = z
@@ -239,6 +257,7 @@ test("journal-mismatch poll keeps recovery blocked and publishes one status acro
     .parse((await sql`SELECT role,content FROM messages WHERE workspace_id=${f.workspace}`)[0]);
   expect(status).toEqual({
     role: "system",
-    content: "Daemon restarted without active run journal",
+    content: "Startup journal cannot prove effect safety; reconciliation required",
   });
+  expect(await sql`SELECT id FROM messages WHERE workspace_id=${f.workspace}`).toHaveLength(1);
 });

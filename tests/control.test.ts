@@ -94,11 +94,22 @@ test("restart without journal quarantines unknown work rather than reassigning",
   // Given a claimed run.
   await finishActive();
   const initial = await newTask();
-  await request("/v1/daemon/poll", machine);
-  // When daemon restarts without a run id.
+  const claimed = DaemonPoll.parse(await (await request("/v1/daemon/poll", machine)).json());
+  if (!claimed.assignment) throw new Error("missing assignment");
+  // A missing poll cursor is not proof of a restart and must not release capacity.
   const polled = DaemonPoll.parse(await (await request("/v1/daemon/poll", machine)).json());
-  // Then it receives no assignment and the original task is unknown.
   expect(polled.assignment).toBeNull();
+  expect((await sql`SELECT state FROM tasks WHERE id=${initial.task.id}`)[0]?.["state"]).toBe("running");
+  // Only explicit registration reconciles a restart with an empty durable journal.
+  const session = crypto.randomUUID();
+  const registered = await request("/v1/daemon/session", machine, { session_id: session, runs: [] });
+  expect(registered.status).toBe(200);
+  expect(await registered.json()).toMatchObject({ quarantined: [claimed.assignment.run_id] });
+  expect((await request("/v1/daemon/poll", machine)).status).toBe(409);
+  const current = await app.request("/v1/daemon/poll", { headers: { authorization: `Bearer ${machine}`, "x-daemon-session": session } });
+  expect(current.status).toBe(200);
+  expect(DaemonPoll.parse(await current.json()).assignment).toBeNull();
+  // Then unsafe accepted work remains unknown, never reassigned to the new session.
   expect(
     z
       .object({ state: z.string() })

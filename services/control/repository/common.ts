@@ -8,7 +8,9 @@ import { DomainError, Message, Task } from "../../../packages/protocol";
 import type { Query } from "../db";
 import { legacyAttentionTexts } from "../../../packages/notifications/attention-text.ts";
 import { replyPreview, replySource } from '../../../packages/context/store-reply';
+import { lockWorkspace } from './lock-order';
 export async function conversation(sql: Query, workspace: string, id: string) {
+  await lockWorkspace(sql,workspace);
   const rows =
     await sql`SELECT id FROM assistant.conversations WHERE workspace_id=${workspace} AND id=${id} FOR UPDATE`;
   if (!rows[0]) throw new DomainError("not_found", "Conversation not found", 404);
@@ -27,6 +29,7 @@ export async function appendMessage(
     readonly replyTo?: string;
   },
 ) {
+  await lockWorkspace(sql,input.workspace);
   if(input.origin && input.origin !== 'user')return createBackgroundTask(sql,{workspace:input.workspace,conversation:input.conversation,objective:input.content,origin:input.origin,clientId:input.clientId});
   if (input.returnControl)
     await sql`SELECT id FROM assistant.vms WHERE workspace_id=${input.workspace} ORDER BY id FOR NO KEY UPDATE`;

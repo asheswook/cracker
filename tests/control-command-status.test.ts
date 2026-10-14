@@ -88,7 +88,7 @@ test("commands-only active poll preserves receipts but excludes context; default
   const contextQueries = queries.filter((query) =>
     /assistant\.(messages|message_attachments|memories|memory_assertions|memory_contexts|workspaces)\b/.test(
       query,
-    ),
+    )&&!/SELECT\s+id\s+FROM\s+assistant\.workspaces\s+WHERE[\s\S]*FOR\s+(KEY SHARE|UPDATE)/.test(query),
   );
   expect(contextQueries).toHaveLength(0);
   console.log(
@@ -116,7 +116,7 @@ test("commands-only active poll preserves receipts but excludes context; default
     detail: "stopped",
   });
 });
-test("commands-only polling retains current-run mismatch quarantine", async () => {
+test("commands-only polling never infers an orphan from a mismatched run identity", async () => {
   // Given a running task and its assignment.
   await finishActive();
   const initial = await newTask();
@@ -128,10 +128,10 @@ test("commands-only polling retains current-run mismatch quarantine", async () =
       await request(`/v1/daemon/poll?view=commands&run_id=${crypto.randomUUID()}`, machine)
     ).json(),
   );
-  // Then no input/assignment is returned and uncertain work is quarantined, never replayed.
+  // Then no input/assignment is returned; only explicit session reconciliation may quarantine work.
   expect(result).toEqual({ assignment: null, commands: [], messages: [] });
   const state = z
     .object({ state: z.string() })
     .parse((await sql`SELECT state FROM assistant.tasks WHERE id=${initial.task.id}`)[0]);
-  expect(state.state).toBe("unknown");
+  expect(state.state).toBe("running");
 });

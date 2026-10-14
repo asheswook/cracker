@@ -12,8 +12,15 @@ import {ComposingRequest} from "../../../packages/protocol/composing";
 import {updateComposing} from "../repository/composing";
 import { ComputerControlRequest, requestComputerControl } from "../repository/message-control";
 import { NotifyUserRequest, notifyUser } from "../repository/notify-user";
+import { SessionRegistration } from '../../../packages/protocol/parallel-runs';
+import { acceptOffer, registerSession, fenceSession } from '../repository/daemon-session';
 export function daemonRoutes(sql: Database, semanticEnabled = false, structureMode:'off'|'shadow'|'on'='off') {
   const app = new Hono<AppEnv>();
+  app.post('/session',async c=>{
+    const request=SessionRegistration.parse(await c.req.json());
+    return c.json(await sql.begin(tx=>registerSession(tx,c.get('principal'),request)));
+  });
+  app.post('/accept/:id',async c=>c.json(await sql.begin(tx=>acceptOffer(tx,c.get('principal'),c.get('principal').daemon_session_id,Id.parse(c.req.param('id'))))));
   app.post("/notify-user", async c => {
     const request = NotifyUserRequest.parse(await c.req.json());
     return c.json(await sql.begin(tx => notifyUser(tx, c.get("principal"), request)));
@@ -53,7 +60,7 @@ export function daemonRoutes(sql: Database, semanticEnabled = false, structureMo
       const assignment = await sql.begin(tx => workContext(tx,c.get("principal"),id));
       return c.json({...assignment, ...(semanticEnabled ? {semantic_context_enabled: true} : {}),semantic_structure_mode:structureMode});
     }
-    if (view === "work_mailbox") return c.json(await sql.begin(tx => workMailbox(tx,c.get("principal"),id,after)));
+    if (view === "work_mailbox") return c.json(await sql.begin('read only',tx => workMailbox(tx,c.get("principal"),id,after)));
     if (view === "task_sources") return c.json(await sql.begin(tx => taskSources(tx,c.get("principal"),id,after)));
     if (view === "mailbox")
       return c.json(await sql.begin((tx) => mailbox(tx, c.get("principal"), { runId: id, after })));

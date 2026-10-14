@@ -9,6 +9,8 @@ const ErrorCode = z.enum([
   "forbidden",
   "not_found",
   "stale_run",
+  "stale_session",
+  "reconciliation_required",
   "stale_ack",
   "pending_input",
   "stop_pending",

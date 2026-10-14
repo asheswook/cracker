@@ -100,23 +100,25 @@ test("other workspace polling cannot heartbeat or claim the original VM", async 
   expect(Date.parse(seen.last_seen_at)).toBe(Date.parse("2000-01-01"));
 });
 
-test("combined heartbeat retains FOR UPDATE lock strength until commit", async () => {
+test("combined heartbeat permits event KEY SHARE but fences registration FOR UPDATE until commit", async () => {
   // Given one transaction executing the production poll under its VM lock.
   await finishActive();
   await sql.begin(async (tx) => {
     await poll(tx, { workspace_id: workspace, vm_id: vm, role: "vm" }, undefined, "commands");
-    // When a different connection attempts a KEY SHARE row lock without waiting.
+    // Ordinary events may fence with KEY SHARE while poll updates the heartbeat.
+    expect(await sql.begin(other=>other`SELECT id FROM assistant.vms WHERE id=${vm} FOR KEY SHARE NOWAIT`)).toHaveLength(1);
+    // Session registration/adoption still cannot cross this transaction.
     let conflict: string | undefined;
     try {
       await sql.begin(
-        (other) => other`SELECT id FROM assistant.vms WHERE id=${vm} FOR KEY SHARE NOWAIT`,
+        (other) => other`SELECT id FROM assistant.vms WHERE id=${vm} FOR UPDATE NOWAIT`,
       );
     } catch (error) {
       if (error instanceof Error && "code" in error && typeof error.code === "string")
         conflict = error.code;
       else throw error;
     }
-    // Then the retained FOR UPDATE lock conflicts, unlike a plain non-key UPDATE lock.
+    // NO KEY UPDATE permits KEY SHARE but conflicts with the registration writer.
     expect(conflict).toBe("55P03");
   });
 });

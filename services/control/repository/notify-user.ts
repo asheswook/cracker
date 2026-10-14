@@ -9,7 +9,7 @@ import { loadRun } from "./runs";
 export const NotifyUserRequest = z.object({ run_id: Id, conversation_id: Id, client_message_id: Id, message: z.string().trim().min(1).max(2000) });
 export async function notifyUser(sql: Query, principal: Principal, request: z.infer<typeof NotifyUserRequest>) {
   if (principal.role !== "vm") throw new DomainError("forbidden", "VM credential required", 403);
-  const run = await loadRun(sql, principal, request.run_id);
+  const run = await loadRun(sql, principal, request.run_id,'key-share');
   const task = z.object({ conversation_id: Id, state: z.string(), origin: z.enum(["user", "schedule", "responsibility"]) }).parse(
     (await sql`SELECT conversation_id,state,origin FROM assistant.tasks WHERE id=${run.task_id} AND workspace_id=${principal.workspace_id}`)[0],
   );

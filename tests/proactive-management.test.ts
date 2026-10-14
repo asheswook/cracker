@@ -121,7 +121,12 @@ test("schedule updates preserve ID; invalid source and foreign VM cannot mutate;
   const otherVm=crypto.randomUUID();
   await f.sql`INSERT INTO assistant.vms(id,workspace_id,name) VALUES(${otherVm},${f.workspace},'other')`;
   await f.sql`UPDATE assistant.runs SET vm_id=${otherVm} WHERE id=${current.run_id}`;
-  expect((await f.request(`${base}/update`,f.machine,{...mutation,client_action_id:crypto.randomUUID(),work:{...mutation.work,expected_version:changed.version}})).status).toBe(409);
+   const before = Array.from(await f.sql`SELECT * FROM assistant.schedules WHERE id=${changed.id}`);
+   const rejected = await f.request(`${base}/update`,f.machine,{...mutation,client_action_id:crypto.randomUUID(),work:{...mutation.work,expected_version:changed.version}});
+   // The route's owned-run fence rejects before the proactive repository executes.
+   expect(rejected.status).toBe(404);
+   expect(await rejected.json()).toMatchObject({error:{code:'not_found'}});
+   expect(Array.from(await f.sql`SELECT * FROM assistant.schedules WHERE id=${changed.id}`)).toEqual(before);
   await f.sql`UPDATE assistant.runs SET vm_id=${f.vm} WHERE id=${current.run_id}`;
   expect((await f.request(`${base}/cancel`,f.machine,{...current,client_action_id:crypto.randomUUID(),target:{kind:"schedule",id:changed.id,expected_version:changed.version}})).status).toBe(200);
   await f.sql`UPDATE assistant.schedules SET due_at=now()-interval '1 second' WHERE id=${changed.id}`;

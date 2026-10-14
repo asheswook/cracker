@@ -16,9 +16,13 @@ import {
 import { retrieveMemory } from "../../../packages/memory/persist";
 import type { Principal } from "../auth";
 import type { Query } from "../db";
+import { fenceSession } from './daemon-session';
+import { readWorkMailbox } from './mailbox-read';
 async function ownedTask(sql: Query, principal: Principal, run: string) {
+  await fenceSession(sql,principal,principal.daemon_session_id,false);
   const rows =
-    await sql`SELECT t.* FROM assistant.runs r JOIN assistant.tasks t ON t.id=r.task_id AND t.workspace_id=r.workspace_id WHERE r.id=${run} AND r.workspace_id=${principal.workspace_id} AND r.vm_id=${principal.vm_id}`;
+    await sql`SELECT t.* FROM assistant.runs r JOIN assistant.tasks t ON t.id=r.task_id AND t.workspace_id=r.workspace_id WHERE r.id=${run} AND r.workspace_id=${principal.workspace_id} AND r.vm_id=${principal.vm_id}
+      AND r.daemon_session_id IS NOT DISTINCT FROM ${principal.daemon_session_id??null}::uuid`;
   if (!rows[0]) throw new DomainError("not_found", "Run not found", 404);
   return Task.parse(rows[0]);
 }
@@ -154,6 +158,5 @@ export async function taskSources(sql: Query, principal: Principal, run: string,
   });
 }
 export async function workMailbox(sql: Query, principal: Principal, run: string, after: number) {
-  const task = await ownedTask(sql, principal, run);
-  return { messages: await taskMessages(sql, principal.workspace_id, task.id, after) };
+  return readWorkMailbox(sql,principal,run,after);
 }

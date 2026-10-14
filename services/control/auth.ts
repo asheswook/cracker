@@ -1,9 +1,9 @@
 import { parse } from "hono/utils/cookie";
 import { z } from "zod";
 import { DomainError } from "../../packages/protocol";
-import type { Database } from "./db";
+import type { Query } from "./db";
 export const Principal = z.object({
-  workspace_id: z.uuid(), role: z.enum(["client", "vm"]), vm_id: z.uuid().nullable(), credential_hash: z.string().optional(), session_hash: z.string().optional()
+  workspace_id: z.uuid(), role: z.enum(["client", "vm"]), vm_id: z.uuid().nullable(), credential_hash: z.string().optional(), session_hash: z.string().optional(), daemon_session_id:z.uuid().optional()
 });
 export type Principal = z.infer<typeof Principal>;
 export type AppEnv = { Variables: { principal: Principal } };
@@ -11,7 +11,7 @@ export async function hashToken(token: string): Promise<string> {
   const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)));
   return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
 }
-export async function authenticate(sql: Database, authorization: string | undefined, cookie?: string): Promise<Principal> {
+export async function authenticate(sql: Query, authorization: string | undefined, cookie?: string): Promise<Principal> {
   if (authorization !== undefined) {
     if (!authorization.startsWith("Bearer ") || authorization.length < 20) throw new DomainError("unauthorized", "Valid bearer credential required", 401);
     const rows = await sql`SELECT workspace_id,role,vm_id,token_hash AS credential_hash FROM assistant.credentials WHERE token_hash=${await hashToken(authorization.slice(7))} AND revoked_at IS NULL`;

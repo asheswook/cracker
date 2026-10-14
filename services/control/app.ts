@@ -28,6 +28,9 @@ import { screenIceRoutes, type ScreenTurnSettings } from "./screen-ice";
 import { semanticContextRoutes, semanticContextClientRoutes } from "./routes/semantic-context";
 import { semanticStructureRoutes } from "./routes/semantic-structure";
 import type { SemanticClassifier, SemanticRetriever } from "../../packages/context/schema";
+import { fenceSession } from './repository/daemon-session';
+import { daemonDatabase, daemonRequest } from './daemon-db';
+import { daemonProfile } from './daemon-profile';
 export function createApp(
   sql: Database,
   options: {
@@ -51,6 +54,7 @@ export function createApp(
       throw new TypeError("Only explicit loopback development origins are supported");
   }
   const app = new Hono<AppEnv>();
+  const daemonSql=daemonDatabase(sql);
   if (allowedOrigins.length > 0)
     app.use(
       "/v1/*",
@@ -95,43 +99,52 @@ export function createApp(
       await next();
       return;
     }
-    const principal = await authenticate(
-      sql,
-      c.req.header("Authorization"),
-      c.req.header("Cookie"),
-    );
     const daemon = c.req.path.startsWith("/v1/daemon/");
+    const principal = daemon?await sql.begin(tx=>authenticate(tx,c.req.header('Authorization'),c.req.header('Cookie')))
+      :await authenticate(sql,c.req.header('Authorization'),c.req.header('Cookie'));
     if ((daemon && principal.role !== "vm") || (!daemon && principal.role !== "client"))
       throw new DomainError("forbidden", "Credential audience does not permit this route", 403);
-    c.set("principal", principal);
-    await next();
+    const daemonSession=daemon?z.uuid().optional().parse(c.req.header('x-daemon-session')):undefined;
+    c.set("principal", {...principal,...(daemonSession?{daemon_session_id:daemonSession}:{})});
+    if(!daemon){await next();return;}
+    const caller=c.get('principal');
+    const pathRun=/^\/v1\/daemon\/(?:context|resume|accept)\/([^/]+)/.exec(c.req.path)?.[1];
+    let run=pathRun??c.req.query('run_id');
+    let requestBody:unknown;
+    if(c.req.header('Content-Type')?.startsWith('application/json')&&!['GET','HEAD'].includes(c.req.method)){
+      const text=await c.req.raw.clone().text();
+      if(text.trim()){requestBody=JSON.parse(text);const body=z.object({run_id:z.uuid().optional()}).passthrough().safeParse(requestBody);if(!pathRun&&body.success&&body.data.run_id)run=body.data.run_id;}
+    }
+    const profile=daemonProfile(c.req.method,c.req.path,requestBody,c.req.query('view'));
+    if(profile.kind!=='session'&&profile.kind!=='read')await sql.begin(tx=>fenceSession(tx,caller,daemonSession,false));
+    await daemonRequest.run({principal:caller,...profile,...(run?{run:z.uuid().parse(run)}:{})},next);
   });
   app.route("/v1/notifications", notificationRoutes(sql, options.notificationConfig));
   app.route("/v1", screenIceRoutes(sql, options.screenTurn));
-  app.route("/v1/daemon", screenIceRoutes(sql, options.screenTurn));
-  app.route("/v1/daemon/proactive-work", proactiveRoutes(sql));
+  app.route("/v1/daemon", screenIceRoutes(daemonSql, options.screenTurn));
+  app.route("/v1/daemon/proactive-work", proactiveRoutes(daemonSql));
   app.route("/v1/model-settings", modelClientRoutes(sql, options.extensionKey));
   app.route("/v1/model-account", accountClientRoutes(sql, options.extensionKey));
   app.route("/v1/subscription", subscriptionClientRoutes(sql, options.extensionKey));
-  app.route("/v1/daemon/subscription", subscriptionDaemonRoutes(sql, options.extensionKey));
-  app.route("/v1/daemon/model-account", accountDaemonRoutes(sql, options.extensionKey));
-  app.route("/v1/daemon/model-settings", modelDaemonRoutes(sql, options.extensionKey));
+  app.route("/v1/daemon/subscription", subscriptionDaemonRoutes(daemonSql, options.extensionKey));
+  app.route("/v1/daemon/model-account", accountDaemonRoutes(daemonSql, options.extensionKey));
+  app.route("/v1/daemon/model-settings", modelDaemonRoutes(daemonSql, options.extensionKey));
   app.route("/v1/extensions", extensionClientRoutes(sql, options.extensionKey));
-  app.route("/v1/daemon/extensions", extensionDaemonRoutes(sql, options.extensionKey));
-  app.route("/v1/daemon", artifactRoutes(sql, options.artifactStore, true));
-  app.route("/v1/daemon", workSearchRoutes(sql, options.artifactStore, true));
+  app.route("/v1/daemon/extensions", extensionDaemonRoutes(daemonSql, options.extensionKey));
+  app.route("/v1/daemon", artifactRoutes(daemonSql, options.artifactStore, true));
+  app.route("/v1/daemon", workSearchRoutes(daemonSql, options.artifactStore, true));
   app.route("/v1", workSearchRoutes(sql, options.artifactStore));
   app.route("/v1", artifactRoutes(sql, options.artifactStore));
   app.route("/v1/responsibilities", responsibilityClientRoutes(sql));
-  app.route("/v1/daemon/responsibilities", responsibilityDaemonRoutes(sql));
+  app.route("/v1/daemon/responsibilities", responsibilityDaemonRoutes(daemonSql));
   app.route("/v1/session", sessionRoutes(sql));
-  app.route("/v1/daemon/memory", memoryDaemonRoutes(sql));
+  app.route("/v1/daemon/memory", memoryDaemonRoutes(daemonSql));
   if (options.semanticContexts) {
-  app.route("/v1/daemon", semanticContextRoutes(sql, options.semanticContexts));
+  app.route("/v1/daemon", semanticContextRoutes(daemonSql, options.semanticContexts));
     app.route("/v1", semanticContextClientRoutes(sql));
   }
-  app.route("/v1/daemon", semanticStructureRoutes(sql));
-  app.route("/v1/daemon", daemonRoutes(sql, Boolean(options.semanticContexts), options.semanticStructureMode));
+  app.route("/v1/daemon", semanticStructureRoutes(daemonSql));
+  app.route("/v1/daemon", daemonRoutes(daemonSql, Boolean(options.semanticContexts), options.semanticStructureMode));
   app.route("/v1", clientRoutes(sql));
   app.notFound((c) => c.json({ error: { code: "not_found", message: "Route not found" } }, 404));
   app.onError((error, c) => {

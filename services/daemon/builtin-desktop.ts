@@ -64,4 +64,5 @@ export class BuiltinDesktop {
     } catch (error) { await this.close(); throw error; }
   }
   async close() { const previous = this.client; this.client = undefined; await previous?.close(); }
+  async invalidateReferences(){await this.close();}
 }

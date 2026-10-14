@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { ToolObservations } from "./tool-observations.ts";
 import { z } from "zod";
-import { DaemonEvent } from "../../packages/protocol/index.ts";
+import { Assignment, DaemonEvent } from "../../packages/protocol/index.ts";
 import { RunCheckpoint } from "./active-context.ts";
 import { completeToolBoundary } from "../../packages/provider/compaction.ts";
 import { NativeContextArchive } from "./native-context-archive.ts";
@@ -24,8 +24,26 @@ export class Journal {
     this.structure = new StructureJobs(this.db);
     this.archive=new NativeContextArchive(this.db);
     this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS checkpoints(run TEXT PRIMARY KEY,payload TEXT NOT NULL,watermark INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS actions(id TEXT PRIMARY KEY,run TEXT NOT NULL,state TEXT NOT NULL,result TEXT); CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,state TEXT NOT NULL); CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,event TEXT NOT NULL); CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS memory_jobs(run TEXT PRIMARY KEY,payload TEXT NOT NULL,retry_at INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS rejected_events(id TEXT PRIMARY KEY,event TEXT NOT NULL,reason TEXT NOT NULL);");
+    this.db.exec('CREATE TABLE IF NOT EXISTS acceptances(run TEXT PRIMARY KEY,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS command_stops(command TEXT NOT NULL,run TEXT NOT NULL,PRIMARY KEY(command,run))');
   }
-  start(run: string): void { this.db.query("INSERT INTO runs VALUES(?,'running')").run(run); }
+  stopTargets(command:string,runs:readonly string[]):void{
+    this.db.transaction(()=>{for(const run of runs){this.db.query('INSERT OR IGNORE INTO command_stops VALUES(?,?)').run(command,run);this.db.query("UPDATE runs SET state='finishing' WHERE id=?").run(run);}})();
+  }
+  stopped(command:string):string[]{return z.array(z.object({run:z.string()})).parse(this.db.query('SELECT run FROM command_stops WHERE command=?').all(command)).map(row=>row.run);}
+  accept(assignment:Assignment):void{this.db.transaction(()=>{this.db.query('INSERT OR IGNORE INTO acceptances VALUES(?,?)').run(assignment.run_id,JSON.stringify(assignment));this.db.query("INSERT OR IGNORE INTO runs VALUES(?,'accepted')").run(assignment.run_id);})();}
+  accepted():Assignment[]{return z.array(z.object({payload:z.string()})).parse(this.db.query("SELECT a.payload FROM acceptances a JOIN runs r ON r.id=a.run WHERE r.state='accepted'").all()).map(row=>Assignment.parse(JSON.parse(row.payload)));}
+  reconciliation(){
+    const rows=z.array(z.object({id:z.string(),state:z.string(),terminal_pending:z.coerce.boolean()})).parse(this.db.query(`SELECT id,state,
+      (EXISTS(SELECT 1 FROM outbox o WHERE json_extract(o.event,'$.run_id')=runs.id AND json_extract(o.event,'$.kind')='state' AND json_extract(o.event,'$.state')<>'paused')
+       OR EXISTS(SELECT 1 FROM command_stops s JOIN outbox o ON json_extract(o.event,'$.command_id')=s.command WHERE s.run=runs.id)) AS terminal_pending
+      FROM runs WHERE state<>'finished' OR EXISTS(SELECT 1 FROM outbox o WHERE json_extract(o.event,'$.run_id')=runs.id)`).all());
+    return rows.map(row=>({run_id:row.id,phase:row.terminal_pending?'terminal-pending' as const:row.state==='accepted'?'accepted' as const:row.state==='suspended'?'suspended' as const:'executing' as const,recoverable:row.state==='accepted'&&this.resumeSafe(row.id)||this.recoverable(row.id)!==null}));
+  }
+  start(run: string): void {
+    this.db.query(`INSERT INTO runs SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM acceptances WHERE run=?)
+      AND NOT EXISTS(SELECT 1 FROM checkpoints WHERE run=?) AND NOT EXISTS(SELECT 1 FROM actions WHERE run=?)
+      THEN 'accepted' ELSE 'running' END ON CONFLICT(id) DO UPDATE SET state=excluded.state`).run(run,run,run,run);
+  }
   checkpoint(value: RunCheckpoint): void {
     this.db.transaction(()=>this.putCheckpoint(value))();
   }
@@ -34,7 +52,8 @@ export class Journal {
     this.archive.assertHead(value);
       const pending=this.db.query("SELECT id FROM actions WHERE run=? AND state<>'completed' LIMIT 1").get(value.assignment.run_id);
       if(pending)throw new JournalError("checkpoint_has_uncertain_effects");
-      this.db.query("INSERT OR REPLACE INTO checkpoints VALUES(?,?,COALESCE((SELECT MAX(rowid) FROM actions WHERE run=?),0))").run(value.assignment.run_id,JSON.stringify(value),value.assignment.run_id);
+       this.db.query("INSERT OR REPLACE INTO checkpoints VALUES(?,?,COALESCE((SELECT MAX(rowid) FROM actions WHERE run=?),0))").run(value.assignment.run_id,JSON.stringify(value),value.assignment.run_id);
+       this.db.query("UPDATE runs SET state='running' WHERE id=? AND state='accepted'").run(value.assignment.run_id);
   }
   archiveCheckpoint(value:RunCheckpoint,signal:AbortSignal):RunCheckpoint{return this.archive.commit(value,signal,next=>this.putCheckpoint(next));}
   originalInput(run:string){return this.archive.originalInput(run);}
@@ -69,6 +88,7 @@ export class Journal {
     this.db.transaction(() => { this.db.query("INSERT OR IGNORE INTO rejected_events SELECT id,event,? FROM outbox WHERE id=?").run(reason, id); this.delivered(id); })();
   }
   wasRejected(id: string): boolean { return this.db.query("SELECT 1 FROM rejected_events WHERE id=?").get(id) !== null; }
+  runRejection(run:string){return z.object({id:z.string(),reason:z.string()}).nullable().parse(this.db.query("SELECT id,reason FROM rejected_events WHERE json_extract(event,'$.run_id')=? AND reason<>'stale_run' ORDER BY rowid LIMIT 1").get(run));}
   rejected(): readonly { readonly event: z.infer<typeof DaemonEvent>; readonly reason: string }[] {
     return z.array(z.object({ event: z.string(), reason: z.string() })).parse(this.db.query("SELECT event,reason FROM rejected_events ORDER BY rowid").all()).map(row => ({ event: DaemonEvent.parse(JSON.parse(row.event)), reason: row.reason }));
   }
