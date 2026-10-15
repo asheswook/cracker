@@ -8,7 +8,6 @@ const root = join(import.meta.dir, '..');
 const background = '#3d5470';
 const art = characterIconSvg(defaultAppearance, background, 1024);
 const inner = art.replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '');
-const macArt = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024"><defs><clipPath id="c"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath></defs><g clip-path="url(#c)"><svg x="100" y="100" width="824" height="824" viewBox="0 0 100 100">${inner}</svg></g></svg>`;
 const roundedWeb = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><clipPath id="c"><rect width="100" height="100" rx="22"/></clipPath></defs><g clip-path="url(#c)">${inner}</g></svg>`;
 
 const work = await mkdtemp(join(tmpdir(), 'icons-'));
@@ -27,7 +26,7 @@ try {
   await render(art, 1024, 'apps/apple/Assets/iOS.xcassets/AppIcon.appiconset/icon-1024x1024-1x.png');
   for (const size of [16, 32, 128, 256, 512])
     for (const scale of [1, 2])
-      await render(macArt, size * scale, `apps/apple/Assets/macOS.xcassets/AppIcon.appiconset/icon-${size}x${size}-${scale}x.png`);
+      await render(art, size * scale, `apps/apple/Assets/macOS.xcassets/AppIcon.appiconset/icon-${size}x${size}-${scale}x.png`);
 } finally {
   await rm(work, { recursive: true, force: true });
 }

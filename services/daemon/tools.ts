@@ -1,5 +1,5 @@
 import { mcpUrlRedactions } from "./mcp-url.ts";
-import { McpConfig } from "../../packages/extensions/schema.ts";
+import { McpConfig, type ServerCategory } from "../../packages/extensions/schema.ts";
 import { z } from "zod";
 import { PersistentDesktop, computerExecTool } from "./desktop-session.ts";
 import { computerTool, runComputer } from "./computer.ts";
@@ -78,7 +78,9 @@ export class ToolExecutor {
   async resetDesktop(workspace?:string):Promise<void>{await this.desktop.reset(workspace);}
   private readonly remoteSessions = new Map<Client,McpHttpSession>();
   private readonly connections = new Map<Client, string>();
-  private readonly clients = new Map<string, { readonly client: Client; readonly name: string; readonly server: string; readonly readOnly:boolean }>();
+  private readonly categories = new Map<Client, ServerCategory|null>();
+  private readonly clients = new Map<string, { readonly client: Client; readonly name: string; readonly server: string; readonly readOnly:boolean; readonly category:ServerCategory|null }>();
+  toolCategory(name:string):ServerCategory|null{return this.clients.get(name)?.category??null;}
   parallelRead(name:string):boolean{return this.clients.get(name)?.readOnly===true;}
   isMcp(name:string):boolean{return this.clients.has(name);}
   private readonly secrets = new Map<Client, readonly string[]>();
@@ -98,9 +100,10 @@ export class ToolExecutor {
       catch(error){if(!(error instanceof Error))throw error;process.stderr.write(JSON.stringify({event:"mcp.legacy.connection_failed",server:name})+"\n");}
     }
   }
-  async addMcp(name:string,config:z.infer<typeof McpConfig>,secrets:Readonly<Record<string,string>>):Promise<number> {
+  async addMcp(name:string,config:z.infer<typeof McpConfig>,secrets:Readonly<Record<string,string>>,category:ServerCategory|null=null):Promise<number> {
     await this.removeMcp(name);
     const client=new Client({name:"autonomous-assistant",version:"0.1.0"});
+    this.categories.set(client,category);
     this.connections.set(client,name);this.secrets.set(client,[...Object.values(secrets), ...(config.transport === "http" ? mcpUrlRedactions(config.url) : [])].filter(Boolean));this.health.set(name,false);
     // Retain the offered catalogue during a run; idle reconciliation replaces it explicitly.
     client.onclose=()=>{if(this.connections.has(client))this.health.set(name,false);};
@@ -122,7 +125,7 @@ export class ToolExecutor {
     for(const [name,entry] of this.clients){if(entry.client!==client)continue;this.clients.delete(name);const index=this.definitions.findIndex(tool=>tool.type==="function"&&tool.name===name);if(index>=0)this.definitions.splice(index,1);}
   }
   async removeMcp(name:string):Promise<void>{
-    for(const [client,server] of this.connections){if(server!==name)continue;this.connections.delete(client);this.removeDefinitions(client);this.secrets.delete(client);const session=this.remoteSessions.get(client);this.remoteSessions.delete(client);if(session)await session.close();else await client.close();}
+    for(const [client,server] of this.connections){if(server!==name)continue;this.connections.delete(client);this.removeDefinitions(client);this.categories.delete(client);this.secrets.delete(client);const session=this.remoteSessions.get(client);this.remoteSessions.delete(client);if(session)await session.close();else await client.close();}
     this.health.delete(name);
   }
   mcpStatus(name:string):{connected:boolean;tool_count:number}{return {connected:this.health.get(name)===true,tool_count:[...this.clients.values()].filter(entry=>entry.server===name).length};}
@@ -153,7 +156,7 @@ export class ToolExecutor {
       const suffix = Bun.hash(tool.name).toString(16);
       const name = `mcp_${server}_${z.string().parse(this.redact(tool.name,client)).replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 20)}_${suffix}`;
       if (this.clients.has(name)) throw new ShellError("mcp_tool_name_collision");
-      this.clients.set(name, { client, name: tool.name, server, readOnly:tool.annotations?.readOnlyHint===true&&tool.annotations?.destructiveHint!==true });
+      this.clients.set(name, { client, name: tool.name, server, category:this.categories.get(client)??null, readOnly:tool.annotations?.readOnlyHint===true&&tool.annotations?.destructiveHint!==true });
       this.definitions.push({ type: "function", name, description: z.string().parse(this.redact(tool.description ?? tool.name,client)).slice(0,4000), strict: false, parameters: z.record(z.string(),z.unknown()).parse(this.redact(tool.inputSchema,client)) });
     }
   }

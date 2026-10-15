@@ -37,9 +37,9 @@ export function useAssistantWorking(context: WorkingContext): boolean {
 export function assistantActivity(
   context: Readonly<{ working: AssistantWorking | null; composing: ReplyComposing | null }>,
   working: boolean,
-): 'thinking' | 'computer' | 'typing' | undefined {
+): 'thinking' | 'typing' | 'computer' | 'web' | 'code' | 'memory' | undefined {
   if (!working) return undefined;
   const composing = context.composing;
   if (composing && composing.task_id === context.working?.task_id && Date.parse(composing.expires_at) > Date.now()) return 'typing';
-  return context.working?.activity === 'computer' ? 'computer' : 'thinking';
+  return context.working?.activity ?? 'thinking';
 }

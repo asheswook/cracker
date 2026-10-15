@@ -52,7 +52,7 @@ export function App() {
     return selected.selected === conversation && selected.syncedCursor !== null && !selected.error;
   }), []);
   useEffect(() => {
-    publishNativeShell(state.phase === 'ready', state.selected, state.assistantId, state.persona.name);
+    publishNativeShell(state.phase === 'ready', state.selected, state.assistantId, state.persona.name, state.phase === 'loading');
   }, [state.phase, state.selected, state.assistantId, state.persona.name]);
   useTaskErrorToasts(state.workspace, state.phase === 'ready' && state.connected, state.tasks);
   useNotificationAttention(state.phase === 'ready' && state.connected && state.syncedCursor !== null, refreshAfterNotification, state.selected);
@@ -238,9 +238,9 @@ export function App() {
   const headerError = actionError || nativeRefreshError || independentHeader.error;
   if (state.phase === 'loading')
     return (
-      <main className="boot">
-        <span className="boot-character"><AssistantCharacter appearance={state.appearance} state="thinking" /></span>
-        <LoadingSkeleton label={state.error ? '연결을 복구하는 중…' : '크래커를 굽는 중…'} />
+      <main className="boot" aria-busy="true">
+        <AssistantCharacter appearance={state.appearance} state="thinking" />
+        <p className="boot-label" role="status">{state.error ? '연결을 복구하는 중…' : '연결 중…'}</p>
       </main>
     );
   if (state.phase === 'login') return <Connect />;
@@ -252,7 +252,7 @@ export function App() {
     <ScreenSessionProvider workspace={state.workspace} vmId={state.vms[0]?.id} connected={state.connected}
       visible={nativeShell.panel === 'computer'} controlAllowed={state.vms[0]?.control_state === 'user' && !state.control[state.vms[0].id]}>
       <div className="native-panel-root" data-ready={state.phase === 'ready' && state.syncedCursor !== null || undefined} style={{ height: '100dvh', display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
-        <PanelErrorBoundary onClose={() => {}}><Suspense fallback={<LoadingSkeleton label="불러오는 중…" />}>
+        <PanelErrorBoundary onClose={() => {}}><Suspense fallback={<LoadingSkeleton layout="cards" label="불러오는 중…" />}>
           <Inspector embedded panel={nativeShell.panel} state={state} onClose={() => {}} onComputer={() => {}}
             workSession={workSession}
             onTask={async (task, source, destination = 'request') => { const target = await taskTarget(task, source, destination); await openInNativeBody(target.conversation, target.message); }}
@@ -275,6 +275,7 @@ export function App() {
         ref={dialog}
         aria-label="어시스턴트 메뉴"
         className="menu-dialog"
+        tabIndex={-1}
         {...menuSwipe}
         onCancel={closeMenu}
         onClick={(e) => {
@@ -292,7 +293,7 @@ export function App() {
         {!nativeShell && archive && <ArchiveBanner onReturn={returnToAssistant} placeholder={independentHeader.active} />}
         {headerError && (
           <div className="header-error">
-            <ErrorNotice>{headerError}</ErrorNotice>
+            <ErrorNotice action={nativeRefreshError && !actionError ? { label: '다시 시도', run: () => void client.refresh() } : undefined}>{headerError}</ErrorNotice>
           </div>
         )}
         <Chat
@@ -325,7 +326,7 @@ export function App() {
                 <>
                   <InspectorHeader panel={panel} onClose={closePanel} />
                   <div className="inspector-body">
-                    <LoadingSkeleton label="불러오는 중…" />
+                    <LoadingSkeleton layout={panel === 'settings' ? 'persona' : panel === 'history' ? 'list' : 'cards'} label="불러오는 중…" />
                   </div>
                 </>
               }

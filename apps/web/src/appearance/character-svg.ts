@@ -62,6 +62,18 @@ function accessory(kind: AssistantAppearance['accessory'], dark: boolean): strin
   return kind satisfies never;
 }
 
+const PROP_LIGHT = '#fbf7f1', PROP_ACCENT = '#5b8def';
+const INK_FILL = 'style="fill:var(--character-prop-ink)"', INK_STROKE = 'style="stroke:var(--character-prop-ink)"';
+function props(base: string): string {
+  const thought = `<g class="prop prop-thought" ${INK_FILL}><circle class="thought-dot thought-0" cx="80" cy="12" r="3"/><circle class="thought-dot thought-1" cx="90" cy="2" r="4"/><circle class="thought-dot thought-2" cx="102" cy="-9" r="5.2"/></g>`;
+  const reply = `<g class="prop prop-reply"><path d="M86 66h26a8 8 0 0 1 8 8v8a8 8 0 0 1-8 8H96l-7 5 1.6-5.4A8 8 0 0 1 86 82v-8z" fill="${PROP_LIGHT}" ${INK_STROKE} stroke-opacity=".14" stroke-width="1.4"/><g ${INK_FILL}><circle class="reply-dot reply-0" cx="95" cy="78" r="2.4"/><circle class="reply-dot reply-1" cx="103" cy="78" r="2.4"/><circle class="reply-dot reply-2" cx="111" cy="78" r="2.4"/></g></g>`;
+  const laptop = `<g class="prop prop-laptop"><ellipse class="laptop-glow" cx="50" cy="70" rx="24" ry="7" fill="#9cc2ff"/><path d="M29 71h42a4 4 0 0 1 4 4v17H25V75a4 4 0 0 1 4-4z" ${INK_FILL}/><circle cx="50" cy="81.5" r="2.6" fill="${base}" opacity=".9"/><path d="M21 92h58l4 4.6H17z" ${INK_FILL} opacity=".8"/></g>`;
+  const search = `<g class="prop prop-search"><g class="search-orbit"><circle cx="96" cy="16" r="11" fill="${PROP_LIGHT}" fill-opacity=".9" ${INK_STROKE} stroke-width="4"/><path d="M90 12a7 7 0 0 1 6-3" fill="none" stroke="${PROP_ACCENT}" stroke-width="2.2" stroke-linecap="round" opacity=".7"/><path d="M104 24l9 9" ${INK_STROKE} stroke-width="5.4" stroke-linecap="round"/></g></g>`;
+  const code = `<g class="prop prop-code"><rect x="78" y="58" width="40" height="30" rx="6" fill="#1f2a37"/><path d="M85 67l5 4-5 4" fill="none" stroke="#8fe3a8" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><rect class="code-line code-line-0" x="93" y="73" width="16" height="2.4" rx="1.2" fill="#fbf7f1"/><rect class="code-line code-line-1" x="85" y="80" width="22" height="2.4" rx="1.2" fill="#fbf7f1" opacity=".55"/></g>`;
+  const memory = `<g class="prop prop-memory"><rect class="memory-card memory-card-back" x="-14" y="14" width="24" height="30" rx="4" fill="${base}" opacity=".55"/><g class="memory-card memory-card-front"><rect x="-18" y="18" width="24" height="30" rx="4" fill="${PROP_LIGHT}" ${INK_STROKE} stroke-opacity=".14" stroke-width="1.4"/><rect x="-13" y="25" width="14" height="2.4" rx="1.2" ${INK_FILL} opacity=".7"/><rect x="-13" y="31" width="10" height="2.4" rx="1.2" ${INK_FILL} opacity=".4"/><rect x="-13" y="37" width="12" height="2.4" rx="1.2" ${INK_FILL} opacity=".4"/></g></g>`;
+  return `${thought}${reply}${laptop}${search}${code}${memory}`;
+}
+
 export interface CharacterParts { readonly body: string; readonly face: string; readonly accessory: string; readonly extras: string }
 export function characterParts(a: AssistantAppearance): CharacterParts {
   const [fill, base] = characterPalette[a.color], b = bodies[a.biscuit], y = b.eyeY, dark = darkBodies.has(a.color);
@@ -70,12 +82,11 @@ export function characterParts(a: AssistantAppearance): CharacterParts {
   const bx = 35 - b.spread - 6, by = y + 9;
   const blush = a.blush ? `<g fill="${base}" opacity=".55"><ellipse cx="${bx}" cy="${by}" rx="5.5" ry="3.2"/><ellipse cx="${100 - bx}" cy="${by}" rx="5.5" ry="3.2"/></g>` : '';
   const mouth = a.eyes === 'smile' ? `<path d="M46 ${y + 8}q4 3.2 8 0" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" opacity=".75"/>` : '';
-  const crumb = (cls: string, pts: readonly (readonly [number, number])[]) => `<g class="${cls}" fill="${base}">${pts.map(([x, py], i) => `<circle class="crumb crumb-${i}" cx="${x}" cy="${py}" r="2.4"/>`).join('')}</g>`;
   return {
     body,
     face: `${blush}<g class="character-gaze"><g class="character-eyes" fill="currentColor">${eyes(a.eyes, y, b.spread)}</g></g>${mouth}`,
     accessory: accessory(a.accessory, dark),
-    extras: `${crumb('character-crumbs-up', [[38, 4], [52, -1], [64, 5]])}${crumb('character-crumbs-down', [[38, 95], [52, 99], [64, 94]])}<rect class="character-caret" x="90" y="64" width="3.4" height="10" rx="1.2" fill="currentColor"/>`,
+    extras: props(base),
   };
 }
 

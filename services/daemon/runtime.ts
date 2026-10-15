@@ -38,7 +38,14 @@ import { transientControlError } from './control-failure-policy';
 import { controlBoundary } from './control-boundary';
 
 const Context = z.object({ messages: z.array(Message) });
-export function computerActivityTool(name:string):boolean{return name==="computer"||name==="computer_exec"||name.startsWith("desktop_")||name.startsWith("browser_");}
+type ActivityCategory=Extract<DaemonEvent,{kind:"activity"}>["activity"];
+export function activityCategory(name:string,mcpCategory:ReturnType<ToolExecutor["toolCategory"]>=null):ActivityCategory|null{
+  if(name==="computer"||name==="computer_exec"||name==="request_computer_control"||name.startsWith("desktop_"))return "computer";
+  if(name.startsWith("browser_"))return "web";
+  if(["shell","shell_start","shell_session","publish_artifact"].includes(name))return "code";
+  if(["load_skill","save_skill","retrieve_prior_work","search_prior_work","read_prior_source"].includes(name))return "memory";
+  return name.startsWith("mcp_")&&mcpCategory!=="other"?mcpCategory:null;
+}
 export function desktopCapture(name:string):boolean{return name==="computer"||name==="computer_exec"||name==="desktop_get_app_state"||name.startsWith("desktop_")&&!desktopReadOnly(name);}
 function utcInstruction():string{return `Current UTC time: ${new Date().toISOString()}. Resolve relative future scheduling from this current time unless the user explicitly specifies a source-time anchor. Use the user timezone if known; otherwise ask when local wall-clock interpretation matters.`;}
 export type ControlTiming={readonly phase:"tick"|"extensions"|"preflush"|"poll"|"command"|"local_barrier"|"event_delivery"|"postflush";readonly command_id?:string;readonly event_kind?:DaemonEvent["kind"];readonly started_at:string;readonly duration_ms:number;readonly outcome:"completed"|"failed"};
@@ -72,7 +79,7 @@ export class Runtime {
   private readonly terminalAcked=new Set<string>();
   private barrierFailed=false;
   private lastHeartbeatAt=Number.NEGATIVE_INFINITY;
-  private lastActivityAt=new Map<string,number>();
+  private readonly lastActivity=new Map<string,{category:ActivityCategory;at:number}>();
   private readonly steeringRequired = new Set<string>();
   private flushing: Promise<Map<string,unknown>> | undefined;
   private control: "agent" | "user" = "agent";
@@ -196,11 +203,12 @@ export class Runtime {
       if(!this.config.sessionProtocol)return;
     }
   }
-  private computerActivity(runId: string): void {
+  private activity(runId: string, category:ActivityCategory): void {
     const now=performance.now();
-    if(now-(this.lastActivityAt.get(runId)??Number.NEGATIVE_INFINITY)<10000)return;
-    this.lastActivityAt.clear();this.lastActivityAt.set(runId,now);
-    this.event({ kind: "activity", event_id: crypto.randomUUID(), run_id: runId, activity: "computer" });
+    const last=this.lastActivity.get(runId);
+    if(last?.category===category&&now-last.at<10000)return;
+    this.lastActivity.set(runId,{category,at:now});
+    this.event({ kind: "activity", event_id: crypto.randomUUID(), run_id: runId, activity: category });
     this.flush().catch(error => console.warn(JSON.stringify({ event: "runtime.activity_flush_failed", run_id: runId, error: error instanceof Error ? error.message : String(error) })));
   }
   /** Marks the message read as soon as the run holds it; context lookup that follows can take many seconds. */
@@ -708,7 +716,8 @@ export class Runtime {
           const actionId = `${assignment.run_id}:${item.call_id}`;
           this.config.journal.begin(assignment.run_id, actionId);
           this.config.journal.observations.started({action_id:actionId,run_id:assignment.run_id,tool_name:item.name,arguments:item.arguments});
-          if(computerActivityTool(item.name))this.computerActivity(assignment.run_id);
+          const activity=activityCategory(item.name,this.config.tools.toolCategory(item.name));
+          if(activity)this.activity(assignment.run_id,activity);
           const result=await this.measured({kind:"tool",run_id:assignment.run_id,tool_name:item.name},async():Promise<ToolResult>=>{
             if(item.name==='request_computer_control')return this.requestComputerControl(assignment.run_id,item.arguments,signal);
             if(isDelegationTool(item.name)&&delegation)return {text:await delegation.tool(item.name,item.arguments,item.call_id)};
@@ -791,6 +800,7 @@ export class Runtime {
     }
   }
   private async finishRun(runId:string,cleanupComplete:boolean,aborted:boolean):Promise<void>{
+    this.lastActivity.delete(runId);
     try{if(!cleanupComplete){if(this.config.sessionProtocol)await this.config.tools.releaseRun(runId);else await this.resetDesktop();}}
     catch(error){this.state(runId,"unknown",error instanceof Error?"Desktop session cleanup failed; reconcile input state before resuming":"Unexpected desktop cleanup failure; reconciliation required");throw new ExecutionBarrierError();}
     finally{if(aborted&&this.config.journal.recoverable(runId))this.config.journal.suspend(runId);else this.config.journal.finish(runId);}

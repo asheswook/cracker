@@ -23,6 +23,23 @@ beforeAll(async()=>{
 afterAll(async()=>{await sql`UPDATE assistant.credentials SET revoked_at=now() WHERE workspace_id=${workspace}`;await server.stop(true);await sql.end();});
 const config={transport:"stdio" as const,command:process.execPath,args:[resolve("tests/mcp-extension-fixture.ts")]};
 async function saveServer(extra:Record<string,unknown>={}){const response=await post('/v1/extensions/servers',{vm_id:vm,name:'fixture',enabled:true,config,...extra});if(response.status!==201)throw new TypeError(`save server ${response.status}`);return z.object({server:Server}).parse(await response.json()).server;}
+test('server categories persist, reach manifests, preserve omission and clear explicitly',async()=>{
+ const saved=await saveServer({category:'web'});
+ try{
+  expect(saved.category).toBe('web');
+  expect((await sql`SELECT category FROM assistant.extension_servers WHERE id=${saved.id}`)[0]?.['category']).toBe('web');
+  const listed=z.object({servers:z.array(Server)}).parse(await(await get(`/v1/extensions?vm_id=${vm}`)).json());
+  expect(listed.servers.find(server=>server.id===saved.id)?.category).toBe('web');
+  const manifest=Manifest.parse(await(await get('/v1/daemon/extensions',machine)).json());
+  expect(manifest.servers.find(server=>server.id===saved.id)?.category).toBe('web');
+  expect((await saveServer({id:saved.id})).category).toBe('web');
+  expect((await saveServer({id:saved.id,category:'memory'})).category).toBe('memory');
+  expect((await saveServer({id:saved.id,category:null})).category).toBeNull();
+  const {category,...legacy}=saved;
+  expect(Server.parse(legacy).category).toBeNull();
+  expect(Manifest.parse({skills:[],servers:[{...legacy,secrets:{}}]}).servers[0]?.category).toBeNull();
+ }finally{await sql`DELETE FROM assistant.extension_servers WHERE id=${saved.id}`;}
+});
 test('MCP secrets encrypt at rest and are write-only with preserve/replace/clear semantics',async()=>{
  // Given
  const secret='synthetic-extension-secret-731',saved=await saveServer({secrets:{FIXTURE_SECRET:secret}});
@@ -60,13 +77,16 @@ test('saved configuration stays pending until matching VM applied revision',asyn
 });
 test('actual managed stdio MCP runs, redacts secrets, isolates failed sibling and disables effective tools',async()=>{
  // Given
- const secret=crypto.randomUUID(),saved=await saveServer({secrets:{FIXTURE_SECRET:secret}}),bad=await saveServer({name:'bad fixture',config:{transport:'stdio',command:'/nonexistent-extension-fixture-731',args:[]}});
+ const secret=crypto.randomUUID(),saved=await saveServer({category:'web',secrets:{FIXTURE_SECRET:secret}}),bad=await saveServer({name:'bad fixture',config:{transport:'stdio',command:'/nonexistent-extension-fixture-731',args:[]}});
  const tools=new ToolExecutor(),manager=new ExtensionManager(http,tools);
  try{
   // When
   await manager.reconcile(true);
   const tool=tools.definitions.find(t=>t.type==='function'&&t.name.includes('fixture_echo'));
   if(tool?.type!=='function')throw new TypeError('actual MCP tool missing');
+  expect(tools.toolCategory(tool.name)).toBe('web');
+  await tools.refreshAll();
+  expect(tools.toolCategory(tool.name)).toBe('web');
   const result=await tools.run(tool.name,JSON.stringify({value:'actual-mcp-value-731'}),AbortSignal.timeout(5000));
   const listed=z.object({servers:z.array(Server)}).parse(await(await get(`/v1/extensions?vm_id=${vm}`)).json());
   // Then
@@ -75,6 +95,7 @@ test('actual managed stdio MCP runs, redacts secrets, isolates failed sibling an
   expect(listed.servers.find(s=>s.id===bad.id)?.error_code).toBe('command_not_found');
   await saveServer({id:saved.id,enabled:false});await manager.reconcile(true);
   expect(tools.definitions.some(t=>t.type==='function'&&t.name===tool.name)).toBe(false);
+  expect(tools.toolCategory(tool.name)).toBeNull();
  }finally{await tools.close();await sql`DELETE FROM assistant.extension_servers WHERE id IN (${saved.id},${bad.id})`;}
 });
 test('skill instructions load progressively only while enabled',async()=>{

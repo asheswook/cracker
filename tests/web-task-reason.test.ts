@@ -27,6 +27,6 @@ test('day dividers never step backwards and status notices do not open a day', (
 
 test('generic conversation titles fall back to the first user message', () => {
   expect(conversationLabel({ title: 'replay', preview: '숨고 결제 구조 알려줘' })).toEqual({ title: '숨고 결제 구조 알려줘', detail: null });
-  expect(conversationLabel({ title: 'Assistant', preview: null })).toEqual({ title: '빈 대화', detail: null });
+  expect(conversationLabel({ title: 'Assistant', preview: null })).toEqual({ title: '첨부 파일만 있는 대화', detail: null });
   expect(conversationLabel({ title: 'PG 분류', preview: '에이블리는?' })).toEqual({ title: 'PG 분류', detail: '에이블리는?' });
 });

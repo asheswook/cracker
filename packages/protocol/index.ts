@@ -137,7 +137,7 @@ export const DaemonEvent = z.discriminatedUnion("kind", [
     detail: z.string().max(2000),
   }),
   z.object({ kind: z.literal("input_applied"), event_id: Id, run_id: Id, message_id: Id }),
-  z.object({ kind: z.literal("activity"), event_id: Id, run_id: Id, activity: z.literal("computer") }),
+  z.object({ kind: z.literal("activity"), event_id: Id, run_id: Id, activity: z.enum(["computer","web","code","memory"]) }),
 ]);
 export type Assignment = z.infer<typeof Assignment>;
 export type DaemonEvent = z.infer<typeof DaemonEvent>;

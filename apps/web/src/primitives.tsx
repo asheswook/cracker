@@ -3,9 +3,9 @@ import { defaultAppearance } from './appearance/types';
 import { m as Motion } from 'motion/react';
 import { useReducedMotion } from './useReducedMotion';
 import { LoaderCircle, ArrowUp, ArrowRight, Monitor, X } from 'lucide-react';
-import { useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { panelSpring } from './animation';
-import { errorToasts } from './error-toasts';
+import { errorToasts, type ErrorToastAction } from './error-toasts';
 export function Button({
   children,
   className = '',
@@ -37,8 +37,8 @@ export function Mark({ small = false }: { small?: boolean }) {
 export type Presence = 'online' | 'computer-offline' | 'offline';
 const presenceLabel: Record<Presence, string> = { online: '연결됨', 'computer-offline': '컴퓨터 꺼짐', offline: '연결 끊김' };
 const presenceTitle: Record<Presence, string> = {
-  online: '어시스턴트 컴퓨터가 응답하고 있어요.',
-  'computer-offline': '어시스턴트 컴퓨터가 응답하지 않아요. 보낸 메시지는 컴퓨터가 켜지면 처리돼요.',
+  online: '크래커의 컴퓨터가 응답하고 있어요.',
+  'computer-offline': '크래커의 컴퓨터가 응답하지 않아요. 보낸 메시지는 컴퓨터가 켜지면 처리돼요.',
   offline: '서버에 연결하지 못했어요. 네트워크를 확인해 주세요.',
 };
 export function Status({ presence }: { presence: Presence }) {
@@ -58,13 +58,16 @@ export function Empty({ icon, title, children }: { icon: ReactNode; title: strin
     </div>
   );
 }
-export function ErrorNotice({ children }: { children: ReactNode }) {
+export function ErrorNotice({ children, action }: { children: ReactNode; action?: ErrorToastAction | undefined }) {
+  const actionRef = useRef(action);
+  actionRef.current = action;
+  const label = action?.label;
   useEffect(() => {
     if (typeof children !== 'string' || !children.trim()) return;
     const id = `notice:${crypto.randomUUID()}`;
-    errorToasts.show(children, id);
+    errorToasts.show(children, id, label ? { label, run: () => actionRef.current?.run() } : undefined);
     return () => errorToasts.dismiss(id);
-  }, [children]);
+  }, [children, label]);
   return null;
 }
 export function Surface({ children, className = '' }: { children: ReactNode; className?: string }) {

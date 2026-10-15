@@ -11,6 +11,7 @@ struct ShellView: View {
     @Environment(\.scenePhase) private var phase
     @State private var panel: ShellPanel?
     @State private var selectionError: String?
+    @State private var failedSelection: (id: String, message: String?)?
     @State private var selectionRequest = UUID()
 
     init(shell: WebShell) {
@@ -24,7 +25,10 @@ struct ShellView: View {
         navigation
             .tint(ShellStyle.accent)
             .alert("대화를 열지 못했어요", isPresented: Binding(get: { selectionError != nil }, set: { if !$0 { selectionError = nil } })) {
-                Button("확인", role: .cancel) { selectionError = nil }
+                if let failedSelection {
+                    Button("다시 시도") { selectionError = nil; select(failedSelection.id, failedSelection.message) }
+                }
+                Button("닫기", role: .cancel) { selectionError = nil }
             } message: { Text(selectionError ?? "") }
             .task(id: shell.authenticated && phase == .active) {
                 data.webView = shell.webView
@@ -153,7 +157,8 @@ struct ShellView: View {
             let accepted = await shell.selectConversation(id, message: message)
             guard request == selectionRequest else { return }
             guard accepted else {
-                selectionError = "대화를 불러오지 못했어요. 연결과 웹 앱 버전을 확인한 뒤 다시 시도해 주세요."
+                failedSelection = (id, message)
+                selectionError = "대화를 불러오지 못했어요. 연결을 확인한 뒤 다시 시도해 주세요."
                 return
             }
             panel = nil

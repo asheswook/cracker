@@ -40,11 +40,14 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--accent);
+  color: var(--muted);
   font-size: var(--t-footnote);
   font-weight: 500;
   box-shadow: none;
 }
+.inspector-body .work-actions > :first-child button,
+.inspector-body .work-actions > button:first-child { color: var(--accent); font-weight: 600; }
+.inspector-body .work-actions .work-action-danger { margin-inline-start: auto; color: var(--danger); }
 .inspector-body .work-actions button:hover {
   background: transparent;
   opacity: 0.75;
@@ -229,7 +232,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--accent);
+  color: var(--muted);
   font-size: var(--t-footnote);
   font-weight: 500;
 }
@@ -261,6 +264,8 @@
 }
 .menu-dialog:not([open]) {
   transform: translateX(-100%);
+  transition-duration: 240ms;
+  transition-timing-function: var(--ease-exit-soft, cubic-bezier(0.4, 0, 0.6, 1));
 }
 .menu-dialog[data-dragging] {
   transition: none;

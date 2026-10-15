@@ -6,7 +6,7 @@ const WorkingState = z.object({
   run_id: z.uuid(),
   input_message_id: z.uuid(),
   expires_at: z.iso.datetime(),
-  activity: z.enum(["computer"]).nullable(),
+  activity: z.enum(["computer","web","code","memory"]).nullable(),
 });
 
 export async function workingState(sql: Query, workspace: string, conversation: string) {

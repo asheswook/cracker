@@ -45,6 +45,7 @@ export function ServerEditor({
 }) {
   const [name, setName] = useState(item?.name ?? '');
   const [enabled, setEnabled] = useState(item?.enabled ?? true);
+  const [category, setCategory] = useState<Server['category']>(item?.category ?? null);
   const [transport, setTransport] = useState<'stdio' | 'http'>(item?.config.transport ?? 'http');
   const [command, setCommand] = useState(item?.config.transport === 'stdio' ? item.config.command : '');
   const [args, setArgs] = useState(
@@ -88,6 +89,7 @@ export function ServerEditor({
                 vm_id: vm,
                 name,
                 enabled,
+                category,
                 config,
                 ...(secrets === undefined ? {} : { secrets }),
               },
@@ -137,6 +139,21 @@ export function ServerEditor({
               <option value="http">HTTP · 서버 주소</option>
               <option value="stdio">stdio · 실행 명령</option>
             </select>
+          </label>
+          <label>
+            도구 종류
+            <select
+              value={category ?? ''}
+              onChange={(e) => setCategory(Server.shape.category.parse(e.target.value || null))}
+            >
+              <option value="">자동</option>
+              <option value="web">웹 검색·브라우징</option>
+              <option value="computer">컴퓨터 조작</option>
+              <option value="code">코드·파일</option>
+              <option value="memory">기억·자료 조회</option>
+              <option value="other">기타</option>
+            </select>
+            <span className="field-help">어시스턴트가 이 도구를 쓸 때 대화창에 표시할 활동이에요.</span>
           </label>
           {transport === 'http' ? (
             <label>

@@ -9,6 +9,7 @@ import { ScheduleObjective } from './ScheduleObjective';
 import { ScheduleHistory } from './ScheduleHistory';
 import { Id, Task } from './types';
 import './schedules.css';
+import { LoadingSkeleton } from './LoadingSkeleton';
 
 const Responsibility = z.object({
   id: Id, objective: z.string(), state: z.enum(['active', 'complete', 'cancelled']),
@@ -33,10 +34,19 @@ function dateLabel(date: string, timezone?: string) {
     timeZone: timezone, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   });
 }
+const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+function zoneSuffix(timezone: string) {
+  if (timezone === localZone) return '';
+  const city = timezone.split('/').at(-1)?.replaceAll('_', ' ') ?? timezone;
+  return ` · ${city} 기준`;
+}
 function triggerLabel(trigger: z.infer<typeof Responsibility>['trigger']) {
   switch (trigger.kind) {
-    case 'daily': return `매일 ${String(trigger.hour).padStart(2, '0')}:${String(trigger.minute).padStart(2, '0')} · ${trigger.timezone}`;
-    case 'deadline': return `기한 확인 · ${trigger.timezone}`;
+    case 'daily': {
+      const time = new Date(2000, 0, 1, trigger.hour, trigger.minute).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' });
+      return `매일 ${time}${zoneSuffix(trigger.timezone)}`;
+    }
+    case 'deadline': return `기한 확인${zoneSuffix(trigger.timezone)}`;
     case 'task_change': return '작업 상태가 바뀔 때';
     case 'periodic': return '정기적으로 상황 점검';
   }
@@ -96,7 +106,7 @@ export function SchedulesPanel({ state, onTask }: {
       {scheduling && <ScheduleForm state={state} onDone={() => setScheduling(false)} />}
       {actionError && <ErrorNotice>{actionError}</ErrorNotice>}
       {loadError && <div><ErrorNotice>{loadError}</ErrorNotice><Button onClick={() => setRefresh(value => value + 1)}>다시 불러오기</Button></div>}
-      {!loaded && !loadError && <p className="field-help">예약을 불러오는 중…</p>}
+      {!loaded && !loadError && <LoadingSkeleton layout="cards" label="예약을 불러오는 중…" />}
       {loaded && recurring.length === 0 && once.length === 0 && (
         <Empty icon={<CalendarDays size={24} />} title={past ? '지난 예약이 없어요' : '예정된 일이 없어요'}>
           {past ? '실행하거나 취소한 예약을 여기서 볼 수 있어요.' : '시간을 정해 두면 어시스턴트가 그때 일을 시작해요.'}
@@ -120,7 +130,7 @@ export function SchedulesPanel({ state, onTask }: {
               <div className="work-actions">
                 {task && <Button className="small-button" onClick={() => onTask(task)}><ArrowUpRight size={13} />최근 실행 보기</Button>}
                 <Button className="small-button" aria-expanded={history === item.id} aria-controls={`schedule-history-${item.id}`} onClick={() => setHistory(value => value === item.id ? null : item.id)}>{history === item.id ? '실행 기록 접기' : '실행 기록'}</Button>
-                {item.state === 'active' && <Button className="small-button" busy={busy === item.id} onClick={() => void cancel(item.id, 'responsibilities')}>앞으로의 예약 취소</Button>}
+                {item.state === 'active' && <Button className="small-button work-action-danger" busy={busy === item.id} onClick={() => void cancel(item.id, 'responsibilities')}>예약 그만하기</Button>}
               </div>
               {history === item.id && <div id={`schedule-history-${item.id}`}><ScheduleHistory key={item.id} responsibility={item.id} timezone={timezone} onTask={onTask} /></div>}
             </li>;
@@ -132,11 +142,11 @@ export function SchedulesPanel({ state, onTask }: {
         <ul className="resource-list schedule-list" role="list">
           {once.map(item => <li className="resource-item" key={item.id}>
             <div className="resource-meta"><time dateTime={item.due_at}>{dateLabel(item.due_at, item.timezone)}</time><span>{item.task ? taskLabels[item.task.state] : item.status === 'pending' ? '예약됨' : item.status === 'cancelled' ? '취소됨' : '전달됨'}</span></div>
-            <ScheduleObjective objective={item.objective} /><p className="field-help">{item.timezone}</p>
+            <ScheduleObjective objective={item.objective} />{zoneSuffix(item.timezone) && <p className="field-help">{zoneSuffix(item.timezone).slice(3)}</p>}
             {item.skill_id&&item.skill_revision&&<p className="field-help">스킬 버전 {item.skill_revision} 고정 · 최신 버전을 자동으로 따라가지 않아요.</p>}
             <div className="work-actions">
               {item.task && <Button className="small-button" onClick={() => { if (item.task) onTask(item.task); }}><ArrowUpRight size={13} />실행 보기</Button>}
-              {item.status === 'pending' && <Button className="small-button" busy={busy === item.id} onClick={() => void cancel(item.id, 'schedules')}>예약 취소</Button>}
+              {item.status === 'pending' && <Button className="small-button work-action-danger" busy={busy === item.id} onClick={() => void cancel(item.id, 'schedules')}>예약 취소</Button>}
             </div>
           </li>)}
         </ul>

@@ -220,7 +220,7 @@ export function Computer({ vms, connected }: { vms: Vm[]; connected: boolean }) 
               ? '직접 조작 중'
               : screen.live ? '이 기기에서는 화면을 보고 있어요' : '제어권이 있어요 · 화면 연결 대기'
             : ownership === 'agent'
-              ? '어시스턴트가 조작 중'
+              ? '크래커가 조작 중'
               : '제어 상태를 확인하고 있어요';
   const closeKeyboard = () => {
     keyboard.flush(); keyboard.field.current?.blur(); setKeyboardOpen(false);
@@ -272,7 +272,7 @@ export function Computer({ vms, connected }: { vms: Vm[]; connected: boolean }) 
           <Monitor size={20} />
         </span>
         <div>
-          <h3>{vm.name}</h3>
+          <h3>{/^assistant computer$/i.test(vm.name.trim()) ? '크래커의 컴퓨터' : vm.name}</h3>
           <p>
             {vm.last_seen_at
               ? '마지막 연결 ' +

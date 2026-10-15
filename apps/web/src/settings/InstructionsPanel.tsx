@@ -73,7 +73,7 @@ export function InstructionsPanel() {
             </div>
             <div>
               <dt>기본 지침</dt>
-              <dd>{value.instructions || '추가 지침이 없어요.'}</dd>
+              <dd>{value.instructions ? <ClampedText text={value.instructions} /> : '추가 지침이 없어요.'}</dd>
             </div>
           </dl>
           <Button
@@ -123,4 +123,13 @@ export function InstructionsPanel() {
       )}
     </section>
   );
+}
+
+function ClampedText({ text }: { readonly text: string }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > 280 || text.split('\n').length > 6;
+  return <>
+    <span className="persona-clamp" data-open={open || !long}>{text}</span>
+    {long && <button type="button" className="persona-clamp-toggle" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? '접기' : '전체 보기'}</button>}
+  </>;
 }

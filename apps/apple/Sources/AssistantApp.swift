@@ -46,10 +46,14 @@ struct ConversationSurface: View {
                     Button("다시 연결", action: shell.retry).buttonStyle(.borderedProminent).controlSize(.large)
                 }
                 .padding(32).frame(maxWidth: .infinity, maxHeight: .infinity).background(.background)
-            } else if shell.loading {
-                CrackerLoadingView().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+            } else if shell.loading || shell.booting {
+                CrackerLoadingView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(.background)
+                    .transition(.opacity)
             }
         }
+        .animation(.easeOut(duration: 0.22), value: shell.loading || shell.booting)
         #if os(iOS)
         .sheet(item: $shell.exportedFile) { file in ActivitySheet(url: file.url) }
         .onChange(of: shell.exportedFile?.id) { _, _ in shell.updateComposerPresentation() }

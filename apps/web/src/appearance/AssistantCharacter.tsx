@@ -4,7 +4,7 @@ import { inkFor } from './character-svg';
 import { CharacterDrawing } from './CharacterDetails';
 import './appearance.css';
 
-export type CharacterState = 'idle' | 'thinking' | 'computer' | 'typing';
+export type CharacterState = 'idle' | 'thinking' | 'typing' | 'computer' | 'web' | 'code' | 'memory';
 
 export function AssistantCharacter({ appearance, state, thinking = false, still = false }: {
   readonly appearance: AssistantAppearance;

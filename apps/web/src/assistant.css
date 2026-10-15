@@ -64,6 +64,7 @@
   margin-top: var(--s1);
 }
 .archive-banner {
+  animation: archive-banner-enter 280ms var(--ease-spring) both;
   position: absolute;
   z-index: 4;
   bottom: max(var(--s4), env(safe-area-inset-bottom));
@@ -307,3 +308,6 @@
 @media (prefers-reduced-motion: reduce) { .typing-bubble i, .message-receipt { animation: none; } }
 
 @media (max-width: 767px) { .working-message { padding-inline: 16px; } }
+@keyframes archive-banner-enter { from { opacity: 0; transform: translateY(8px); } }
+@media (prefers-reduced-motion: reduce) { .archive-banner { animation-name: archive-banner-fade; } }
+@keyframes archive-banner-fade { from { opacity: 0; } }

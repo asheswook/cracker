@@ -10,7 +10,7 @@ export function useMenuPresentation(open: boolean, dialog: RefObject<HTMLDialogE
     const covered = cleanup !== undefined;
     element.toggleAttribute('data-native-covered', covered);
     if (open) {
-      if (!element.open) element.showModal();
+      if (!element.open) { element.showModal(); element.focus({ preventScroll: true }); }
       if (covered) transition?.complete('menu');
     } else element.close();
     return cleanup;

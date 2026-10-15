@@ -323,7 +323,7 @@ export class ScreenSession {
     if (this.disposed || !this.ws) return;
     this.stop(); this.blocked = true; this.retryOnReveal = retryable; this.patch({ inputStatus: '', phase: 'error', state: message });
     if (retryable && this.foreground && this.retries < 2) {
-      this.retries++; this.patch({ phase: 'retrying', state: `화면에 다시 연결하고 있어요. (${this.retries}/2)` });
+      this.retries++; this.patch({ phase: 'retrying', state: '화면에 다시 연결하고 있어요.' });
       this.retryTimer = setTimeout(() => { this.retryTimer = undefined; this.blocked = false; this.start(); }, 1500);
     }
   }

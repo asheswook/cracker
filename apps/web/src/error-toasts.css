@@ -43,3 +43,4 @@ html[data-root-scroll-trial='true'] .error-toast-host {
   inset-block-start: calc(var(--message-header-clearance, 128px) + var(--s3));
   inset-block-end: auto;
 }
+.error-toast-action { margin-top: var(--s1); padding: 0 var(--s3); min-height: 32px; border: 0; border-radius: var(--r-md); background: color-mix(in srgb, currentColor 12%, transparent); color: inherit; font-weight: 600; font-size: var(--t-footnote); }

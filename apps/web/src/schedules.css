@@ -19,8 +19,8 @@
 .schedule-objective summary { list-style: none; cursor: pointer; border-radius: var(--s1); font-size: var(--t-subhead); font-weight: 500; }
 .schedule-objective summary::-webkit-details-marker { display: none; }
 .schedule-objective summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 40%, transparent); outline-offset: var(--s1); }
-.schedule-objective-toggle { display: flex; align-items: center; gap: var(--s1); min-height: 44px; color: var(--accent); font-size: var(--t-footnote); font-weight: 500; }
-.schedule-objective summary:hover .schedule-objective-toggle { color: var(--accent-hover); }
+.schedule-objective-toggle { display: flex; align-items: center; gap: var(--s1); min-height: 36px; color: var(--muted); font-size: var(--t-footnote); font-weight: 500; }
+.schedule-objective summary:hover .schedule-objective-toggle { color: var(--ink); }
 .schedule-objective-less, .schedule-objective[open] .schedule-objective-more { display: none; }
 .schedule-objective[open] .schedule-objective-less { display: inline; }
 .schedule-objective[open] .schedule-objective-text { display: none; }

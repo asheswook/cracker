@@ -18,8 +18,25 @@
   line-height: 1.65;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 240px;
-  overflow-y: auto;
+}
+.persona-clamp { display: block; }
+.persona-clamp[data-open='false'] {
+  max-height: calc(1.65em * 6);
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 55%, transparent);
+}
+.persona-clamp-toggle {
+  margin-top: var(--s2);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font-size: var(--t-footnote);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--line);
+  min-height: 32px;
 }
 .persona-onboarding {
   width: min(100%, 520px);

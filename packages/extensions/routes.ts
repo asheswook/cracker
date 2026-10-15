@@ -57,14 +57,14 @@ export function extensionClientRoutes(sql:Database,encryptionKey?:string):Hono<A
       const stored=storedConfiguration(input.config,headers);
       const cipher=await seal(stored.secrets,encryptionKey);
       if(input.id){
-        const rows=await tx`UPDATE assistant.extension_servers SET name=${input.name},config=${JSON.stringify(stored.config)}::text::jsonb,enabled=${input.enabled},revision=revision+1,state='pending',updated_at=now() WHERE id=${input.id} AND workspace_id=${workspace} AND vm_id=${input.vm_id} RETURNING *`;
+        const rows=await tx`UPDATE assistant.extension_servers SET name=${input.name},config=${JSON.stringify(stored.config)}::text::jsonb,enabled=${input.enabled},category=CASE WHEN ${input.category!==undefined} THEN ${input.category??null}::text ELSE category END,revision=revision+1,state='pending',updated_at=now() WHERE id=${input.id} AND workspace_id=${workspace} AND vm_id=${input.vm_id} RETURNING *`;
         if(!rows[0])throw new DomainError("not_found","Server not found",404);
         await tx`UPDATE assistant.extension_servers SET secret_cipher=${cipher},secret_keys=${JSON.stringify(Object.keys(headers))}::text::jsonb WHERE id=${input.id} AND workspace_id=${workspace}`;
         return (await restoredServer((await tx`SELECT * FROM assistant.extension_servers WHERE id=${input.id} AND workspace_id=${workspace}`)[0],encryptionKey)).server;
       }
       const total=z.object({count:z.coerce.number()}).parse((await tx`SELECT count(*) count FROM assistant.extension_servers WHERE workspace_id=${workspace} AND vm_id=${input.vm_id}`)[0]).count;
       if(total>=12)throw new DomainError("extension_limit","MCP server limit reached",409);
-      return (await restoredServer((await tx`INSERT INTO assistant.extension_servers(workspace_id,vm_id,name,config,enabled,secret_cipher,secret_keys) VALUES(${workspace},${input.vm_id},${input.name},${JSON.stringify(stored.config)}::text::jsonb,${input.enabled},${cipher},${JSON.stringify(Object.keys(headers))}::text::jsonb) RETURNING *`)[0],encryptionKey)).server;
+      return (await restoredServer((await tx`INSERT INTO assistant.extension_servers(workspace_id,vm_id,name,config,enabled,category,secret_cipher,secret_keys) VALUES(${workspace},${input.vm_id},${input.name},${JSON.stringify(stored.config)}::text::jsonb,${input.enabled},${input.category??null},${cipher},${JSON.stringify(Object.keys(headers))}::text::jsonb) RETURNING *`)[0],encryptionKey)).server;
     });c.header("Cache-Control","no-store");return c.json({server},201);
   });
   app.post("/servers/:id/retry",async c=>{

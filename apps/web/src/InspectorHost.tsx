@@ -28,12 +28,15 @@ export function InspectorHost({
   const [overlay, setOverlay] = useState(() => matchMedia(queryText).matches);
   const dialog = useRef<HTMLDialogElement>(null);
   const reduced = useReducedMotion();
+  const reducedRef = useRef(reduced);
+  reducedRef.current = reduced;
   const [present, remove] = usePresence();
   const progress = useMotionValue(0);
   const reservation = useMotionValue(0);
   const panelWidth = useMotionValue(390);
   const [{ width, gap }, setGeometry] = useState({ width: 390, gap: 12 });
-  const translation = useTransform(progress, (value) => `${(1 - value) * 100}%`);
+  const dragging = useMotionValue(0);
+  const translation = useTransform(() => reducedRef.current && dragging.get() === 0 ? '0%' : `${(1 - progress.get()) * 100}%`);
   useMotionValueEvent(progress, 'change', value => {
     dialog.current?.style.setProperty('--inspector-progress', String(value));
   });
@@ -114,14 +117,14 @@ export function InspectorHost({
       trigger?.focus({ preventScroll: true });
     };
   }, []);
-  const swipe = useSwipeDismiss({ progress, direction: 'right', enabled: overlay && present && !reduced, onDismiss: onClose });
+  const swipe = useSwipeDismiss({ progress, direction: 'right', enabled: overlay && present, onDismiss: onClose, onTracking: value => dragging.set(value ? 1 : 0) });
   const content = (
     <Motion.aside
       {...swipe}
       className={`inspector-shell ${computer ? 'computer-inspector' : ''}`}
       style={{
         opacity: progress,
-        x: reduced ? '0%' : translation,
+        x: translation,
         width: overlay ? undefined : panelWidth,
       }}
     >

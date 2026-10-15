@@ -15,11 +15,12 @@ function scrollsHorizontally(target: EventTarget | null, stop: Element): boolean
   return false;
 }
 
-export function useSwipeDismiss({ progress, direction, enabled, onDismiss }: {
+export function useSwipeDismiss({ progress, direction, enabled, onDismiss, onTracking }: {
   readonly progress: MotionValue<number>;
   readonly direction: Direction;
   readonly enabled: boolean;
   readonly onDismiss: () => void;
+  readonly onTracking?: (tracking: boolean) => void;
 }) {
   const gesture = useRef<{ id: number; x: number; y: number; width: number; tracking: boolean; lastX: number; lastT: number; velocity: number } | null>(null);
   const sign = direction === 'right' ? 1 : -1;
@@ -36,6 +37,7 @@ export function useSwipeDismiss({ progress, direction, enabled, onDismiss }: {
       if (Math.abs(dy) > startSlop && Math.abs(dy) > Math.abs(dx)) { gesture.current = null; return; }
       if (dx < startSlop) return;
       current.tracking = true;
+      onTracking?.(true);
       event.currentTarget.setPointerCapture(event.pointerId);
     }
     const elapsed = Math.max(1, event.timeStamp - current.lastT);
@@ -48,6 +50,7 @@ export function useSwipeDismiss({ progress, direction, enabled, onDismiss }: {
     if (!current || current.id !== event.pointerId) return;
     gesture.current = null;
     if (!current.tracking) return;
+    onTracking?.(false);
     const dismiss = !cancelled && (current.velocity > flingVelocity || progress.get() < 0.6);
     if (dismiss) onDismiss();
     else void animate(progress, 1, { duration: 0.32, ease });

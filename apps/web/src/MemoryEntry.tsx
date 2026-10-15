@@ -44,11 +44,10 @@ export function MemoryEntry({ memory, onCorrected, onDelete }: { memory: Memory;
     finally { setSourceBusy(false); }
   };
   return <article className="memory-entry">
-    <div className="memory-meta"><span>{memory.provenance === 'user_correction' ? '직접 정정한 기억' : memory.epistemic_status ? epistemic[memory.epistemic_status] : '저장된 기억'}</span>
-      <span>{memory.conversation_id ? '이 대화의 맥락' : '모든 대화에 적용'}</span></div>
+    {(memory.provenance === 'user_correction' || memory.epistemic_status === 'disputed' || memory.epistemic_status === 'reported') && <div className="memory-meta"><span>{memory.provenance === 'user_correction' ? '직접 정정함' : memory.epistemic_status === 'disputed' ? epistemic.disputed : '직접 알려준 내용'}</span></div>}
     <p className="memory-text">{memory.text}</p>
     {!editing && <div className="memory-actions">
-      <Button aria-expanded={expanded} aria-controls={`${fieldId}-details`} onClick={() => expanded ? setExpanded(false) : void loadHistory()}>출처·수정 이력</Button>
+      <Button aria-expanded={expanded} aria-controls={`${fieldId}-details`} onClick={() => expanded ? setExpanded(false) : void loadHistory()}>출처</Button>
       <button ref={editButton} className="button" onClick={() => { setText(memory.text); setRequestId(crypto.randomUUID()); setError(''); setEditing(true); }}><Pencil size={14} />정정</button>
       <IconButton label="기억 삭제" onClick={onDelete}><Trash2 size={15} /></IconButton>
     </div>}

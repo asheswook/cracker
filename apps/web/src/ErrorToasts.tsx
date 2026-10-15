@@ -24,6 +24,7 @@ function Toast({ value }: { readonly value: ErrorToastValue }) {
     <AlertCircle size={18} aria-hidden="true" />
     <div className="error-toast-content"><p className={expanded ? 'expanded' : ''}>{value.message}</p>
       {value.message.length > 140 && <button type="button" className="error-toast-details" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? '접기' : '자세히'}</button>}
+      {value.action && <button type="button" className="error-toast-action" onClick={() => { value.action?.run(); errorToasts.dismiss(value.id); }}>{value.action.label}</button>}
     </div>
     <button type="button" className="error-toast-dismiss" aria-label="오류 알림 닫기" onClick={() => errorToasts.dismiss(value.id)}><X size={16} aria-hidden="true" /></button>
   </Motion.div>;

@@ -2,11 +2,9 @@ import { useEffect } from 'react';
 import type { RefObject } from 'react';
 import { useMotionValue, useMotionValueEvent } from 'motion/react';
 import { useSwipeDismiss } from './useSwipeDismiss';
-import { useReducedMotion } from './useReducedMotion';
 
 export function useDrawerSwipe(dialog: RefObject<HTMLDialogElement | null>, open: boolean, onClose: () => void) {
   const progress = useMotionValue(1);
-  const reduced = useReducedMotion();
   useMotionValueEvent(progress, 'change', value => {
     const element = dialog.current;
     if (!element) return;
@@ -23,7 +21,7 @@ export function useDrawerSwipe(dialog: RefObject<HTMLDialogElement | null>, open
   return useSwipeDismiss({
     progress,
     direction: 'left',
-    enabled: open && !reduced,
+    enabled: open,
     onDismiss: () => {
       const element = dialog.current;
       element?.removeAttribute('data-dragging');

@@ -55,7 +55,7 @@ export class ExtensionManager {
       if(prior?.revision===server.revision&&prior.retryAt>Date.now()){await this.observe({kind:"server",id:server.id,revision:server.revision,state:"error",tool_count:0,error_code:prior.errorCode??"connect_failed"});return;}
       let observation:z.infer<typeof Observation>;
       try{
-        if(prior?.revision!==server.revision||!this.tools.mcpStatus(name).connected)await this.tools.addMcp(name,server.config,server.secrets);
+        if(prior?.revision!==server.revision||!this.tools.mcpStatus(name).connected)await this.tools.addMcp(name,server.config,server.secrets,server.category);
         else await this.tools.pingMcp(name);
         const status=this.tools.mcpStatus(name);
         if(!status.connected)throw new TypeError("MCP disconnected");

@@ -14,7 +14,9 @@ const identityMotionTokens: CSSProperties & { readonly '--identity-fade-duration
 const identityTransition = { type: 'tween', duration: 0.3, ease: [0.23, 1, 0.32, 1] } as const;
 
 export type WorkingActivity = Exclude<CharacterState, 'idle'>;
-const activityLabel: Record<WorkingActivity, string> = { thinking: '생각 중…', computer: '컴퓨터 사용 중…', typing: '입력 중…' };
+const activityLabel: Record<WorkingActivity, string> = {
+  thinking: '생각 중…', typing: '답장 쓰는 중…', computer: '컴퓨터 사용 중…', web: '웹 검색 중…', code: '코드 실행 중…', memory: '기억 찾는 중…',
+};
 
 export function AssistantIdentity({ name, onOpen, appearance = defaultAppearance, working = false, activity }: {
   readonly name: string;

@@ -29,7 +29,7 @@ export function ScheduleObjective({ objective, open, onToggle }: {
   return <details className="schedule-objective" open={open} onToggle={event => onToggle?.(event.currentTarget.open)}>
     <summary>
       {content}<span className="schedule-objective-toggle">
-        <span className="schedule-objective-more">전체 내용 보기</span>
+        <span className="schedule-objective-more">더 보기</span>
         <span className="schedule-objective-less">접기</span>
         <ChevronDown size={16} aria-hidden="true" />
       </span>

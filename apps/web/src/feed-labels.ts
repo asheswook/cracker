@@ -17,7 +17,7 @@ const generic = new Set(['replay', 'assistant', '새 대화', 'new conversation'
 export function conversationLabel(item: Pick<Conversation, 'title' | 'preview'>): { title: string; detail: string | null } {
   const title = item.title.trim();
   const preview = item.preview?.trim() || null;
-  if (!title || generic.has(title.toLocaleLowerCase())) return { title: preview ?? '빈 대화', detail: null };
+  if (!title || generic.has(title.toLocaleLowerCase())) return { title: preview ?? '첨부 파일만 있는 대화', detail: null };
   return { title, detail: preview };
 }
 

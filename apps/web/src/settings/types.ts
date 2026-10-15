@@ -37,6 +37,7 @@ export const Server = z.object({
   name: z.string(),
   enabled: z.boolean(),
   config: McpConfig,
+  category: z.enum(['web', 'computer', 'code', 'memory', 'other']).nullable().default(null),
   secret_keys: z.string().array(),
   ...observed,
 });

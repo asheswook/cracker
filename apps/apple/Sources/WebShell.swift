@@ -12,6 +12,7 @@ final class WebShell: NSObject, ObservableObject {
     let modelLogin = LocalModelLogin()
     #endif
     @Published var loading = true
+    @Published var booting = true
     @Published var failure: String?
     @Published var downloadNotice: String?
     @Published var exportedFile: ExportedFile?
@@ -171,6 +172,7 @@ final class WebShell: NSObject, ObservableObject {
     }
     func receiveShellState(_ body: [String: Any]) {
         authenticated = body["authenticated"] as? Bool == true
+        booting = body["booting"] as? Bool == true
         conversation = (body["conversation"] as? String).flatMap { UUID(uuidString: $0) == nil ? nil : $0 }
         assistant = (body["assistant"] as? String).flatMap { UUID(uuidString: $0) == nil ? nil : $0 }
         if let name = body["name"] as? String, !name.isEmpty, name.count <= 80 { assistantName = name }
@@ -251,7 +253,7 @@ extension WebShell: WKNavigationDelegate {
         #endif
     }
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        webReady = false; authenticated = false; documentID = UUID()
+        webReady = false; authenticated = false; booting = true; documentID = UUID()
         #if os(iOS)
         hybridDocument = nil; composerDocument = nil
         if panel == nil { nativeComposer.resetDocument(); updateComposerPresentation() }
@@ -259,6 +261,11 @@ extension WebShell: WKNavigationDelegate {
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         loading = false
+        let document = documentID
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard let self, self.documentID == document else { return }
+            self.booting = false
+        }
         #if os(iOS)
         if panel == nil { nativeComposer.resetSafeTop() }
         #else
@@ -268,7 +275,7 @@ extension WebShell: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { failed(error) }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { failed(error) }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        loading = false; webReady = false
+        loading = false; webReady = false; booting = false
         failure = "화면이 중단됐어요. 다시 연결해 주세요."
         #if os(iOS)
         hybridDocument = nil; composerDocument = nil
@@ -278,7 +285,7 @@ extension WebShell: WKNavigationDelegate {
     private func failed(_ error: Error) {
         let navigationError = error as NSError
         guard navigationError.code != NSURLErrorCancelled else { return }
-        loading = false
+        loading = false; booting = false
         let interruptedByPolicy = navigationError.domain == "WebKitErrorDomain" && navigationError.code == 102
         guard !interruptedByPolicy else { return }
         failure = "연결할 수 없어요. 인터넷 연결을 확인한 뒤 다시 시도해 주세요."
@@ -296,7 +303,7 @@ extension WebShell: WKNavigationDelegate {
         let disposition = (navigationResponse.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition") ?? ""
         if !navigationResponse.canShowMIMEType || disposition.lowercased().hasPrefix("attachment") { decisionHandler(.download) }
         else if navigationResponse.isForMainFrame, let response = navigationResponse.response as? HTTPURLResponse, response.statusCode >= 400 {
-            loading = false
+            loading = false; booting = false
             failure = "서버에 연결하지 못했어요 (\(response.statusCode)). 잠시 후 다시 시도해 주세요."
             decisionHandler(.cancel)
         } else { decisionHandler(.allow) }
