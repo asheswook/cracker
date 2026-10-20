@@ -7,6 +7,7 @@ import { SemanticCheckpoint } from "./semantic-context-state.ts";
 
 export const ArtifactCheckpoint = z.object({ directory: z.string().min(1), seen: z.array(z.string()), inlineBytes: z.number().int().nonnegative() });
 export const RunCheckpoint = z.object({
+  pendingSemanticSourceIds:z.array(z.uuid()).optional(),
   argumentRepairs:z.number().int().min(0).max(2).optional(),
   appliedInputIds:z.array(z.uuid()).max(100).optional(),
   appliedUserIds:z.array(z.uuid()).max(256).optional(),

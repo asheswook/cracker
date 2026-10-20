@@ -4,6 +4,7 @@ import { runModelBinding } from "../../../packages/models/repository.ts";
 import { z } from "zod";
 import {
   Assignment,
+  RecoveryContext,
   DomainError,
   Message,
   Persona,
@@ -86,6 +87,7 @@ async function capsules(
 }
 export async function workContext(sql: Query, principal: Principal, run: string) {
   const task = await ownedTask(sql, principal, run);
+  const recovery=z.object({recovery:RecoveryContext.nullable()}).parse((await sql`SELECT recovery FROM assistant.runs WHERE id=${run} AND workspace_id=${principal.workspace_id}`)[0]).recovery;
   const workspace = z
     .object({ instructions: z.string(), persona: Persona })
     .parse(
@@ -95,6 +97,7 @@ export async function workContext(sql: Query, principal: Principal, run: string)
     );
   const prior = await capsules(sql, principal, task, null);
   return Assignment.parse({
+    ...(recovery?{recovery}:{}),
     model_binding: await runModelBinding(sql, principal, run),
     skill_binding: await taskSkill(sql,principal.workspace_id,task.id),
     task,

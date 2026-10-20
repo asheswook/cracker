@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { DaemonEvent, DaemonPoll, Id, PriorWorkRequest } from "../../../packages/protocol";
+import { DaemonEvent, DaemonPoll, Id, PriorWorkRequest, RecoverySummary } from "../../../packages/protocol";
 import type { AppEnv } from "../auth";
 import type { Database } from "../db";
 import { applyEvent } from "../repository/daemon-events";
@@ -35,8 +35,8 @@ export function daemonRoutes(sql: Database, semanticEnabled = false, structureMo
   });
   app.post("/resume/:id", async (c) => {
     const text = await c.req.text();
-    const request = z.object({ checkpoint_cursor: z.number().int().nonnegative().optional(), desktop_control_scoped: z.boolean().default(false) }).parse(text ? JSON.parse(text) : {});
-    const assignment = await sql.begin(tx => resumeRun(tx, c.get("principal"), Id.parse(c.req.param("id")), request.checkpoint_cursor, request.desktop_control_scoped));
+    const request = z.object({ checkpoint_cursor: z.number().int().nonnegative().optional(), recovery:RecoverySummary.optional(), desktop_control_scoped: z.boolean().default(false) }).refine(value=>!(value.recovery&&value.checkpoint_cursor!==undefined)).parse(text ? JSON.parse(text) : {});
+    const assignment = await sql.begin(tx => resumeRun(tx, c.get("principal"), Id.parse(c.req.param("id")), request.checkpoint_cursor, request.desktop_control_scoped, request.recovery));
     return c.json({ assignment: {...assignment, ...(semanticEnabled ? {semantic_context_enabled: true} : {}),semantic_structure_mode:structureMode} });
   });
   app.get("/poll", async (c) => {

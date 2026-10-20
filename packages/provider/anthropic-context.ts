@@ -1,3 +1,4 @@
+import {AnthropicContinuation} from "./anthropic-continuation.ts";
 import { nativeMessageBody, nativeCountBody, NativeBodyError } from "./anthropic-context-wire.ts";
 import { nativeHash, validateNative, prepareNative } from "./anthropic-context-frames.ts";
 export { nativeMessages } from "./anthropic-context-frames.ts";
@@ -91,15 +92,21 @@ export class AnthropicNativeContext implements NativeContext {
   async respond(
     request: Parameters<NativeContext["respond"]>[0],
   ): ReturnType<NativeContext["respond"]> {
+    request.observer?.continuation?.(()=>undefined);
     const capability = await this.capability(request.signal);
     if (capability.kind !== "supported") throw new NativeContextError("unsupported_capability");
     const state = prepareNative(request, this.config.model);
     const response = await this.flight(request.signal, async (signal) => {
+      const continuation=new AnthropicContinuation(this.config.model,{state,inputLength:request.input.length});
+      request.observer?.continuation?.(continuation.read);
       const body = nativeMessageBody(request, state, capability.outputTokenBudget);
       const stream = this.client.beta.messages.stream({ ...body, betas }, { signal });
+      stream.on("streamEvent",(event,snapshot)=>continuation.accept(event,snapshot));
       let responseId: string | undefined,
         stopped = false;
       const textBlocks = new Set<number>();
+      signal.addEventListener("abort",continuation.freeze,{once:true});
+      if(signal.aborted)continuation.freeze();
       try {
         for await (const event of stream) {
           if (event.type === "message_start") responseId = event.message.id;
@@ -142,7 +149,8 @@ export class AnthropicNativeContext implements NativeContext {
           content: NativeAssistantBlocks.parse(message.content),
         };
         return response;
-      } finally {
+      } catch(error){if(!signal.aborted)continuation.invalidate();throw error;} finally {
+        signal.removeEventListener("abort",continuation.freeze);
         if (responseId) request.observer?.({ type: "response_done", response_id: responseId });
       }
     },request.budget);

@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import {AnthropicContinuation} from "./anthropic-continuation.ts";
 import { retryProvider, type ProviderRetryObserver, type RetryBudget } from "./retry.ts";
 import type { Response, ResponseInputItem, Tool } from "openai/resources/responses/responses";
 import type { Provider, ProviderResponseObserver } from "./index.ts";
@@ -54,10 +55,15 @@ export class AnthropicProvider implements Provider {
     observer?: ProviderResponseObserver,
     budget?: RetryBudget,
   ): Promise<Response> {
+    observer?.continuation?.(()=>undefined);
     if (this.closed) throw new ProviderError("configuration", "Provider is closed");
     signal.throwIfAborted();
     const transcript = anthropicTranscript(input, this.config.model);
     return this.flight(signal, async combined => {
+      const continuation=new AnthropicContinuation(this.config.model);
+      observer?.continuation?.(continuation.read);
+      combined.addEventListener("abort",continuation.freeze,{once:true});
+      if(combined.aborted)continuation.freeze();
       let responseId: string | undefined;
       const textBlocks = new Set<number>();
       let stopped = false;
@@ -73,6 +79,7 @@ export class AnthropicProvider implements Provider {
           },
           { signal: combined },
         );
+        stream.on("streamEvent",(event,snapshot)=>continuation.accept(event,snapshot));
         for await (const event of stream) {
           if (event.type === "message_start") responseId = event.message.id;
           if (
@@ -99,7 +106,8 @@ export class AnthropicProvider implements Provider {
         if (!stopped)
           throw new ProviderError("incomplete", "Claude stream ended before message_stop");
         return anthropicResponse(await stream.finalMessage(), tools, this.config.model);
-      } finally {
+      } catch(error){if(!combined.aborted)continuation.invalidate();throw error;} finally {
+        combined.removeEventListener("abort",continuation.freeze);
         if (responseId) observer?.({ type: "response_done", response_id: responseId });
       }
     },budget);

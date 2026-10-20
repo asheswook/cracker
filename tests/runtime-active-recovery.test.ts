@@ -17,13 +17,14 @@ for(const mode of ["safe","pending_input","uncertain","validation_retry","valida
   // Given a real artifact file, SQLite checkpoint, completed historic effect, and HTTP control seam.
   const root=await mkdtemp(join(tmpdir(),"runtime-checkpoint-")),path=join(root,"journal.sqlite");
   const work:Assignment={run_id:crypto.randomUUID(),task:{id:crypto.randomUUID(),conversation_id:crypto.randomUUID(),objective:"fixture",state:"running",reason:null,created_at:new Date().toISOString(),updated_at:new Date().toISOString()},messages:[],instructions:"",memory:[]};
-  const events:DaemonEvent[]=[],history:ResponseInputItem[][]=[];let resumeRequests=0,rejected=false;
+  const recovery:Assignment={...work,run_id:crypto.randomUUID(),recovery:{mode:"explain_only",source_run_id:work.run_id,reason:"uncertain local effects",completed_actions:1,uncertain_actions:1,history_available:false}};
+  const events:DaemonEvent[]=[],history:ResponseInputItem[][]=[],offeredCounts:number[]=[];let resumeRequests=0,rejected=false;
   const steering:Message={id:crypto.randomUUID(),conversation_id:work.task.conversation_id,role:"user",content:"steering fixture",sequence:2,created_at:new Date().toISOString(),client_message_id:null};
   const server=Bun.serve({port:0,async fetch(request){
     const url=new URL(request.url);
     if(url.pathname==="/v1/daemon/extensions")return Response.json({skills:[],servers:[]});
     if(url.pathname==="/v1/daemon/poll")return Response.json({assignment:null,commands:[],messages:[],recovery_run_id:work.run_id});
-    if(url.pathname.startsWith("/v1/daemon/resume/")){resumeRequests++;if(mode==="validation_retry")expect(await request.json()).toEqual({checkpoint_cursor:1,desktop_control_scoped:true});return Response.json({assignment:work});}
+    if(url.pathname.startsWith("/v1/daemon/resume/")){resumeRequests++;if(mode==="validation_retry")expect(await request.json()).toEqual({checkpoint_cursor:1,desktop_control_scoped:true});if(mode==="validation_uncertain")expect(await request.json()).toEqual({desktop_control_scoped:true,recovery:{completed_actions:1,uncertain_actions:1,history_available:false}});return Response.json({assignment:mode==="validation_uncertain"?recovery:work});}
     if(url.pathname==="/v1/daemon/events"){
       const event=DaemonEvent.parse(await request.json());
       if(mode==="pending_input"&&!rejected&&event.kind==="state"&&event.state==="succeeded"){rejected=true;return Response.json({error:{code:"pending_input"}},{status:409});}
@@ -41,17 +42,20 @@ for(const mode of ["safe","pending_input","uncertain","validation_retry","valida
   if(mode==="validation_retry"||mode==="validation_uncertain")first.finish(work.run_id);
   first.close();
   const recovered=new ObservedJournal(path);
-  const provider:Provider={respond:async(input)=>{history.push(input);return history.length===1?response([{type:"compaction",id:"before",encrypted_content:"opaque-before"},{type:"function_call",call_id:"fresh",name:"shell",arguments:JSON.stringify({command:'printf fresh >> "$OUTPUT_DIR/proof.txt"'})},{type:"compaction",id:"after",encrypted_content:"opaque-after"}]):response([{type:"message",id:"final",role:"assistant",status:"completed",content:[{type:"output_text",text:"fixture done",annotations:[]}]}]);}};
+  const provider:Provider={respond:async(input,tools)=>{history.push(input);offeredCounts.push(tools.length);return history.length===1?response([{type:"compaction",id:"before",encrypted_content:"opaque-before"},{type:"function_call",call_id:"fresh",name:"shell",arguments:JSON.stringify({command:'printf fresh >> "$OUTPUT_DIR/proof.txt"'})},{type:"compaction",id:"after",encrypted_content:"opaque-after"}]):response([{type:"message",id:"final",role:"assistant",status:"completed",content:[{type:"output_text",text:"fixture done",annotations:[]}]}]);}};
   const runtime=new Runtime({controlUrl:server.url.href,token:"fixture",journal:recovered,provider,tools:new ToolExecutor(),artifactRoot:root});
   try{
     // When a new runtime recovers the reopened SQLite file.
     if(mode==="validation_retry"||mode==="validation_uncertain")await runtime.tick();else await runtime.recover();
-    if(mode!=="validation_uncertain")await recovered.finished.promise;
+    await recovered.finished.promise;
     await runtime.flush();
     if(mode==="validation_uncertain"){
       expect(await Bun.file(proof).text()).toBe("historic");
-      expect(resumeRequests).toBe(0);expect(history).toHaveLength(0);
-      expect(events.every(event=>event.kind==="heartbeat")).toBe(true);
+      expect(resumeRequests).toBe(1);expect(history).toHaveLength(2);
+      expect(recovery.run_id).not.toBe(work.run_id);expect(offeredCounts).toEqual([0,0]);
+      expect(events.filter(event=>event.kind==="state").map(event=>[event.run_id,event.state])).toEqual([[recovery.run_id,"failed"]]);
+      expect(recovered.observations.forRun(recovery.run_id)).toEqual([]);
+      expect(recovered.recoverySummary(work.run_id)).toEqual({completed_actions:1,uncertain_actions:1,history_available:false});
       return;
     }
     // Then prior effects are not replayed, new steering is applied, and uncertain effects never start inference.

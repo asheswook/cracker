@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
 import { DomainError } from "../../../packages/protocol";
-import { authenticate, hashToken, type AppEnv } from "../auth";
+import { authenticate, hashToken, SESSION_DAYS, type AppEnv } from "../auth";
 import type { Database } from "../db";
 export function sessionRoutes(sql: Database): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -17,16 +17,30 @@ export function sessionRoutes(sql: Database): Hono<AppEnv> {
     const value = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, "0")).join("");
     const previous = getCookie(c, "assistant_session");
     await sql.begin(async tx => {
-      if (previous) await tx`UPDATE assistant.browser_sessions SET revoked_at=now() WHERE token_hash=${await hashToken(previous)}`;
-      await tx`INSERT INTO assistant.browser_sessions(token_hash,credential_hash,expires_at) VALUES(${await hashToken(value)},${credentialHash},now()+interval '7 days')`;
+      await tx`INSERT INTO assistant.browser_sessions(token_hash,credential_hash,expires_at) VALUES(${await hashToken(value)},${credentialHash},now()+${`${SESSION_DAYS} days`}::interval)`;
+      if (previous) {
+        const old = await hashToken(previous);
+        await tx`UPDATE assistant.browser_sessions SET revoked_at=now() WHERE token_hash=${old}`;
+        await tx`UPDATE assistant.push_subscriptions SET session_hash=${await hashToken(value)},updated_at=now() WHERE session_hash=${old} AND credential_hash=${credentialHash}`;
+      }
     });
-    setCookie(c, "assistant_session", value, { path: "/v1", httpOnly: true, secure: new URL(c.req.url).protocol === "https:", sameSite: "Strict", maxAge: 7 * 24 * 60 * 60 });
+    setCookie(c, "assistant_session", value, { path: "/v1", httpOnly: true, secure: new URL(c.req.url).protocol === "https:", sameSite: "Strict", maxAge: SESSION_DAYS * 24 * 60 * 60 });
     return c.json({ workspace_id: principal.workspace_id });
   });
-  app.get("/", c => c.json({ workspace_id: c.get("principal").workspace_id }));
+  app.get("/", c => {
+    const value = getCookie(c, "assistant_session");
+    if (value && c.get("principal").session_hash) setCookie(c, "assistant_session", value, { path: "/v1", httpOnly: true, secure: new URL(c.req.url).protocol === "https:", sameSite: "Strict", maxAge: SESSION_DAYS * 24 * 60 * 60 });
+    return c.json({ workspace_id: c.get("principal").workspace_id });
+  });
   app.delete("/", async c => {
     const value = getCookie(c, "assistant_session");
-    if (value) await sql`UPDATE assistant.browser_sessions SET revoked_at=now() WHERE token_hash=${await hashToken(value)}`;
+    if (value) {
+      const hash = await hashToken(value);
+      await sql.begin(async tx => {
+        await tx`UPDATE assistant.browser_sessions SET revoked_at=now() WHERE token_hash=${hash}`;
+        await tx`UPDATE assistant.push_subscriptions SET enabled=false,updated_at=now() WHERE session_hash=${hash}`;
+      });
+    }
     deleteCookie(c, "assistant_session", { path: "/v1", httpOnly: true, secure: new URL(c.req.url).protocol === "https:", sameSite: "Strict" });
     return c.json({ logged_out: true });
   });

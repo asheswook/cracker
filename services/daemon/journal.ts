@@ -3,7 +3,8 @@ import { ToolObservations } from "./tool-observations.ts";
 import { z } from "zod";
 import { Assignment, DaemonEvent } from "../../packages/protocol/index.ts";
 import { RunCheckpoint } from "./active-context.ts";
-import { completeToolBoundary } from "../../packages/provider/compaction.ts";
+import { completeToolBoundary, TranscriptItem } from "../../packages/provider/compaction.ts";
+import type { ResponseInputItem } from "../../packages/provider/index.ts";
 import { NativeContextArchive } from "./native-context-archive.ts";
 import { DelegationJournal } from "./delegation-journal.ts";
 import { SemanticMetadataJobs } from "./semantic-context-queue.ts";
@@ -65,12 +66,24 @@ export class Journal {
     return this.db.transaction(()=>{
     const row=z.object({payload:z.string()}).nullable().parse(this.db.query("SELECT payload FROM checkpoints c WHERE c.run=? AND NOT EXISTS(SELECT 1 FROM actions a WHERE a.run=c.run AND (a.rowid>c.watermark OR a.state<>'completed'))").get(run));
     if(!row)return null;
-    const parsed=RunCheckpoint.safeParse(JSON.parse(row.payload));
+    let value:unknown;
+    try{value=JSON.parse(row.payload);}catch(error){if(error instanceof SyntaxError)return null;throw error;}
+    const parsed=RunCheckpoint.safeParse(value);
     if(!parsed.success||parsed.data.assignment.run_id!==run||!completeToolBoundary(parsed.data.input)||!this.archive.validHead(parsed.data))return null;
     return parsed.data;
     })();
   }
   suspend(run:string):void { this.db.query("UPDATE runs SET state='suspended' WHERE id=?").run(run); }
+  appendFailureFeedback(run:string,feedback:ResponseInputItem):boolean {
+    const checkpoint=this.recoverable(run);
+    if(!checkpoint)return false;
+    this.checkpoint({...checkpoint,input:[...checkpoint.input,TranscriptItem.parse(feedback)]});
+    return true;
+  }
+  recoverySummary(run:string){
+    const counts=z.object({completed_actions:z.number(),uncertain_actions:z.number()}).parse(this.db.query("SELECT count(CASE WHEN state='completed' THEN 1 END) AS completed_actions,count(CASE WHEN state<>'completed' THEN 1 END) AS uncertain_actions FROM actions WHERE run=?").get(run));
+    return {...counts,history_available:this.recoverable(run)!==null};
+  }
   suspended():readonly string[] { return z.array(z.object({id:z.string()})).parse(this.db.query("SELECT id FROM runs WHERE state='suspended'").all()).map(row=>row.id); }
   resume(run:string):void { this.db.query("UPDATE runs SET state='running' WHERE id=?").run(run); }
   finish(run: string): void { this.db.query("UPDATE runs SET state='finished' WHERE id=?").run(run); }

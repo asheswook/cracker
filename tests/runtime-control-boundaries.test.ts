@@ -1,5 +1,7 @@
 import { beforeEach, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import ky from 'ky';
 import type { Response as ModelResponse } from 'openai/resources/responses/responses';
 import { Runtime } from '../services/daemon/runtime';
@@ -13,7 +15,7 @@ import { controlFixture } from './control-fixture';
 const f=controlFixture();beforeEach(()=>f.finishActive());
 function answer():ModelResponse{return {id:crypto.randomUUID(),created_at:0,output_text:'',error:null,incomplete_details:null,instructions:null,metadata:null,model:'fixture',object:'response',output:[{type:'message',id:crypto.randomUUID(),role:'assistant',status:'completed',phase:'final_answer',content:[{type:'output_text',text:'Completed after recovery',annotations:[]}]}],parallel_tool_calls:false,temperature:null,tool_choice:'auto',tools:[],top_p:null,status:'completed'};}
 for(const boundary of ['context','receipt'] as const)test(`P1-B ${boundary} 503 inside a run waits without restarting inference or terminating unknown`,async()=>{
-  const source=await f.newTask(),root=await mkdtemp('/tmp/agent-par/.control-boundary-'),finished=Promise.withResolvers<void>();
+  const source=await f.newTask(),root=await mkdtemp(join(tmpdir(),'control-boundary-')),finished=Promise.withResolvers<void>();
   class ObservedJournal extends Journal{override finish(run:string){super.finish(run);finished.resolve();}}
   const journal=new ObservedJournal(':memory:');let contexts=0,calls=0,failed=false;const states:string[]=[],messageIds:string[]=[];
   const server=Bun.serve({port:0,async fetch(request){
@@ -36,7 +38,7 @@ for(const boundary of ['context','receipt'] as const)test(`P1-B ${boundary} 503 
 },10000);
 
 test('P1-B retry waits are abortable and do not replay a completed tool effect',async()=>{
-  const source=await f.newTask(),root=await mkdtemp('/tmp/agent-par/.effect-boundary-'),journal=new Journal(':memory:'),done=Promise.withResolvers<void>();let contexts=0,calls=0,effects=0;
+  const source=await f.newTask(),root=await mkdtemp(join(tmpdir(),'effect-boundary-')),journal=new Journal(':memory:'),done=Promise.withResolvers<void>();let contexts=0,calls=0,effects=0;
   class OnceTool extends ToolExecutor{override async run(){effects++;return {text:'Effect completed once'};}}
   const server=Bun.serve({port:0,async fetch(request){
     const path=new URL(request.url).pathname;if(path.startsWith('/v1/daemon/context/')&&++contexts===3)return new Response('Retry after completed effect',{status:503});
@@ -80,12 +82,12 @@ for(const status of [401,403,409])test(`P2-D production policy exits for ${statu
 });
 
 test('P2-D production process logs registration retry, then exits non-zero for a fenced credential',async()=>{
-  const root=await mkdtemp('/tmp/agent-par/.main-boundary-');let registrations=0;
+  const root=await mkdtemp(join(tmpdir(),'main-boundary-'));let registrations=0;
   const server=Bun.serve({port:0,fetch:request=>{
     if(new URL(request.url).pathname!=='/v1/daemon/session')throw new Error('No work or external requests may start');
     registrations++;return registrations===1?new Response('Registration temporarily unavailable',{status:503}):Response.json({error:{code:'stale_session'}},{status:409});
   }});
-  const child=Bun.spawn(['bun','services/daemon/main.ts'],{cwd:'/tmp/agent-par',env:{PATH:process.env['PATH'],CONTROL_URL:server.url.href,VM_TOKEN:'fixture',PROVIDER_MODE:'api',OPENAI_MODEL:'fixture',OPENAI_API_KEY:'fixture',SCREEN_ENABLED:'false',JOURNAL_PATH:`${root}/journal.sqlite`},stdout:'pipe',stderr:'pipe'});
+  const child=Bun.spawn(['bun','services/daemon/main.ts'],{cwd:join(import.meta.dir,'..'),env:{PATH:process.env['PATH'],CONTROL_URL:server.url.href,VM_TOKEN:'fixture',PROVIDER_MODE:'api',OPENAI_MODEL:'fixture',OPENAI_API_KEY:'fixture',SCREEN_ENABLED:'false',JOURNAL_PATH:`${root}/journal.sqlite`},stdout:'pipe',stderr:'pipe'});
   const stdout=new Response(child.stdout).text(),stderr=new Response(child.stderr).text();
   try{
     const exit=await Promise.race([child.exited,Bun.sleep(6000).then(()=>null)]);expect(exit).not.toBeNull();expect(exit).not.toBe(0);

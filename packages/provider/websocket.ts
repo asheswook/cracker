@@ -49,6 +49,7 @@ export class ResponseSocketPool{
     slot.idleTimer.unref();
   }
   async respond(body:ResponseCreateParamsStreaming,signal:AbortSignal,observer?:ProviderResponseObserver):Promise<Response>{
+    observer?.continuation?.(()=>undefined);
     signal.throwIfAborted();
     if(body.previous_response_id||body.service_tier&&body.service_tier!=='default')throw new ProviderError('configuration','WebSocket requires full history and default service tier');
     const slot=this.acquire(),streamId=crypto.randomUUID();slot.calls++;
@@ -61,10 +62,11 @@ export class ResponseSocketPool{
     try{
       if(signal.aborted)abort();
       else slot.ws.sendRaw(JSON.stringify({...request,type:'response.create',...(this.options.lane==="implicit"?{}:{stream_id:streamId}),store:false,service_tier:'default'}));
-      const response=await Promise.race([consumeResponse(this.correlated(events,streamId,slot),observer),aborted.promise]);
+      const response=await Promise.race([consumeResponse(this.correlated(events,streamId,slot),observer,signal),aborted.promise]);
       if(response.service_tier&&response.service_tier!=='default')throw new ProviderError('incomplete','WebSocket returned an unexpected service tier');
       return response;
     }catch(error){
+      if(!signal.aborted)observer?.continuation?.(()=>undefined);
       this.discard(slot);
       if(error instanceof ProviderError)throw error;
       throw new ProviderError('incomplete','WebSocket response failed validation or transport');

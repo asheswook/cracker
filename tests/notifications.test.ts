@@ -216,3 +216,20 @@ test("safe failure categories persist without endpoint or exception secrets; red
     last_error: "push_redirect_rejected",
   });
 });
+test("expired browser session does not silence a still-enabled device subscription", async () => {
+  // Given: a subscription registered with a cookie session that has since expired
+  const g = await fixture(),
+    session = crypto.randomUUID(),
+    sessionHash = await hashToken(session);
+  await sql`INSERT INTO browser_sessions(token_hash,credential_hash,expires_at) VALUES(${sessionHash},${g.credential},now()+interval '1 day')`;
+  const cookie = { cookie: `assistant_session=${session}`, origin: "http://localhost", "content-type": "application/json" };
+  expect((await g.app.request("/v1/notifications/subscription", { method: "PUT", headers: cookie, body: JSON.stringify({ installation_id: g.installation, subscription }) })).status).toBe(200);
+  await sql`UPDATE browser_sessions SET expires_at=now()-interval '1 second' WHERE token_hash=${sessionHash}`;
+  // When
+  await g.complete();
+  let sent = 0;
+  await dispatchNotifications(sql, config, async () => { sent++; return { status: 201, retryAfter: null }; });
+  // Then
+  expect(sent).toBe(1);
+  expect((await g.deliveries())[0]?.["state"]).toBe("accepted");
+});

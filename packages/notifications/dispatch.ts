@@ -69,8 +69,8 @@ export async function dispatchNotifications(
   const transports = [...(config.web ? ["web"] : []), ...(config.fcm ? ["fcm"] : [])];
   await sql`UPDATE assistant.notification_deliveries d SET state='expired',lease_id=NULL,lease_until=NULL FROM assistant.notification_intents n WHERE n.id=d.intent_id AND n.expires_at<=now() AND d.state IN ('pending','leased')`;
   await sql`UPDATE assistant.notification_deliveries d SET state='suppressed',lease_id=NULL,lease_until=NULL WHERE d.state IN ('pending','leased') AND NOT EXISTS(
- SELECT 1 FROM assistant.push_subscriptions s JOIN assistant.credentials c ON c.token_hash=s.credential_hash LEFT JOIN assistant.browser_sessions b ON b.token_hash=s.session_hash
- WHERE s.id=d.subscription_id AND s.enabled AND c.revoked_at IS NULL AND (s.session_hash IS NULL OR (b.revoked_at IS NULL AND b.expires_at>now())))`;
+ SELECT 1 FROM assistant.push_subscriptions s JOIN assistant.credentials c ON c.token_hash=s.credential_hash
+ WHERE s.id=d.subscription_id AND s.enabled AND c.revoked_at IS NULL)`;
   const jobs = await sql.begin(async (tx) => {
     const rows = z.array(Delivery.omit({ lease_id: true })).parse(
       await tx`SELECT d.id,d.intent_id,d.subscription_id,s.subscription_cipher,s.transport,n.conversation_id,n.message_id,n.expires_at,d.attempts FROM assistant.notification_deliveries d JOIN assistant.notification_intents n ON n.id=d.intent_id JOIN assistant.push_subscriptions s ON s.id=d.subscription_id
@@ -92,7 +92,7 @@ export async function dispatchNotifications(
       let stage: "subscription" | "send" = "subscription";
       try {
         const allowed =
-          await sql`SELECT d.id FROM assistant.notification_deliveries d JOIN assistant.push_subscriptions s ON s.id=d.subscription_id JOIN assistant.credentials c ON c.token_hash=s.credential_hash LEFT JOIN assistant.browser_sessions b ON b.token_hash=s.session_hash WHERE d.id=${job.id} AND d.state='leased' AND d.lease_id=${job.lease_id} AND s.subscription_cipher=${job.subscription_cipher} AND s.enabled AND c.revoked_at IS NULL AND (s.session_hash IS NULL OR (b.revoked_at IS NULL AND b.expires_at>now()))`;
+          await sql`SELECT d.id FROM assistant.notification_deliveries d JOIN assistant.push_subscriptions s ON s.id=d.subscription_id JOIN assistant.credentials c ON c.token_hash=s.credential_hash WHERE d.id=${job.id} AND d.state='leased' AND d.lease_id=${job.lease_id} AND s.subscription_cipher=${job.subscription_cipher} AND s.enabled AND c.revoked_at IS NULL`;
         if (!allowed.length) return;
         const selected = config[job.transport];
         if (!selected) return;

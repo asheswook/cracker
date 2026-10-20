@@ -108,7 +108,9 @@ export function createApp(
     c.set("principal", {...principal,...(daemonSession?{daemon_session_id:daemonSession}:{})});
     if(!daemon){await next();return;}
     const caller=c.get('principal');
-    const pathRun=/^\/v1\/daemon\/(?:context|resume|accept)\/([^/]+)/.exec(c.req.path)?.[1];
+    // Resume fences the current session, then may adopt an unknown predecessor
+    // inside its transaction before enforcing run ownership.
+    const pathRun=/^\/v1\/daemon\/(?:context|accept)\/([^/]+)/.exec(c.req.path)?.[1];
     let run=pathRun??c.req.query('run_id');
     let requestBody:unknown;
     if(c.req.header('Content-Type')?.startsWith('application/json')&&!['GET','HEAD'].includes(c.req.method)){

@@ -209,15 +209,9 @@ export function anthropicTools(tools: readonly Tool[]): AnthropicTool[] {
   });
 }
 
-export function anthropicResponse(message: Message | BetaMessage, tools: Tool[], model: string): Response {
-  if (message.model !== model)
-    throw new ProviderError("incomplete", "Claude returned a different model");
-  const refusal = message.stop_reason === "refusal" || message.stop_details?.type === "refusal";
-  if (!refusal && message.stop_reason !== "end_turn" && message.stop_reason !== "tool_use")
-    throw new ProviderError("incomplete", `Claude did not complete: ${message.stop_reason}`);
+export function anthropicOutput(message:{readonly id:string;readonly content:readonly (Message["content"][number]|BetaMessage["content"][number])[]},model:string,phase:"commentary"|"final_answer",refusal=false):Response["output"] {
   const output: Response["output"] = [];
-  let calls = 0,
-    visible = false;
+  let visible = false;
   for (const [index, block] of message.content.entries()) {
     const id = `${message.id}_${index}`;
     switch (block.type) {
@@ -244,7 +238,7 @@ export function anthropicResponse(message: Message | BetaMessage, tools: Tool[],
           id,
           role: "assistant",
           status: "completed",
-          phase: message.stop_reason === "tool_use" ? "commentary" : "final_answer",
+          phase,
           content: refusal
             ? [{ type: "refusal", refusal: block.text }]
             : [{ type: "output_text", text: block.text, annotations: [] }],
@@ -263,7 +257,6 @@ export function anthropicResponse(message: Message | BetaMessage, tools: Tool[],
           arguments: JSON.stringify(block.input),
           status: "completed",
         });
-        calls++;
         break;
       default:
         throw new ProviderError("incomplete", `Unsupported Claude output block: ${block.type}`);
@@ -277,6 +270,18 @@ export function anthropicResponse(message: Message | BetaMessage, tools: Tool[],
       status: "completed",
       content: [{ type: "refusal", refusal: "Claude declined this request." }],
     });
+  return output;
+}
+
+export function anthropicResponse(message: Message | BetaMessage, tools: Tool[], model: string): Response {
+  if (message.model !== model)
+    throw new ProviderError("incomplete", "Claude returned a different model");
+  const refusal = message.stop_reason === "refusal" || message.stop_details?.type === "refusal";
+  if (!refusal && message.stop_reason !== "end_turn" && message.stop_reason !== "tool_use")
+    throw new ProviderError("incomplete", `Claude did not complete: ${message.stop_reason}`);
+  const output=anthropicOutput(message,model,message.stop_reason === "tool_use" ? "commentary" : "final_answer",refusal);
+  const calls=output.filter(item=>item.type === "function_call").length;
+  const visible=output.some(item=>item.type === "message"&&item.content.some(part=>part.type === "output_text"&&part.text.trim()||part.type === "refusal"&&part.refusal.trim()));
   if (
     !refusal &&
     ((message.stop_reason === "tool_use" && !calls) ||

@@ -124,7 +124,7 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
         .parse(
           (await sql`SELECT state FROM assistant.tasks WHERE id=${run.task_id} FOR UPDATE`)[0],
         );
-      if (event.state === "succeeded") {
+      if (event.state === "succeeded" || event.state === "failed") {
         const pending =
           await sql`SELECT m.id FROM assistant.messages m WHERE m.task_id=${run.task_id} AND m.role IN ('user','system') AND NOT EXISTS(SELECT 1 FROM assistant.input_receipts i WHERE i.run_id=${run.id} AND i.message_id=m.id) LIMIT 1`;
         if (pending[0])

@@ -1,16 +1,25 @@
 import type { Response, ResponseStreamEvent, ResponseOutputItem } from "openai/resources/responses/responses";
 import {ProviderError} from "./errors.ts";
 import { describeApiFailure, ProviderStreamError } from './api-failure.ts';
+import { OpenAIContinuation } from './openai-continuation.ts';
+import type { ContinuationReader } from './continuation.ts';
 export type ProviderResponseEvent =
   | {readonly type:"text_delta"|"text_done";readonly response_id:string;readonly item_id:string}
   | {readonly type:"response_done";readonly response_id:string};
-export type ProviderResponseObserver = (event:ProviderResponseEvent)=>void;
-export async function consumeResponse(stream: AsyncIterable<ResponseStreamEvent>,observer?:ProviderResponseObserver): Promise<Response> {
+export type ProviderResponseObserver = ((event:ProviderResponseEvent)=>void) & {
+  readonly continuation?: (read: ContinuationReader) => void;
+};
+export async function consumeResponse(stream: AsyncIterable<ResponseStreamEvent>,observer?:ProviderResponseObserver,signal?:AbortSignal): Promise<Response> {
+  const continuation=new OpenAIContinuation();
+  observer?.continuation?.(()=>continuation.read());
+  const freeze=()=>continuation.freeze();
+  if(signal?.aborted)freeze();else signal?.addEventListener('abort',freeze,{once:true});
   const completed = new Map<number, ResponseOutputItem>();
   const messages=new Set<string>(),active=new Set<string>();
   let responseId:string|undefined;
   try {
   for await (const event of stream) {
+    continuation.observe(event);
     if(event.type==="response.created")responseId=event.response.id;
     if(event.type==="response.output_item.added"&&event.item.type==="message"&&event.item.role==="assistant")messages.add(event.item.id);
     if(event.type==="response.output_text.delta"&&event.delta.trim()&&responseId&&messages.has(event.item_id)){
@@ -37,7 +46,11 @@ export async function consumeResponse(stream: AsyncIterable<ResponseStreamEvent>
     }
   }
   throw new ProviderError("incomplete", "Provider stream ended before response.completed");
+  } catch(error) {
+    if(!signal?.aborted)continuation.invalidate();
+    throw error;
   } finally {
+    signal?.removeEventListener('abort',freeze);
     if(responseId)observer?.({type:"response_done",response_id:responseId});
   }
 }

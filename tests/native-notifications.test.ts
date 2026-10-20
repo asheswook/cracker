@@ -40,7 +40,7 @@ test("native status and FCM dispatch work without VAPID; encrypted registration 
   expect((await f.deliveries())[0]?.["state"]).toBe("accepted");
   const messageId = (await f.deliveries())[0]?.["intent_id"];
   expect(messages.at(-1)?.data).toEqual({ id: messageId, url: `/?conversation=${f.conversation}&message=${messageId}` });
-  expect(messages.at(-1)?.notification).toEqual({ title: "Assistant", body: "실제 답변이에요 👋" });
+  expect(messages.at(-1)?.notification).toEqual({ title: "크래커", body: "실제 답변이에요 👋" });
   expect(wire.oauthCalls).toBe(1);
   expect(
     (

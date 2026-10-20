@@ -5,7 +5,7 @@ import { pinRunModel, runModelBinding } from "../../../packages/models/repositor
 import { fenceSession, type VmLock } from './daemon-session';
 import { admission } from './run-admission';
 import { lockWorkspace } from './lock-order';
-import { Assignment, Command, DomainError, Persona, Task } from "../../../packages/protocol";
+import { Assignment, Command, DomainError, Persona, RecoveryContext, Task } from "../../../packages/protocol";
 import type { Principal } from "../auth";
 import type { Query } from "../db";
 import { messages } from "./common";
@@ -16,6 +16,7 @@ export const Run = z.object({
   task_id: z.uuid(),
   vm_id: z.uuid(),
   state: z.string(),
+  recovery: RecoveryContext.nullish(),
 });
 export async function loadRun(sql: Query, principal: Principal, id: string,lock:VmLock|false='update') {
   await fenceSession(sql,principal,principal.daemon_session_id,lock);
@@ -49,6 +50,7 @@ export async function context(sql: Query, principal: Principal, id: string, afte
     task,
     lane: task.lane ?? 'foreground',
     run_id: run.id,
+    ...(run.recovery ? { recovery: run.recovery } : {}),
     messages: await messages(sql, principal.workspace_id, task.conversation_id, after),
     instructions: workspace.instructions,
     persona: workspace.persona,

@@ -30,7 +30,8 @@ for(const next of [{...call},{...call,call_id:'second',name:'unknown'},{...call,
  // Given / When
  const error=rejected([{...call,arguments:'{'},next],[echo],new Set(['prior']));
  // Then
- expect(error.code).toBe('invalid_tool_call');expect(error.details).toBeUndefined();
+ expect(error.code).toBe('invalid_tool_call');
+ expect(error.details).toMatchObject({category:'tool_call',subtype:next.call_id==='call1'?'duplicate_call_id':next.call_id==='prior'?'reused_call_id':'unknown_tool'});
 });
 test('invalid arguments do not mask invalid schema of another offered call',()=>{
  // Given
@@ -66,4 +67,19 @@ test('phase-absent legacy answer remains terminal alongside explicit commentary'
  const plan=planResponse(response([{type:'message',role:'assistant',content:[{type:'output_text',text:'progress'}],phase:'commentary'},{type:'message',role:'assistant',content:[{type:'output_text',text:'legacy final'}]}]),[]);
  // Then
  expect(plan.kind).toBe('final');
+});
+
+test('unknown tool diagnostics expose a fixed category without provider-controlled names or arguments',()=>{
+ // Given an unknown name and arguments containing private fixture material.
+ const error=rejected([{...call,name:'private-name-must-not-leak',arguments:'{"secret":"private-value"}'}]);
+ // Then callers can request correction without disclosing the rejected payload.
+ expect(error.details).toMatchObject({category:'tool_call',subtype:'unknown_tool'});
+ expect(JSON.stringify(error.details)).not.toContain('private-name-must-not-leak');
+ expect(JSON.stringify(error.details)).not.toContain('private-value');
+});
+
+test('empty and malformed responses have machine-readable correction categories',()=>{
+ // Given provider outputs that cannot safely enter dispatch.
+ expect(rejected([]).details).toMatchObject({category:'response',subtype:'empty_response'});
+ expect(rejected([{...call,status:'in_progress'}]).details).toMatchObject({category:'response',subtype:'malformed_envelope'});
 });

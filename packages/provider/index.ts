@@ -72,6 +72,7 @@ export class OpenAIProvider implements Provider {
     }, {signal,onRetry:this.config.onRetry});
   }
   private async respondOnce(input:ResponseInputItem[],tools:Tool[],signal:AbortSignal,observer?:ProviderResponseObserver):Promise<Response>{
+    observer?.continuation?.(()=>undefined);
     const token=await this.credentialToken();
     signal.throwIfAborted();
     if(this.closed)throw new ProviderError("configuration","Provider is closed");
@@ -85,7 +86,7 @@ export class OpenAIProvider implements Provider {
       return this.sockets.pool.respond(body,signal,observer);
     }
     const stream=await client.responses.create(body,{signal});
-    return consumeResponse(stream,observer);
+    return consumeResponse(stream,observer,signal);
 
   }
 }

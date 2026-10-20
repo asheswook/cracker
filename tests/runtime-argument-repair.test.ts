@@ -11,7 +11,7 @@ import type {Provider,ResponseInputItem} from '../packages/provider/index.ts';
 import {fixture,message,wire} from './anthropic-context-fixture.ts';
 
 class ObservedJournal extends Journal {readonly done=Promise.withResolvers<void>();override finish(run:string){super.finish(run);this.done.resolve();}}
-const call=(id:string,args:string):ResponseOutputItem=>({type:'function_call',call_id:id,name:'shell',arguments:args});
+const call=(id:string,args:string):Extract<ResponseOutputItem,{type:'function_call'}>=>({type:'function_call',call_id:id,name:'shell',arguments:args});
 const finish:ResponseOutputItem={type:'message',id:'final',role:'assistant',status:'completed',content:[{type:'output_text',text:'done',annotations:[]}]};
 const effect=(id:string)=>call(id,JSON.stringify({command:`printf '${id}\\n' >> "$OUTPUT_DIR/effects.txt"`}));
 const response=(output:ResponseOutputItem[]):ModelResponse=>({id:crypto.randomUUID(),created_at:0,output_text:'',error:null,incomplete_details:null,instructions:null,metadata:null,model:'fixture',object:'response',output,parallel_tool_calls:true,temperature:null,tool_choice:'auto',tools:[],top_p:null,status:'completed'});
@@ -66,15 +66,20 @@ test('cancellation during repair preserves bounded budget and earlier call recei
  expect(result.events.filter(e=>e.kind==='state')).toEqual([]);
  expect(result.observations.map(o=>o.action_id.split(':').at(-1))).toEqual(['prior']);
 });
-test('a repaired response cannot reuse an earlier completed call id',async()=>{
- const result=await scenario([[effect('prior')],[call('bad','{}')],[effect('prior')]]);
- expect(result.events.filter(e=>e.kind==='state').at(-1)).toMatchObject({state:'unknown'});
- expect(result.observations.map(o=>o.action_id.split(':').at(-1))).toEqual(['prior']);
+test('duplicate prior call id is rejected then repaired without replaying the completed effect',async()=>{
+ // Given a completed real effect followed by two invalid responses.
+ const result=await scenario([[effect('prior')],[call('bad','{}')],[effect('prior')],[effect('corrected')],[finish]]);
+ // Then correction continues on the same run and the prior call never repeats.
+ expect(result.events.filter(e=>e.kind==='state').map(e=>e.state)).toEqual(['succeeded']);
+ expect(result.observations.map(o=>o.action_id.split(':').at(-1))).toEqual(['prior','corrected']);
+ expect(result.effects).toEqual(['prior','corrected']);expect(result.rounds).toBe(5);
 });
-test('unknown tool hidden after invalid arguments cannot enter repair',async()=>{
- const result=await scenario([[call('bad','{}'),{type:'function_call',call_id:'unknown',name:'not-offered',arguments:'{}'}],[finish]]);
- expect(result.rounds).toBe(1);expect(result.observations).toEqual([]);
- expect(result.events.filter(e=>e.kind==='state').at(-1)).toMatchObject({state:'unknown'});
+test('unknown tool in a mixed response is rejected then corrected before any action executes',async()=>{
+ // Given one invalid mixed batch followed by a valid corrected tool call.
+ const result=await scenario([[call('bad','{}'),{type:'function_call',call_id:'unknown',name:'not-offered',arguments:'{}'}],[effect('corrected')],[finish]]);
+ // Then the entire rejected batch has zero effects and the run continues.
+ expect(result.rounds).toBe(3);expect(result.effects).toEqual(['corrected']);
+ expect(result.events.filter(e=>e.kind==='state').map(e=>e.state)).toEqual(['succeeded']);
 });
 test('resume retains consumed repair budget and stops when the remaining repair fails',async()=>{
  const invalid=[call('bad','{}')];
@@ -83,10 +88,16 @@ test('resume retains consumed repair budget and stops when the remaining repair 
  expect(result.checkpoint?.argumentRepairs).toBe(2);
  expect(result.events.filter(e=>e.kind==='state').at(-1)).toMatchObject({state:'failed'});
 });
-test('transport failure during repair remains unknown and is never inferred again',async()=>{
+test('provider transport failure preserves recovery feedback without retrying or replaying effects',async()=>{
  const result=await scenario([[effect('prior')],[call('bad','{}')],[],[effect('must-not-run')]],false,undefined,false,3);
  expect(result.rounds).toBe(3);expect(result.effects).toEqual(['prior']);
  expect(result.events.filter(e=>e.kind==='state').at(-1)).toMatchObject({state:'unknown'});
+ const saved=result.checkpoint?.input.flatMap(item=>{
+  if(!('content' in item)||typeof item.content!=='string'||!item.content.startsWith('{'))return [];
+  const parsed:unknown=JSON.parse(item.content);
+  return typeof parsed==='object'&&parsed!==null&&'kind' in parsed&&parsed.kind==='runtime_failure_feedback'?[parsed]:[];
+ });
+ expect(saved).toHaveLength(1);
 });
 test('exhausted malformed argument repair ends failed with no executed actions',async()=>{
  // Given three invalid completed responses.
@@ -96,4 +107,36 @@ test('exhausted malformed argument repair ends failed with no executed actions',
  // Then inference stops truthfully at a known rejection boundary.
  expect(result.rounds).toBe(3);expect(result.observations).toEqual([]);
  expect(result.events.filter(e=>e.kind==='state').at(-1)).toMatchObject({state:'failed'});
+});
+
+for(const sample of [
+ {name:'duplicate current call id',subtype:'duplicate_call_id',invalid:[effect('duplicate'),effect('duplicate')]},
+ {name:'empty completed response',subtype:'empty_response',invalid:[]},
+ {name:'unfinished tool response',subtype:'malformed_envelope',invalid:[{...call('unfinished','{}'),status:'in_progress'}]},
+] satisfies {name:string;subtype:string;invalid:ResponseOutputItem[]}[])test(`${sample.name} is corrected without dispatching rejected effects`,async()=>{
+ // Given an earlier completed effect and one rejected provider response.
+ const result=await scenario([[effect('prior')],sample.invalid,[effect('corrected')],[finish]]);
+ // Then the corrected batch completes on the same run, and feedback identifies the failure.
+ expect(result.events.filter(e=>e.kind==='state').map(e=>e.state)).toEqual(['succeeded']);
+ expect(result.effects).toEqual(['prior','corrected']);expect(result.rounds).toBe(4);
+ const feedback=result.history[2]?.flatMap(item=>{
+  if(!('content' in item)||typeof item.content!=='string'||!item.content.startsWith('{'))return [];
+  const parsed:unknown=JSON.parse(item.content);
+  return typeof parsed==='object'&&parsed!==null&&'kind' in parsed&&parsed.kind==='tool_argument_repair'?[parsed]:[];
+ });
+ expect(feedback).toContainEqual(expect.objectContaining({kind:'tool_argument_repair',executed_calls:0,validation:expect.objectContaining({subtype:sample.subtype})}));
+});
+
+for(const invalid of [
+ [{type:'function_call',call_id:'unknown',name:'not-offered',arguments:'{}'}],
+ [effect('duplicate'),effect('duplicate')],
+ [],
+] satisfies ResponseOutputItem[][])test(`structural correction budget is bounded for ${JSON.stringify(invalid)}`,async()=>{
+ // Given three successive invalid responses and a fourth effect that must never run.
+ const result=await scenario([invalid,invalid,invalid,[effect('must-not-run')]]);
+ // Then two correction opportunities are exhausted at a known no-effect boundary.
+ expect(result.rounds).toBe(3);expect(result.effects).toEqual([]);
+ expect(result.events.filter(e=>e.kind==='state').at(-1)).toMatchObject({state:'failed'});
+ expect(result.checkpoint?.argumentRepairs).toBe(2);
+ expect(result.events.some(event=>event.kind==='message'&&event.content.length>0)).toBe(true);
 });

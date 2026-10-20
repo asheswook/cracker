@@ -20,6 +20,9 @@ async function unknown(
   const input = await f.newTask();
   const assignment = (await poll()).assignment;
   if (!assignment) throw new TypeError("Expected initial assignment");
+  expect((await f.request("/v1/daemon/events", f.machine, {
+    kind: "input_applied", event_id: crypto.randomUUID(), run_id: assignment.run_id, message_id: input.message.id,
+  })).status).toBe(200);
   expect(
     (
       await f.request("/v1/daemon/events", f.machine, {
@@ -136,7 +139,7 @@ test("concurrent idle polls assign exactly one run around historical unknown", a
   ).toBe(2);
 });
 
-test("unknown followup cannot return control held by another paused task", async () => {
+test("followups to unknown and paused tasks preserve explicit user computer ownership", async () => {
   const old = await unknown();
   await f.newTask();
   const active = (await poll()).assignment;
@@ -154,7 +157,8 @@ test("unknown followup cannot return control held by another paused task", async
   await followup(active.task);
   expect(
     (await f.sql`SELECT control_state FROM assistant.vms WHERE id=${f.vm}`)[0]?.["control_state"],
-  ).toBe("switching");
+  ).toBe("user");
+  expect(await f.sql`SELECT id FROM assistant.commands WHERE vm_id=${f.vm} AND status='pending'`).toHaveLength(0);
 });
 
 test("commands-only observer never claims or quarantines work without run identity", async () => {

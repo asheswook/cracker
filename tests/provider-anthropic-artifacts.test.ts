@@ -82,13 +82,17 @@ test.each([
       );
       const document = parts.find((part) => part.type === "document");
       if (fixture.source === "local") expect(document).toBeUndefined();
-      else
+      else if (fixture.source === "text") {
+        // Text attachments travel as plain text so proxies that only accept PDF documents work.
+        expect(document).toBeUndefined();
+        expect(parts.some((part) => part.type === "text" && part.text.includes(`<attachment name=${JSON.stringify(fixture.name)}>\n${fixture.bytes}\n</attachment>`))).toBe(true);
+      } else
         expect(document).toMatchObject({
           type: "document",
           title: fixture.name,
           source: {
             type: fixture.source,
-            data: fixture.source === "text" ? fixture.bytes : bytes.toString("base64"),
+            data: bytes.toString("base64"),
           },
         });
       expect(

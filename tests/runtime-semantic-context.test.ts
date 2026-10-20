@@ -176,9 +176,10 @@ test("A to B to A preserves generating context and originals across a later run"
     expect(packets[0]?.context_id).toBe(packets[3]?.context_id);
     expect(packets[1]?.context_id).not.toBe(packets[0]?.context_id);
     expect(packets[3]?.recent_messages.some(source => source.content === "Compare library membership and borrowing exceptions")).toBe(true);
-    expect(packets[3]?.notes.some(note => note.text === "Compare library membership and borrowing exceptions")).toBe(true);
+    expect(packets[3]?.notes.some(note => note.text === "Return to library membership and loan eligibility")).toBe(true);
     const replies = await f.sql`SELECT m.content,l.context_id FROM assistant.messages m JOIN assistant.semantic_context_links l ON l.message_id=m.id WHERE m.workspace_id=${f.workspace} AND m.role='assistant' ORDER BY m.sequence`;
-    expect(replies.map(row => row["context_id"])).toEqual(packets.map(packet => packet?.context_id));
+    expect(replies.map(row => row["content"])).toEqual(['answer-3','answer-4']);
+    expect(replies.map(row => row["context_id"])).toEqual(packets.slice(2).map(packet => packet?.context_id));
     expect(f.routes()).toBe(2);
   } finally { await f.close(); }
 }, 20000);
@@ -409,3 +410,59 @@ test("the user's message is marked read before slow context lookup finishes", as
     expect((await f.sql`SELECT state FROM assistant.tasks WHERE id=${f.task}`)[0]?.["state"]).toBe("succeeded");
   } finally { release.resolve(); await f.close(); }
 }, 20000);
+
+test('all received messages are marked read while the first semantic lookup is blocked',async()=>{
+  const release=Promise.withResolvers<void>(),entered=Promise.withResolvers<void>();
+  const f=await fixture({beforePrepare:async()=>{entered.resolve();await release.promise;},main:async()=>response([answer('done')])});
+  try{
+    for(const text of ['First question','Correction to the first question','Use this final clarification'])await f.message(text);
+    await f.runtime.tick();
+    await entered.promise;
+    let count=0;
+    for(let i=0;i<100&&count<3;i++){
+      const rows=await f.sql`SELECT count(*)::int AS n FROM assistant.input_receipts WHERE workspace_id=${f.workspace}`;
+      count=z.object({n:z.number()}).parse(rows[0]).n;
+      if(count<3)await Bun.sleep(20);
+    }
+    expect(count).toBe(3);
+    release.resolve();
+    await f.journal.next.promise;
+    expect((await f.sql`SELECT state FROM assistant.tasks WHERE id=${f.task}`)[0]?.['state']).toBe('succeeded');
+  }finally{release.resolve();await f.close();}
+},20000);
+
+test('restart resumes acknowledged semantic preparation before inference without duplicating raw input',async()=>{
+ // Given an old semantic reference and a newer input acknowledged while its preparation is held.
+ const entered=Promise.withResolvers<void>(),release=Promise.withResolvers<void>();
+ const observed:ResponseInputItem[][]=[];let hold=false,source='';
+ const freshText='Calendar followup after acknowledged intake';
+ const f=await fixture({beforePrepare:async()=>{if(hold){hold=false;entered.resolve();await release.promise;}},main:async(input,db)=>{
+  observed.push(structuredClone(input));
+  if(observed.length===1){source=await db.message(freshText);hold=true;}
+  return response([answer('Recovered semantic reply')]);
+ }});
+ let resumed:Runtime|undefined;
+ try{
+  const first=await f.message('Library research before interruption');await f.runtime.tick();await entered.promise;
+  const run=f.journal.interrupted()[0];if(!run)throw new TypeError('Missing interrupted run');
+  const saved=f.journal.recoverable(run);if(!saved)throw new TypeError('Missing intake checkpoint');
+  const intake=z.object({pendingSemanticSourceIds:z.array(z.uuid()).optional()}).parse(saved);
+  const row=z.object({sequence:z.coerce.number()}).parse((await f.sql`SELECT sequence FROM assistant.messages WHERE id=${source}`)[0]);
+  expect(saved.cursor).toBe(row.sequence);expect(saved.semanticContext?.reference?.message_id).toBe(first);
+  expect(await f.sql`SELECT 1 FROM assistant.input_receipts WHERE message_id=${source}`).toHaveLength(1);
+  // When the process stops before preparation completes and a fresh Runtime restores the journal.
+  await f.runtime.stop();release.resolve();f.journal.next=Promise.withResolvers<void>();
+  resumed=f.createRuntime();await resumed.recover();await f.journal.next.promise;await resumed.flush();
+  // Then foreground inference uses the fresh source's context, and the saved raw input is not replayed.
+  const next=observed[1];if(!next)throw new TypeError('Missing restored inference');
+  const current=activePacket(next),old=activePacket(observed[0]??[]);
+  console.log(JSON.stringify({scenario:'pending_semantic_restart',pending:intake.pendingSemanticSourceIds??null,old_context:old?.context_id,new_context:current?.context_id,new_source_present:current?.recent_messages.some(message=>message.message_id===source)}));
+  expect(current?.recent_messages.some(message=>message.message_id===source)).toBe(true);
+  expect(current?.context_id).not.toBe(old?.context_id);
+  expect(intake.pendingSemanticSourceIds).toEqual([source]);
+  expect(next.filter(item=>'role'in item&&item.role==='user'&&'content'in item&&item.content===freshText)).toHaveLength(1);
+  expect(observed).toHaveLength(2);
+  expect(await f.sql`SELECT 1 FROM assistant.input_receipts WHERE message_id=${source}`).toHaveLength(1);
+  expect((await f.sql`SELECT state FROM assistant.tasks WHERE id=${f.task}`)[0]?.['state']).toBe('succeeded');
+ }finally{release.resolve();await resumed?.stop();await f.close();}
+},20000);

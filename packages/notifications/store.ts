@@ -15,9 +15,7 @@ export async function enqueueMessageNotification(
   if (!rows.length) return;
   await sql`INSERT INTO assistant.notification_deliveries(intent_id,subscription_id)
     SELECT ${message.id},s.id FROM assistant.push_subscriptions s JOIN assistant.credentials c ON c.token_hash=s.credential_hash
-    LEFT JOIN assistant.browser_sessions b ON b.token_hash=s.session_hash
-    WHERE s.workspace_id=${workspace} AND s.enabled AND c.revoked_at IS NULL
-    AND (s.session_hash IS NULL OR (b.revoked_at IS NULL AND b.expires_at>now())) ON CONFLICT DO NOTHING`;
+    WHERE s.workspace_id=${workspace} AND s.enabled AND c.revoked_at IS NULL ON CONFLICT DO NOTHING`;
 }
 export const Delivery = z.object({
   id: z.uuid(),
