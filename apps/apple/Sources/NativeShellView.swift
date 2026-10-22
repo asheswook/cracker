@@ -51,7 +51,10 @@ struct ShellView: View {
                 select(request.conversation, request.message)
             }
             .onChange(of: phase) { _, value in
-                if value == .active { NotificationService.shared.refresh(registerIfGranted: true) }
+                if value == .active {
+                    NotificationService.shared.clearDelivered()
+                    NotificationService.shared.refresh(registerIfGranted: true)
+                }
                 #if os(iOS)
                 shell.composerSceneActive = value == .active
                 shell.updateComposerPresentation()

@@ -36,6 +36,7 @@ export const Chat = memo(function Chat({
   selected,
   error,
   task,
+  tasks,
   connected,
   assistantName,
   replyComposing=null,
@@ -66,8 +67,10 @@ export const Chat = memo(function Chat({
   timeControlRoot?: HTMLElement | null;
   background?: ComponentProps<typeof BackgroundWork>['background'];
   onOpenTasks?: () => void;
+  tasks?: readonly Task[];
 }) {
   const workspace = client.snapshot().workspace;
+  const objectives = useMemo(() => new Map((tasks ?? []).map(item => [item.id, item.objective])), [tasks]);
   const files = useAttachmentDrafts(client.snapshot().workspace, selected);
   const [addingFiles, setAddingFiles] = useState(false);
   const [nativeMac, setNativeMac] = useState(false);
@@ -530,6 +533,7 @@ export const Chat = memo(function Chat({
               assistantName={assistantName}
               timeControlRoot={timeControlRoot}
               keep={focusMessage ?? focusTask ?? null}
+              objectives={objectives}
             />
           )}
           {!readOnly && <WorkingBubble

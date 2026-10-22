@@ -213,7 +213,7 @@
 @media (prefers-reduced-motion: reduce) {
   .history-link { transition: none; }
 }
-.task-highlight {
+.task-highlight:not(.message) {
   outline: 2px solid var(--line);
   outline-offset: var(--s2);
   border-radius: var(--r3);

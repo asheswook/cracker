@@ -6,6 +6,41 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { z } from "zod";
 
+/** Closes page targets whose renderer does not evaluate `1` within `waitMs`; returns their URLs. */
+export async function closeFrozenPages(endpoint: string, waitMs = 3000): Promise<string[]> {
+  const version = z.object({ webSocketDebuggerUrl: z.string() }).parse(await (await fetch(new URL("/json/version", endpoint), { signal: AbortSignal.timeout(5000) })).json());
+  const socket = new WebSocket(version.webSocketDebuggerUrl);
+  const pending = new Map<number, (message: { result?: unknown; error?: unknown }) => void>();
+  let next = 0;
+  socket.onmessage = event => {
+    const message = z.object({ id: z.number().optional(), result: z.unknown().optional(), error: z.unknown().optional() }).parse(JSON.parse(String(event.data)));
+    if (message.id !== undefined) { pending.get(message.id)?.(message); pending.delete(message.id); }
+  };
+  await new Promise<void>((resolve, reject) => { socket.onopen = () => resolve(); socket.onerror = () => reject(new TypeError("CDP socket failed")); });
+  const send = (method: string, params: object = {}, sessionId?: string, ms = waitMs) => new Promise<{ result?: unknown; error?: unknown } | null>(resolve => {
+    const id = ++next;
+    const timer = setTimeout(() => { pending.delete(id); resolve(null); }, ms);
+    pending.set(id, message => { clearTimeout(timer); resolve(message); });
+    socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+  });
+  const closed: string[] = [];
+  try {
+    const listed = await send("Target.getTargets", {}, undefined, 5000);
+    const pages = z.object({ targetInfos: z.array(z.object({ targetId: z.string(), type: z.string(), url: z.string() })) }).parse(listed?.result).targetInfos.filter(target => target.type === "page");
+    for (const page of pages) {
+      const attached = await send("Target.attachToTarget", { targetId: page.targetId, flatten: true });
+      const sessionId = z.object({ sessionId: z.string() }).safeParse(attached?.result).data?.sessionId;
+      if (!sessionId) continue;
+      const answered = await send("Runtime.evaluate", { expression: "1", returnByValue: true }, sessionId);
+      if (answered) { await send("Target.detachFromTarget", { sessionId }); continue; }
+      await send("Target.closeTarget", { targetId: page.targetId });
+      closed.push(page.url);
+    }
+  } finally { socket.close(); }
+  if (closed.length) console.error(JSON.stringify({ event: "browser.frozen_pages_closed", count: closed.length, hosts: closed.map(url => URL.parse(url)?.host ?? "") }));
+  return closed;
+}
+
 export async function browserServer(endpoint = "http://127.0.0.1:9222") {
   const server = new Server({ name: "assistant-browser", version: "1.0.0" }, { capabilities: { tools: {} } });
   let browser: Browser | undefined, context: BrowserContext | undefined, observed: Page | undefined;
@@ -26,7 +61,12 @@ export async function browserServer(endpoint = "http://127.0.0.1:9222") {
   const excluded = new Set(["browser_close", "browser_install"]);
   const getContext = async () => {
     if (!browser?.isConnected()) {
-      browser = await chromium.connectOverCDP(endpoint, { timeout: 8000, noDefaults: true });
+      try { browser = await chromium.connectOverCDP(endpoint, { timeout: 8000, noDefaults: true }); }
+      catch (error) {
+        // Playwright waits for every page to answer; one frozen tab blocks all browser tools.
+        if (!(error instanceof Error) || !(await closeFrozenPages(endpoint)).length) throw error;
+        browser = await chromium.connectOverCDP(endpoint, { timeout: 8000, noDefaults: true });
+      }
       context = browser.contexts()[0];
     }
     if (!context) throw new TypeError("Managed Chrome has no default context");
@@ -91,7 +131,11 @@ export async function browserServer(endpoint = "http://127.0.0.1:9222") {
         }) }] };
       }
       const pages = (await getContext()).pages();
-      const states = await Promise.all(pages.map(async page => ({ page, ...await page.evaluate(() => ({ focused: document.hasFocus(), visible: document.visibilityState === "visible" })) })));
+      const unresponsive = { focused: false, visible: false };
+      const states = await Promise.all(pages.map(async page => ({ page, ...await Promise.race([
+        page.evaluate(() => ({ focused: document.hasFocus(), visible: document.visibilityState === "visible" })).catch(() => unresponsive),
+        new Promise<typeof unresponsive>(resolve => setTimeout(() => resolve(unresponsive), 2000)),
+      ]) })));
       const active = states.find(item => item.focused)?.page
         ?? states.find(item => item.page === observed && item.visible)?.page
         ?? states.find(item => item.visible)?.page;

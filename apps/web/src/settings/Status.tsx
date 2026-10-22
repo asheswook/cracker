@@ -36,7 +36,7 @@ export function ExtensionStatus({
         ? '사용 중지됨'
         : fresh
           ? item.state === 'connected'
-            ? `연결됨 · 도구 ${item.tool_count}개`
+            ? `연결됨 · 도구 ${item.tool_count}개${'tools' in item && item.tools.some((tool) => item.disabled_tools.includes(tool.name)) ? ` · ${item.tools.filter((tool) => item.disabled_tools.includes(tool.name)).length}개 끔` : ''}`
             : '사용 준비됨'
           : '마지막 반영 확인됨';
   const Icon = pending ? Clock3 : failed ? AlertCircle : item.state === 'disabled' ? MinusCircle : Check;

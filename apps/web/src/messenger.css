@@ -429,3 +429,22 @@
   color: var(--ink);
   background: var(--message-received);
 }
+
+/* Opened from a notification or task: tint the bubble itself instead of framing the row. */
+.assistant-shell .message .bubble {
+  transition: background-color 600ms ease-out;
+}
+.assistant-shell .message.task-highlight .bubble {
+  --highlight-shift: #000 7%;
+  background-color: color-mix(in srgb, var(--message-received), var(--highlight-shift));
+  transition-duration: 160ms;
+}
+.assistant-shell .message.task-highlight .bubble.user {
+  background-color: color-mix(in srgb, var(--message-sent), var(--highlight-shift));
+}
+@media (prefers-color-scheme: dark) {
+  .assistant-shell .message.task-highlight .bubble { --highlight-shift: #fff 9%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .assistant-shell .message .bubble { transition: none; }
+}

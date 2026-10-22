@@ -75,6 +75,7 @@ final class NotificationService: NSObject, ObservableObject {
             configured = true
         }
         refresh(registerIfGranted: true)
+        clearDelivered()
         #if DEBUG
         if let index = ProcessInfo.processInfo.arguments.firstIndex(of: "--notification-result"),
            ProcessInfo.processInfo.arguments.indices.contains(index + 1) {
@@ -91,6 +92,13 @@ final class NotificationService: NSObject, ObservableObject {
         #endif
         return ["version": 1, "platform": platform, "installation_id": installationID,
                 "configured": configured, "permission": permission, "token": token as Any? ?? NSNull()]
+    }
+
+    /// Opening the app counts as reading everything that was waiting, not only the tapped notification.
+    func clearDelivered() {
+        let center = UNUserNotificationCenter.current()
+        center.removeAllDeliveredNotifications()
+        center.setBadgeCount(0) { _ in }
     }
 
     func refresh(registerIfGranted: Bool = false, completion: (() -> Void)? = nil) {

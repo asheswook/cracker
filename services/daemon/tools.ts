@@ -79,6 +79,10 @@ export class ToolExecutor {
   private readonly remoteSessions = new Map<Client,McpHttpSession>();
   private readonly connections = new Map<Client, string>();
   private readonly categories = new Map<Client, ServerCategory|null>();
+  private readonly disabledTools = new Map<Client, ReadonlySet<string>>();
+  private readonly offered = new Map<string, readonly {name:string;description:string}[]>();
+  /** Every tool the server offers, including ones the user switched off, so settings can list them. */
+  mcpTools(name:string):readonly {name:string;description:string}[]{return this.offered.get(name)??[];}
   private readonly clients = new Map<string, { readonly client: Client; readonly name: string; readonly server: string; readonly readOnly:boolean; readonly category:ServerCategory|null }>();
   toolCategory(name:string):ServerCategory|null{return this.clients.get(name)?.category??null;}
   parallelRead(name:string):boolean{return this.clients.get(name)?.readOnly===true;}
@@ -100,10 +104,10 @@ export class ToolExecutor {
       catch(error){if(!(error instanceof Error))throw error;process.stderr.write(JSON.stringify({event:"mcp.legacy.connection_failed",server:name})+"\n");}
     }
   }
-  async addMcp(name:string,config:z.infer<typeof McpConfig>,secrets:Readonly<Record<string,string>>,category:ServerCategory|null=null):Promise<number> {
+  async addMcp(name:string,config:z.infer<typeof McpConfig>,secrets:Readonly<Record<string,string>>,category:ServerCategory|null=null,disabledTools:readonly string[]=[]):Promise<number> {
     await this.removeMcp(name);
     const client=new Client({name:"autonomous-assistant",version:"0.1.0"});
-    this.categories.set(client,category);
+    this.categories.set(client,category);this.disabledTools.set(client,new Set(disabledTools));
     this.connections.set(client,name);this.secrets.set(client,[...Object.values(secrets), ...(config.transport === "http" ? mcpUrlRedactions(config.url) : [])].filter(Boolean));this.health.set(name,false);
     // Retain the offered catalogue during a run; idle reconciliation replaces it explicitly.
     client.onclose=()=>{if(this.connections.has(client))this.health.set(name,false);};
@@ -125,8 +129,8 @@ export class ToolExecutor {
     for(const [name,entry] of this.clients){if(entry.client!==client)continue;this.clients.delete(name);const index=this.definitions.findIndex(tool=>tool.type==="function"&&tool.name===name);if(index>=0)this.definitions.splice(index,1);}
   }
   async removeMcp(name:string):Promise<void>{
-    for(const [client,server] of this.connections){if(server!==name)continue;this.connections.delete(client);this.removeDefinitions(client);this.categories.delete(client);this.secrets.delete(client);const session=this.remoteSessions.get(client);this.remoteSessions.delete(client);if(session)await session.close();else await client.close();}
-    this.health.delete(name);
+    for(const [client,server] of this.connections){if(server!==name)continue;this.connections.delete(client);this.removeDefinitions(client);this.categories.delete(client);this.disabledTools.delete(client);this.secrets.delete(client);const session=this.remoteSessions.get(client);this.remoteSessions.delete(client);if(session)await session.close();else await client.close();}
+    this.health.delete(name);this.offered.delete(name);
   }
   mcpStatus(name:string):{connected:boolean;tool_count:number}{return {connected:this.health.get(name)===true,tool_count:[...this.clients.values()].filter(entry=>entry.server===name).length};}
   async pingMcp(name:string):Promise<void>{for(const [client,server] of this.connections)if(server===name)await (this.remoteSessions.get(client)?.run(new AbortController().signal,current=>current.ping({timeout:5000}))??client.ping({timeout:5000}));}
@@ -150,8 +154,11 @@ export class ToolExecutor {
     this.remoteSessions.get(client)?.pin(listed);
     this.removeDefinitions(client);
     if(!this.connections.has(client))return;
-    if(this.definitions.length+listed.length>100)throw new ShellError("mcp_tool_limit");
-    for (const tool of listed) {
+    this.offered.set(server,listed.map(tool=>({name:z.string().parse(this.redact(tool.name,client)).slice(0,200),description:z.string().parse(this.redact(tool.description??"",client)).slice(0,500)})));
+    const disabled=this.disabledTools.get(client)??new Set<string>();
+    const offered=listed.filter(tool=>!disabled.has(z.string().parse(this.redact(tool.name,client)).slice(0,200)));
+    if(this.definitions.length+offered.length>100)throw new ShellError("mcp_tool_limit");
+    for (const tool of offered) {
       if(JSON.stringify(tool.inputSchema).length>65536)throw new ShellError("mcp_schema_limit");
       const suffix = Bun.hash(tool.name).toString(16);
       const name = `mcp_${server}_${z.string().parse(this.redact(tool.name,client)).replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 20)}_${suffix}`;

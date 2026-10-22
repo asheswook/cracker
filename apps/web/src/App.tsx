@@ -315,6 +315,7 @@ export function App() {
           timeControlRoot={timeControlRoot}
           background={state.background}
           onOpenTasks={() => selectPanel('tasks')}
+          tasks={state.tasks}
         />
       </main>
       <AnimatePresence onExitComplete={() => setReserved(false)}>

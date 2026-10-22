@@ -38,6 +38,8 @@ export const Server = z.object({
   enabled: z.boolean(),
   config: McpConfig,
   category: z.enum(['web', 'computer', 'code', 'memory', 'other']).nullable().default(null),
+  disabled_tools: z.string().array().default([]),
+  tools: z.object({ name: z.string(), description: z.string() }).array().default([]),
   secret_keys: z.string().array(),
   ...observed,
 });

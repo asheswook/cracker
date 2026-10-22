@@ -60,6 +60,23 @@ export function publishNativeShell(authenticated: boolean, conversation: string 
   if (!nativeShellConfiguration()) return;
   void window.webkit?.messageHandlers?.assistantNative?.postMessage({ method: 'shellState', version: 1, authenticated, conversation, assistant, name, booting }).catch(() => {});
 }
+export function hasNativeCredentialBridge(): boolean {
+  return typeof window !== 'undefined' && Boolean(nativeShellConfiguration());
+}
+export async function saveNativeCredential(token: string): Promise<void> {
+  if (!hasNativeCredentialBridge()) return;
+  await window.webkit?.messageHandlers?.assistantNative?.postMessage({ method: 'credentialSave', version: 1, token }).catch(() => undefined);
+}
+export async function loadNativeCredential(): Promise<string | null> {
+  if (!hasNativeCredentialBridge()) return null;
+  const reply = await window.webkit?.messageHandlers?.assistantNative?.postMessage({ method: 'credentialLoad', version: 1 }).catch(() => undefined);
+  const token = (reply as { token?: unknown } | undefined)?.token;
+  return typeof token === 'string' && token.length >= 32 ? token : null;
+}
+export async function clearNativeCredential(): Promise<void> {
+  if (!hasNativeCredentialBridge()) return;
+  await window.webkit?.messageHandlers?.assistantNative?.postMessage({ method: 'credentialClear', version: 1 }).catch(() => undefined);
+}
 declare global {
   interface Window {
     readonly __ASSISTANT_SHELL__?: unknown;
@@ -69,7 +86,7 @@ declare global {
         readonly assistantFooter?: { postMessage(message: object): Promise<unknown> };
         readonly assistantReader?: { postMessage(message: import('./native-reader-protocol').ReaderPacket): Promise<unknown> };
         readonly assistantHeader?: { postMessage(message: object): Promise<unknown> };
-        readonly assistantNative?: { postMessage(message: { readonly method: 'shellPanel'; readonly version: 1; readonly panel: string } | { readonly method: 'shellOpen'; readonly version: 1; readonly conversation: string; readonly message: string } | { readonly method: 'shellState'; readonly version: 1; readonly authenticated: boolean; readonly conversation: string | null; readonly assistant: string | null; readonly name: string; readonly booting: boolean } | { readonly method: Method } | { readonly method: 'getNotificationAttention'; readonly conversation_id: string | null } | NativeComposerMessage | import('./native-model-login').ModelLoginMessage | { readonly method: 'hybridConnect'; readonly version: 1; readonly document: string }): Promise<unknown> };
+        readonly assistantNative?: { postMessage(message: { readonly method: 'shellPanel'; readonly version: 1; readonly panel: string } | { readonly method: 'shellOpen'; readonly version: 1; readonly conversation: string; readonly message: string } | { readonly method: 'shellState'; readonly version: 1; readonly authenticated: boolean; readonly conversation: string | null; readonly assistant: string | null; readonly name: string; readonly booting: boolean } | { readonly method: Method } | { readonly method: 'getNotificationAttention'; readonly conversation_id: string | null } | NativeComposerMessage | import('./native-model-login').ModelLoginMessage | { readonly method: 'hybridConnect'; readonly version: 1; readonly document: string } | { readonly method: 'credentialSave'; readonly version: 1; readonly token: string } | { readonly method: 'credentialLoad' | 'credentialClear'; readonly version: 1 }): Promise<unknown> };
       };
     };
   }

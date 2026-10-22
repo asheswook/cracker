@@ -41,6 +41,15 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
             let message = (body["message"] as? String).flatMap { UUID(uuidString: $0) == nil ? nil : $0 }
             target.openRequest = ShellOpenRequest(conversation: conversation, message: message)
             replyHandler(["accepted": true], nil)
+        case "credentialSave":
+            guard shell.panel == nil, body["version"] as? Int == 1, let token = body["token"] as? String, (32...4096).contains(token.count) else { replyHandler(["saved": false], nil); return }
+            replyHandler(["saved": CredentialStore.save(token)], nil)
+        case "credentialLoad":
+            guard shell.panel == nil, body["version"] as? Int == 1 else { replyHandler(["token": NSNull()], nil); return }
+            replyHandler(["token": CredentialStore.load() as Any? ?? NSNull()], nil)
+        case "credentialClear":
+            guard shell.panel == nil, body["version"] as? Int == 1 else { replyHandler(NSNull(), nil); return }
+            CredentialStore.clear(); replyHandler(NSNull(), nil)
         case "shellState":
             guard body["version"] as? Int == 1, body["authenticated"] is Bool else { replyHandler(nil, "Invalid shell state."); return }
             shell.receiveShellState(body); replyHandler(NSNull(), nil)

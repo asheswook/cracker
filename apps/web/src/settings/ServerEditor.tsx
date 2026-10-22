@@ -46,6 +46,15 @@ export function ServerEditor({
   const [name, setName] = useState(item?.name ?? '');
   const [enabled, setEnabled] = useState(item?.enabled ?? true);
   const [category, setCategory] = useState<Server['category']>(item?.category ?? null);
+  const [disabledTools, setDisabledTools] = useState<ReadonlySet<string>>(() => new Set(item?.disabled_tools ?? []));
+  const listedTools = item?.tools ?? [];
+  const toggleTool = (tool: string, on: boolean) =>
+    setDisabledTools((current) => {
+      const next = new Set(current);
+      if (on) next.delete(tool);
+      else next.add(tool);
+      return next;
+    });
   const [transport, setTransport] = useState<'stdio' | 'http'>(item?.config.transport ?? 'http');
   const [command, setCommand] = useState(item?.config.transport === 'stdio' ? item.config.command : '');
   const [args, setArgs] = useState(
@@ -90,6 +99,7 @@ export function ServerEditor({
                 name,
                 enabled,
                 category,
+                disabled_tools: [...disabledTools],
                 config,
                 ...(secrets === undefined ? {} : { secrets }),
               },
@@ -205,6 +215,35 @@ export function ServerEditor({
             savedKeys={item?.secret_keys ?? []}
             transport={transport}
           />
+          {item && (
+            <fieldset className="tool-switches">
+              <legend>사용할 도구</legend>
+              {listedTools.length ? (
+                <>
+                  <span className="field-help">끈 도구는 어시스턴트가 쓸 수 없어요.</span>
+                  <ul>
+                    {listedTools.map((tool) => (
+                      <li key={tool.name}>
+                        <label className="check-label">
+                          <input
+                            type="checkbox"
+                            checked={!disabledTools.has(tool.name)}
+                            onChange={(e) => toggleTool(tool.name, e.target.checked)}
+                          />
+                          <span>
+                            <span className="tool-switch-name">{tool.name}</span>
+                            {tool.description && <span className="field-help">{tool.description}</span>}
+                          </span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <span className="field-help">서버가 연결되면 도구 목록이 여기에 나와요.</span>
+              )}
+            </fieldset>
+          )}
           <label className="check-label">
             <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />이 서버
             사용하기

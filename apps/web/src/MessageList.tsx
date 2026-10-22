@@ -13,7 +13,9 @@ import { dayDividers } from './feed-labels';
 import { client } from './store';
 import { useMessageTimeReveal } from './useMessageTimeReveal';
 import './message-time-reveal.css';
-import { backgroundCaptions, isBackgroundMessage } from './background-message';
+import { feedItems } from './background-message';
+import type { BackgroundRun } from './background-message';
+import { BackgroundRunDialog } from './BackgroundRunDialog';
 import './background-message.css';
 
 const dayFormatter = new Intl.DateTimeFormat('ko-KR', {
@@ -26,6 +28,7 @@ function changedDay(current: string, previous: string | undefined): boolean {
   return !previous || new Date(current).toDateString() !== new Date(previous).toDateString();
 }
 const INITIAL_WINDOW = 120;
+const timeOf = (at: string) => new Date(at).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' });
 function DayDivider({ date }: { readonly date: string }) {
   return (
     <div className="day-divider">
@@ -41,6 +44,7 @@ export const MessageList = memo(function MessageList({
   assistantName = '크래커',
   timeControlRoot = null,
   keep = null,
+  objectives,
 }: {
   messages: Message[];
   pending: Pending[];
@@ -49,6 +53,8 @@ export const MessageList = memo(function MessageList({
   assistantName?: string;
   timeControlRoot?: HTMLElement | null;
   keep?: string | null;
+  /** Task objectives by id, used to title scheduled runs whose wake notice is not in view. */
+  objectives?: ReadonlyMap<string, string>;
 }) {
   const times = useMessageTimeReveal(reduced, messages[0]?.conversation_id ?? pending[0]?.conversation_id);
   const registerTime = useContext(HeaderTimeContext);
@@ -66,7 +72,9 @@ export const MessageList = memo(function MessageList({
   const keepIndex = keep ? shown.findIndex(message => message.id === keep || message.task_id === keep) : -1;
   const start = Math.max(0, Math.min(shown.length - size, keepIndex >= 0 ? keepIndex - 20 : shown.length));
   const visibleMessages = useMemo(() => shown.slice(start), [shown, start]);
-  const captions = useMemo(() => backgroundCaptions(visibleMessages), [visibleMessages]);
+  const items = useMemo(() => feedItems(visibleMessages, objectives), [visibleMessages, objectives]);
+  const [openRun, setOpenRun] = useState<string | null>(null);
+  const opened = openRun ? items.find((item): item is BackgroundRun => item.kind === 'run' && item.messages[0]?.id === openRun) : undefined;
   const hidden = start;
   const dividers = useMemo(() => {
     const all = new Set(dayDividers(shown));
@@ -93,10 +101,44 @@ export const MessageList = memo(function MessageList({
       )}
       <AnimatePresence>
         {[
-          ...visibleMessages.flatMap((m, index) => {
+          ...items.flatMap((item, index) => {
+            const previousItem = items[index - 1];
+            if (item.kind === 'run') {
+              const [first, ...rest] = item.messages;
+              if (!first) return [];
+              const newDay = item.messages.some(message => dividers.has(message.id));
+              return [
+                ...(newDay ? [<DayDivider key={`day-${first.id}`} date={first.created_at} />] : []),
+                <Motion.article
+                  key={first.client_message_id ?? first.id}
+                  id={`message-${first.id}`}
+                  data-task-id={first.task_id ?? undefined}
+                  className="message background-run new-speaker"
+                  aria-label="자동 작업"
+                  initial={!reduced && arrivals.has(first.client_message_id ?? first.id) ? { opacity: 0, y: 10 } : false}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: reduced ? 0 : 0.2, ease: [0.32, 0.72, 0, 1] }}
+                >
+                  {rest.map(message => <span key={message.id} id={`message-${message.id}`} className="background-run-anchor" />)}
+                  <button
+                    type="button"
+                    className="background-run-row"
+                    aria-label={`자동 작업 결과 보기: ${item.title}`}
+                    aria-haspopup="dialog"
+                    onClick={() => setOpenRun(first.id)}
+                  >
+                    <Repeat2 size={13} aria-hidden="true" />
+                    <span className="background-run-title">{item.title}</span>
+                    {item.preview && <span className="background-run-preview">{item.preview}</span>}
+                    {item.at && <time dateTime={item.at}>{timeOf(item.at)}</time>}
+                  </button>
+                </Motion.article>,
+              ];
+            }
+            const m = item.message;
             const systemContent = systemMessageContent(m);
             if (systemContent === null) return [];
-            const previous = visibleMessages[index - 1];
+            const previous = previousItem?.kind === 'message' ? previousItem.message : undefined;
             const newDay = dividers.has(m.id);
             return [
               ...(newDay ? [<DayDivider key={`day-${m.id}`} date={m.created_at} />] : []),
@@ -104,7 +146,7 @@ export const MessageList = memo(function MessageList({
                 key={m.client_message_id ?? m.id}
                 id={`message-${m.id}`}
                 data-task-id={m.task_id ?? undefined}
-                className={`message ${m.role} ${isBackgroundMessage(m) ? 'background-work' : ''} ${!newDay && previous?.role === m.role ? 'same-speaker' : 'new-speaker'}`}
+                className={`message ${m.role} ${!newDay && previous?.role === m.role ? 'same-speaker' : 'new-speaker'}`}
                 aria-label={
                   m.role === 'system' ? '시스템 알림' : m.role === 'assistant' ? assistantName : '내 메시지'
                 }
@@ -113,7 +155,6 @@ export const MessageList = memo(function MessageList({
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: reduced ? 0 : 0.2, ease: [0.32, 0.72, 0, 1] }}
               >
-                {captions.has(m.id) && <div className="background-work-caption"><Repeat2 size={12} aria-hidden="true" />자동 작업</div>}
                 {m.role === 'system' ? (
                   <SystemEvent>{systemContent}</SystemEvent>
                 ) : (
@@ -121,10 +162,7 @@ export const MessageList = memo(function MessageList({
                 )}
                 <Attachments items={m.attachments} />
                 <time className="message-time" dateTime={m.created_at}>
-                  {new Date(m.created_at).toLocaleTimeString('ko-KR', {
-                    hour: 'numeric',
-                    minute: '2-digit',
-                  })}
+                  {timeOf(m.created_at)}
                 </time>
                 {m.role === 'user' && (
                   <Motion.div
@@ -187,6 +225,10 @@ export const MessageList = memo(function MessageList({
           ]),
         ]}
       </AnimatePresence>
+      {opened && createPortal(
+        <BackgroundRunDialog key={openRun} run={opened} onClose={() => setOpenRun(null)} />,
+        times.ref.current?.closest('.assistant-shell') ?? document.body,
+      )}
     </Motion.div>
   );
 });

@@ -1,15 +1,75 @@
-.message.background-work > .bubble {
-  opacity: 0.72;
-}
-.background-work-caption {
-  display: flex;
+/* A scheduled run collapses into one quiet timeline row; its output opens in a dialog. */
+.message.background-run {
   align-items: center;
-  gap: var(--s1);
-  margin-bottom: var(--s1);
-  color: var(--message-secondary);
-  font-size: var(--t-micro);
 }
-.message.background-work > .system-event {
-  opacity: 0.72;
+.background-run-anchor {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+.background-run-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: 'icon title time' '. preview preview';
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 2px;
+  width: min(520px, 100%);
+  min-height: 44px;
+  margin: 0;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: var(--r-lg, 14px);
+  background: transparent;
+  color: var(--message-secondary, var(--muted));
+  font: inherit;
   font-size: var(--t-caption);
+  line-height: 16px;
+  text-align: start;
+  cursor: pointer;
+  transition: background-color 600ms ease-out;
+}
+.background-run-row > svg {
+  grid-area: icon;
+}
+.background-run-title {
+  grid-area: title;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--message-ink, var(--ink));
+  font-weight: 500;
+}
+.background-run-preview {
+  grid-area: preview;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.background-run-row > time {
+  grid-area: time;
+  font-variant-numeric: tabular-nums;
+}
+@media (hover: hover) {
+  .background-run-row:hover {
+    background: var(--message-received, var(--wash));
+    transition-duration: 120ms;
+  }
+}
+.background-run-row:active {
+  background: var(--message-received, var(--wash));
+}
+.message.background-run.task-highlight .background-run-row {
+  --highlight-shift: #000 7%;
+  background-color: color-mix(in srgb, var(--message-received, var(--wash)), var(--highlight-shift));
+  transition-duration: 160ms;
+}
+@media (prefers-color-scheme: dark) {
+  .message.background-run.task-highlight .background-run-row { --highlight-shift: #fff 9%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .background-run-row { transition: none; }
 }

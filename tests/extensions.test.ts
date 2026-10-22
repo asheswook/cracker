@@ -208,3 +208,29 @@ test('MCP connection failures preserve a safe actionable cause through retry bac
   expect(observed?.['error_code']).toBe('authentication_failed');
  }finally{await tools.close();await endpoint.stop(true);await sql`DELETE FROM assistant.extension_servers WHERE id=${saved.id}`;}
 });
+test('a switched-off MCP tool is listed in settings but never offered to the model',async()=>{
+ // Given
+ const saved=await saveServer();
+ const tools=new ToolExecutor(),manager=new ExtensionManager(http,tools);
+ try{
+  await manager.reconcile(true);
+  const offered=z.object({servers:z.array(Server)}).parse(await(await get(`/v1/extensions?vm_id=${vm}`)).json()).servers.find(s=>s.id===saved.id);
+  const echo=offered?.tools.find(t=>t.name==='fixture_echo');
+  expect(echo).toBeDefined();
+  expect(tools.definitions.some(t=>t.type==='function'&&t.name.includes('fixture_echo'))).toBe(true);
+  // When
+  const updated=await saveServer({id:saved.id,disabled_tools:['fixture_echo']});
+  await manager.reconcile(true);
+  // Then
+  expect(updated.disabled_tools).toEqual(['fixture_echo']);
+  expect(tools.definitions.some(t=>t.type==='function'&&t.name.includes('fixture_echo'))).toBe(false);
+  const listed=z.object({servers:z.array(Server)}).parse(await(await get(`/v1/extensions?vm_id=${vm}`)).json()).servers.find(s=>s.id===saved.id);
+  expect(listed?.tools.some(t=>t.name==='fixture_echo')).toBe(true);
+  expect(listed?.disabled_tools).toEqual(['fixture_echo']);
+  // And turning it back on restores it; omitting the field keeps the choice.
+  await saveServer({id:saved.id,name:'fixture renamed'});await manager.reconcile(true);
+  expect(tools.definitions.some(t=>t.type==='function'&&t.name.includes('fixture_echo'))).toBe(false);
+  await saveServer({id:saved.id,disabled_tools:[]});await manager.reconcile(true);
+  expect(tools.definitions.some(t=>t.type==='function'&&t.name.includes('fixture_echo'))).toBe(true);
+ }finally{await tools.close();await sql`DELETE FROM assistant.extension_servers WHERE id=${saved.id}`;}
+});

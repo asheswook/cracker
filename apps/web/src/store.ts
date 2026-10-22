@@ -9,6 +9,8 @@ import type { Task, Vm, Schedule, Memory, Artifact,ReplyComposing, ReplyHandoff,
 import { AppearanceSettings, defaultAppearance, type AssistantAppearance } from './appearance/types';
 import { defaultAssistantName } from '../../../packages/appearance/schema';
 import { Instructions } from './settings/types';
+import { disableNotifications } from './notification-client';
+import { clearNativeCredential, hasNativeCredentialBridge, loadNativeCredential, saveNativeCredential } from './native-bridge';
 import { clearStartupCache, readStartupCache, writeStartupCache } from './startup-cache';
 type Snapshot = Readonly<{
   phase: 'loading' | 'login' | 'ready';
@@ -83,6 +85,7 @@ export class ClientStore {
   private sessionRetry: ReturnType<typeof setTimeout> | null = null;
   private sessionRequest: Promise<void> | null = null;
   private sessionAttempts = 0;
+  private renewing = false;
   private syncs = new Map<Id, Promise<void>>();
   private selectionRevision = 0;
   private replyRevision = 0;
@@ -145,7 +148,7 @@ export class ClientStore {
     } catch (e) {
       if (epoch !== this.epoch) return;
       if (e instanceof HTTPError && (e.response.status === 401 || e.response.status === 403)) {
-        this.clearSession();
+        this.expireSession();
         return;
       }
       this.patch({ phase: 'loading', connected: false, working: null, error: errorMessage(e) });
@@ -200,7 +203,28 @@ export class ClientStore {
     const epoch = this.epoch;
     const session = Session.parse(await http.post('/v1/session', { json: { token } }).json<unknown>());
     if (epoch !== this.epoch) return;
+    void saveNativeCredential(token);
     await this.establish(session);
+  }
+  private async renewFromStoredCredential(): Promise<boolean> {
+    if (this.renewing) return false;
+    this.renewing = true;
+    try {
+      const token = await loadNativeCredential();
+      if (!token) return false;
+      const epoch = this.epoch;
+      const session = Session.parse(await http.post('/v1/session', { json: { token } }).json<unknown>());
+      if (epoch !== this.epoch) return false;
+      await this.establish(session);
+      return true;
+    } catch (error) {
+      if (error instanceof HTTPError && (error.response.status === 401 || error.response.status === 403)) await clearNativeCredential();
+      return false;
+    } finally { this.renewing = false; }
+  }
+  private expireSession() {
+    if (!hasNativeCredentialBridge()) { this.clearSession(); return; }
+    void this.renewFromStoredCredential().then(renewed => { if (!renewed) this.clearSession(); });
   }
   private clearSession() {
     this.cancelControls();
@@ -225,6 +249,8 @@ export class ClientStore {
   }
   async logout() {
     this.cancelControls();
+    if (typeof window !== 'undefined') await disableNotifications().catch(() => undefined);
+    await clearNativeCredential();
     try {
       await http.delete('/v1/session');
     } catch (e) {
@@ -299,7 +325,7 @@ export class ClientStore {
       else if (this.value.selected) await this.sync(this.value.selected);
     } catch (e) {
       if (epoch === this.epoch) {
-        if (e instanceof HTTPError && e.response.status === 401) this.clearSession();
+        if (e instanceof HTTPError && e.response.status === 401) this.expireSession();
         else this.patch({ connected: false, composing:null,replyHandoff: null,working: null,error: errorMessage(e) });
       }
     } finally {
@@ -362,7 +388,7 @@ export class ClientStore {
       await this.sync(id);
     } catch (error) {
       if (epoch !== this.epoch || selection !== this.selectionRevision) return;
-      if (error instanceof HTTPError && error.response.status === 401) this.clearSession();
+      if (error instanceof HTTPError && error.response.status === 401) this.expireSession();
       else this.patch({ connected: false, composing: null, replyHandoff: null, working: null, error: errorMessage(error) });
     }
   }
@@ -545,7 +571,7 @@ export class ClientStore {
       return true;
     } catch (error) {
       if (current()) {
-        if (error instanceof HTTPError && error.response.status === 401) this.clearSession();
+        if (error instanceof HTTPError && error.response.status === 401) this.expireSession();
         else if (error instanceof HTTPError && error.response.status === 409) {
           try {
             const vms = await controlTransport.vms(signal);
