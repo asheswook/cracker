@@ -29,7 +29,9 @@ export async function consumeResponse(stream: AsyncIterable<ResponseStreamEvent>
     if(stopped&&responseId&&active.delete(stopped))observer?.({type:"text_done",response_id:responseId,item_id:stopped});
     if (event.type === "response.output_item.done") completed.set(event.output_index, event.item);
     if (event.type === "response.completed") {
-      const output = event.response.output.length > 0 ? event.response.output : [...completed.entries()].sort(([a], [b]) => a - b).map(([, item]) => item);
+      // Some upstreams (proxied providers) omit response.output on completion; fall back to the streamed items.
+      const reported = Array.isArray(event.response.output) ? event.response.output : [];
+      const output = reported.length > 0 ? reported : [...completed.entries()].sort(([a], [b]) => a - b).map(([, item]) => item);
       if (output.length === 0) throw new ProviderError("incomplete", "Provider completed without output");
       const output_text = output.flatMap(item => item.type === "message" ? item.content.flatMap(content => content.type === "output_text" ? [content.text] : []) : []).join("");
       return { ...event.response, output, output_text };

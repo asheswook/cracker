@@ -1,3 +1,4 @@
+import { forgetIn as forgetTreeSources } from "../../../packages/knowledge-tree/store";
 import { ownedVersion } from "../../../packages/extensions/versions.ts";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -122,6 +123,8 @@ export function personalRoutes(sql: Database) {
       const memory = Memory.parse(rows[0]);
       if (memory.source_message_id) {
         await tx`INSERT INTO assistant.memory_suppressions(workspace_id,source_message_id) VALUES(${workspace},${memory.source_message_id}) ON CONFLICT DO NOTHING`;
+        // A deleted memory source also leaves the knowledge tree (membership, citing facts/links, emptied nodes).
+        await forgetTreeSources(tx, workspace, [memory.source_message_id]);
         await tx`UPDATE assistant.memories SET deleted_at=now() WHERE workspace_id=${workspace} AND source_message_id=${memory.source_message_id}`;
       }
       await recordEvent(tx, { workspace, kind: "memory.deleted", payload: JSON.stringify({ id }) });

@@ -27,6 +27,8 @@ import { workSearchRoutes } from "./routes/work-search.ts";
 import { screenIceRoutes, type ScreenTurnSettings } from "./screen-ice";
 import { semanticContextRoutes, semanticContextClientRoutes } from "./routes/semantic-context";
 import { semanticStructureRoutes } from "./routes/semantic-structure";
+import { knowledgeTreeRoutes } from "./routes/knowledge-tree";
+import type { KnowledgeTreeAi } from "../../packages/knowledge-tree/ai";
 import type { SemanticClassifier, SemanticRetriever } from "../../packages/context/schema";
 import { fenceSession } from './repository/daemon-session';
 import { daemonDatabase, daemonRequest } from './daemon-db';
@@ -41,6 +43,8 @@ export function createApp(
     readonly screenTurn?: ScreenTurnSettings;
   readonly semanticContexts?: { readonly classify?: SemanticClassifier; readonly retrieve?: SemanticRetriever };
   readonly semanticStructureMode?: 'off'|'shadow'|'on';
+  readonly knowledgeTreeMode?: 'off'|'shadow'|'on';
+  readonly knowledgeTree?: KnowledgeTreeAi;
   } = {},
 ) {
   const allowedOrigins = options.allowedOrigins ?? [];
@@ -146,7 +150,8 @@ export function createApp(
     app.route("/v1", semanticContextClientRoutes(sql));
   }
   app.route("/v1/daemon", semanticStructureRoutes(daemonSql));
-  app.route("/v1/daemon", daemonRoutes(daemonSql, Boolean(options.semanticContexts), options.semanticStructureMode));
+  app.route("/v1/daemon", knowledgeTreeRoutes(daemonSql, options.knowledgeTree));
+  app.route("/v1/daemon", daemonRoutes(daemonSql, Boolean(options.semanticContexts), options.semanticStructureMode, options.knowledgeTreeMode));
   app.route("/v1", clientRoutes(sql));
   app.notFound((c) => c.json({ error: { code: "not_found", message: "Route not found" } }, 404));
   app.onError((error, c) => {
@@ -163,6 +168,9 @@ export function createApp(
         type: error.name,
         code: "code" in error && typeof error.code === "string" ? error.code : null,
         path: c.req.path,
+        // Postgres errors carry a short routine name and message; no row data is included.
+        ...("routine" in error && typeof error.routine === "string" ? { routine: error.routine } : {}),
+        ...(c.req.path.startsWith("/v1/daemon/") && (c.req.path.includes("/tree/") || c.req.path.startsWith("/v1/daemon/knowledge-tree/")) ? { message: error.message.slice(0, 200) } : {}),
       }),
     );
     return c.json({ error: { code: "internal_error", message: "Request failed" } }, 500);

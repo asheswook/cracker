@@ -87,6 +87,7 @@ export const Assignment = z.object({
   offered: z.boolean().optional(),
   lane: TaskLane.optional(),
   semantic_structure_mode: z.enum(['off','shadow','on']).optional(),
+  knowledge_tree_mode: z.enum(['off','shadow','on']).optional(),
   semantic_context_enabled: z.boolean().optional(),
   task: Task,
   run_id: Id,

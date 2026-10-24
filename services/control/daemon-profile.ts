@@ -5,7 +5,7 @@ import { eventVmLock } from './repository/event-lock';
 // upgrade SHARE to UPDATE after acquiring run/task locks.
 export function daemonProfile(method:string,path:string,body:unknown,view?:string){
   const session=path==='/v1/daemon/session',poll=path==='/v1/daemon/poll';
-  const protectedRead=/\/context\/[^/]+\/(claims\/read|structure\/(read|corpus))$/.test(path);
+  const protectedRead=/\/context\/[^/]+\/(claims\/read|structure\/(read|corpus)|tree\/(snapshot|search|sources|clef|vectors|embed-texts|queue\/status))$/.test(path)||/^\/v1\/daemon\/knowledge-tree\/(snapshot|search|sources|clef|vectors|embed-texts|queue\/status)$/.test(path);
   // Audited GET exceptions: responsibility dispatch writes rows; the local login
   // callback owns/locks its VM before reading bound ciphertext. HEAD uses the
   // same handler/profile where the router supports it.
@@ -17,5 +17,8 @@ export function daemonProfile(method:string,path:string,body:unknown,view?:strin
   if(/\/(accept|resume)\//.test(path)||path.endsWith('/computer-control')||/\/(schedules|extensions|model-settings|model-account|subscription)(\/|$)/.test(path))vmLock='update';
   if(path.endsWith('/composing'))vmLock='no-key-update';
   if(path.endsWith('/events')&&body!==null&&typeof body==='object'&&'kind' in body)vmLock=eventVmLock(body.kind);
-  return {kind,workspaceLock:workspaceUpdate?'update':'share',vmLock,runLock:'update',inlineRead:read&&/^\/v1\/daemon\/context\/[^/]+$/.test(path)&&view==='work_mailbox'} as const;
+  // Knowledge tree writes are workspace-wide background work serialized by their own advisory locks; the run is only an
+  // ownership credential, so it is fenced with SHARE instead of FOR UPDATE (avoids contention with live run requests).
+  const treeWrite=!read&&(/\/context\/[^/]+\/tree\//.test(path)||path.startsWith('/v1/daemon/knowledge-tree/'));
+  return {kind,workspaceLock:workspaceUpdate?'update':'share',vmLock,runLock:treeWrite?'share':'update',inlineRead:read&&/^\/v1\/daemon\/context\/[^/]+$/.test(path)&&view==='work_mailbox'} as const;
 }

@@ -32,6 +32,7 @@ import { SemanticContexts } from "./semantic-context.ts";
 import { SemanticMetadataQueue, semanticMetadataDiagnostic } from "./semantic-context-queue.ts";
 import { infrastructureFailure, type InfrastructureFailure } from './runtime-diagnostic.ts';
 import { SemanticStructure } from './semantic-structure.ts';
+import { KnowledgeTree, treeMode } from './knowledge-tree.ts';
 import { ResponseAttribution } from './response-attribution.ts';
 import { BACKGROUND_SLOTS, SessionReconciliation } from '../../packages/protocol/parallel-runs';
 import { transientControlError } from './control-failure-policy';
@@ -54,7 +55,7 @@ export function activityCategory(name:string,mcpCategory:ReturnType<ToolExecutor
 export function desktopCapture(name:string):boolean{return name==="computer"||name==="computer_exec"||name==="desktop_get_app_state"||name.startsWith("desktop_")&&!desktopReadOnly(name);}
 function utcInstruction():string{return `Current UTC time: ${new Date().toISOString()}. Resolve relative future scheduling from this current time unless the user explicitly specifies a source-time anchor. Use the user timezone if known; otherwise ask when local wall-clock interpretation matters.`;}
 export type ControlTiming={readonly phase:"tick"|"extensions"|"preflush"|"poll"|"command"|"local_barrier"|"event_delivery"|"postflush";readonly command_id?:string;readonly event_kind?:DaemonEvent["kind"];readonly started_at:string;readonly duration_ms:number;readonly outcome:"completed"|"failed"};
-export type RuntimeTiming = { readonly kind:"provider"|"tool"|"semantic_select"|"structure_reference"; readonly run_id:string; readonly tool_name?:string; readonly input_image_count?:number; readonly output_count?:number; readonly duration_ms:number; readonly outcome:"completed"|"failed" };
+export type RuntimeTiming = { readonly kind:"provider"|"tool"|"semantic_select"|"structure_reference"|"knowledge_tree"; readonly run_id:string; readonly tool_name?:string; readonly input_image_count?:number; readonly output_count?:number; readonly duration_ms:number; readonly outcome:"completed"|"failed" };
 const DesktopFailureCode=z.enum(["desktop_busy","desktop_session_unbound","desktop_linux_required","desktop_session_closed","desktop_output_limit","desktop_protocol_invalid","desktop_worker_failed","desktop_worker_exited","desktop_worker_missing","desktop_write_failed","desktop_aborted","desktop_timeout","desktop_cleanup_failed","desktop_termination_failed","desktop_termination_unconfirmed","desktop_input_release_failed","desktop_directory_cleanup_failed","desktop_input_barrier_failed","desktop_guardian_failed","desktop_guardian_start_timeout","desktop_guardian_protocol_invalid","desktop_guardian_cleanup_timeout","desktop_guardian_termination_failed"]);
 export type RuntimeFailure=Partial<InfrastructureFailure>&{readonly event:"runtime.failure";readonly run_id:string;readonly type:"desktop"|"validation"|"syntax"|"runtime"|"unexpected";readonly code:string;readonly validation?:ToolArgumentDiagnostic;readonly repair?:{readonly attempt:number;readonly outcome:"regenerating"|"exhausted";readonly removed_images?:number}};
 export function runtimeFailure(runId:string,error:unknown):RuntimeFailure{
@@ -76,6 +77,7 @@ export class Runtime {
   private readonly memoryQueue: MemoryQueue;
   private readonly semanticQueue: SemanticMetadataQueue;
   private readonly structureQueue: SemanticStructure;
+  private readonly knowledgeTree: KnowledgeTree;
   private readonly extensions: ExtensionManager;
   private readonly runs = new Map<string,{readonly assignment:Assignment;readonly abort:AbortController;readonly done:Promise<void>;phase:'accepted'|'executing'|'finishing'|'terminal-acked'}>();
   private readonly sessionId:string;
@@ -92,7 +94,7 @@ export class Runtime {
   private flushing: Promise<Map<string,unknown>> | undefined;
   private control: "agent" | "user" = "agent";
   private readonly controlWaiters = new Set<() => void>();
-  constructor(private readonly config: RuntimeConfig & {readonly sessionProtocol?:boolean;readonly sessionId?:string;readonly toolConcurrency?:number;readonly agentConcurrency?:number;readonly semanticReferenceCombinedMaxBytes?:number}) {
+  constructor(private readonly config: RuntimeConfig & {readonly sessionProtocol?:boolean;readonly sessionId?:string;readonly toolConcurrency?:number;readonly agentConcurrency?:number;readonly semanticReferenceCombinedMaxBytes?:number;readonly knowledgeTreeAuxTimeoutMs?:number}) {
     this.sessionId=config.sessionId??crypto.randomUUID();
     this.control = config.journal.control();
     config.tools.setDesktopOwner(this.control);
@@ -101,6 +103,7 @@ export class Runtime {
     this.memoryQueue = new MemoryQueue({ journal: config.journal, provider: config.provider, http: this.http, ...(config.models ? { models: config.models } : {}) });
     this.semanticQueue = new SemanticMetadataQueue({ jobs: config.journal.semantic, provider: config.provider, http: this.http, ...(config.models ? { models: config.models } : {}) });
     this.structureQueue = new SemanticStructure({ jobs: config.journal.structure, provider: config.provider, http: this.http, ...(config.models ? { models: config.models } : {}) });
+    this.knowledgeTree = new KnowledgeTree({ jobs: config.journal.knowledge, provider: config.provider, http: this.http, ...(config.models ? { models: config.models } : {}), ...(config.knowledgeTreeAuxTimeoutMs ? { auxTimeoutMs: config.knowledgeTreeAuxTimeoutMs } : {}), busy: () => [...this.runs.values()].some(run => (run.assignment.lane ?? run.assignment.task.lane ?? 'foreground') === 'foreground') });
   }
   private async resetDesktop(workspace?:string):Promise<void>{
     try{
@@ -289,6 +292,7 @@ export class Runtime {
       const background=lane==='background';
       if(!(background&&event.kind==='message'&&(event.phase!=='final_answer'||!event.content.trim()||event.content.trim()==='NO_REPORT')))
         this.config.journal.structure.delivered(event);
+      if(!background)this.config.journal.knowledge.delivered(event);
       this.config.journal.delivered(event.event_id);
       if(event.kind==='command_ack')for(const id of this.config.journal.stopped(event.command_id)){
         this.config.journal.finish(id);this.runs.delete(id);this.terminalAcked.delete(id);
@@ -354,11 +358,12 @@ export class Runtime {
     }
     await this.measureControl({phase:"postflush"},()=>this.flush());
     // Admit work before maintenance readers can briefly occupy the VM fencing lock.
-    if (allowWork) { this.memoryQueue.tick(); this.semanticQueue.tick(); this.structureQueue.tick(); }
+    if (allowWork) { this.memoryQueue.tick(); this.semanticQueue.tick(); this.structureQueue.tick(); this.knowledgeTree.tick(); }
   }
   private start(assignment: Assignment,checkpoint?:RunCheckpoint): void {
     this.terminalAcked.delete(assignment.run_id);
     this.config.journal.structure.register(assignment);
+    this.config.journal.knowledge.register(assignment);
     if(checkpoint)this.config.journal.resume(assignment.run_id);else this.config.journal.start(assignment.run_id);
     const abort = new AbortController();
     const done = Promise.resolve().then(()=>{const run=this.runs.get(assignment.run_id);if(run)run.phase='executing';return this.run(assignment, abort.signal,checkpoint);});
@@ -453,6 +458,7 @@ export class Runtime {
     if(!checkpoint?.nativeContext)input=input.filter(item=>!("role" in item&&item.role==="system"&&"content" in item&&typeof item.content==="string"&&item.content.startsWith('{"kind":"enabled_skill_catalog",')));
     let nativeState=checkpoint?.nativeContext;
     const pendingSemanticSourceIds=new Set(checkpoint?.pendingSemanticSourceIds??[]);
+    const userTexts=new Map<string,string>();
     const appliedInputIds=new Set(checkpoint?.appliedInputIds??sourceInputIds(input));
     const attribution=new ResponseAttribution(checkpoint?.appliedUserIds);
     if(checkpoint&&!checkpoint.appliedUserIds)for(const message of assignment.messages)if(message.sequence<=checkpoint.cursor&&message.task_id===assignment.task.id)attribution.apply(message);
@@ -515,6 +521,11 @@ export class Runtime {
       };
       const selectSemantic = async (messageId: string, preparationSignal:AbortSignal): Promise<void> => {
         if(explainOnly)return;
+        if(treeMode(assignment)==='on'){
+          const query=userTexts.get(messageId);
+          const tree=query===undefined?null:await this.knowledgeTree.reference(assignment,messageId,query,preparationSignal,this.config.semanticReferenceCombinedMaxBytes);
+          if(tree){input.push({role:'user',content:tree.text});this.config.onTiming?.({kind:'knowledge_tree',run_id:assignment.run_id,duration_ms:tree.timing.duration_ms,outcome:'completed'});console.log(JSON.stringify({event:'daemon.knowledge_tree.reference',run_id:assignment.run_id,...tree.timing}));return;}
+        }
         // Structure reads do not depend on the semantic selection; start them alongside it.
         const structure=assignment.semantic_structure_mode==='on'?this.structureQueue.prefetch(assignment.run_id,messageId,preparationSignal):undefined;
         const appendStructure=async(reference:ResponseInputItem|null)=>{
@@ -583,7 +594,7 @@ export class Runtime {
         input.push({ role: "system", content: JSON.stringify({ source_message_id: message.id, source_role: message.role, created_at: message.created_at }) });
         if(explainOnly)input.push({role:message.role,content:message.content});else input.push(...await artifacts.input(message, signal));
         receiptIds.push(message.id);
-        if (message.role === "user"&&!message.synthetic&&!explainOnly)pendingSemanticSourceIds.add(message.id);
+        if (message.role === "user"&&!message.synthetic&&!explainOnly){pendingSemanticSourceIds.add(message.id);userTexts.set(message.id,message.content);}
         if(message.role!=="assistant")rememberInput(message.id);
       }
       for(const id of receiptIds)this.acknowledgeInput(assignment.run_id,id,signal);
@@ -607,7 +618,7 @@ export class Runtime {
           if(explainOnly)input.push({role:message.role,content:message.content});else input.push(...await artifacts.input(message, signal));
           semantic?.clearFinal();
           receiptIds.push(message.id);
-          if (message.role === "user"&&!message.synthetic) { argumentRepairs=0; if(!explainOnly)pendingSemanticSourceIds.add(message.id); }
+          if (message.role === "user"&&!message.synthetic) { argumentRepairs=0; if(!explainOnly){pendingSemanticSourceIds.add(message.id);userTexts.set(message.id,message.content);} }
           cursor=message.sequence;
           rememberInput(message.id);
         }

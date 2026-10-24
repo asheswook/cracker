@@ -26,3 +26,12 @@ test("done items without completion remain a failed response", async () => {
   // When / Then
   await expect(consumeResponse(stream(events))).rejects.toThrow("before response.completed");
 });
+test("completed snapshot without an output field falls back to streamed items", async () => {
+  // Given a proxied upstream whose terminal response omits `output` entirely.
+  const { output: _omitted, ...withoutOutput } = terminal;
+  const events = [{ type: "response.output_item.done", output_index: 0, sequence_number: 1, item: message }, { type: "response.completed", sequence_number: 2, response: withoutOutput }] as unknown as ResponseStreamEvent[];
+  // When
+  const result = await consumeResponse(stream(events));
+  // Then
+  expect(result.output).toEqual([message]);
+});

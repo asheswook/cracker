@@ -14,7 +14,7 @@ import { ComputerControlRequest, requestComputerControl } from "../repository/me
 import { NotifyUserRequest, notifyUser } from "../repository/notify-user";
 import { SessionRegistration } from '../../../packages/protocol/parallel-runs';
 import { acceptOffer, registerSession, fenceSession } from '../repository/daemon-session';
-export function daemonRoutes(sql: Database, semanticEnabled = false, structureMode:'off'|'shadow'|'on'='off') {
+export function daemonRoutes(sql: Database, semanticEnabled = false, structureMode:'off'|'shadow'|'on'='off',treeMode:'off'|'shadow'|'on'='off') {
   const app = new Hono<AppEnv>();
   app.post('/session',async c=>{
     const request=SessionRegistration.parse(await c.req.json());
@@ -37,7 +37,7 @@ export function daemonRoutes(sql: Database, semanticEnabled = false, structureMo
     const text = await c.req.text();
     const request = z.object({ checkpoint_cursor: z.number().int().nonnegative().optional(), recovery:RecoverySummary.optional(), desktop_control_scoped: z.boolean().default(false) }).refine(value=>!(value.recovery&&value.checkpoint_cursor!==undefined)).parse(text ? JSON.parse(text) : {});
     const assignment = await sql.begin(tx => resumeRun(tx, c.get("principal"), Id.parse(c.req.param("id")), request.checkpoint_cursor, request.desktop_control_scoped, request.recovery));
-    return c.json({ assignment: {...assignment, ...(semanticEnabled ? {semantic_context_enabled: true} : {}),semantic_structure_mode:structureMode} });
+    return c.json({ assignment: {...assignment, ...(semanticEnabled ? {semantic_context_enabled: true} : {}),semantic_structure_mode:structureMode,...(treeMode!=='off'?{knowledge_tree_mode:treeMode}:{})} });
   });
   app.get("/poll", async (c) => {
     const run = Id.optional().parse(c.req.query("run_id"));
@@ -45,7 +45,7 @@ export function daemonRoutes(sql: Database, semanticEnabled = false, structureMo
     const scoped = z.enum(["true", "false"]).optional().parse(c.req.query("desktop_control_scoped")) === "true";
     const result = DaemonPoll.parse(await sql.begin((tx) => poll(tx, c.get("principal"), run, view, scoped)));
     if (semanticEnabled && result.assignment) result.assignment.semantic_context_enabled = true;
-    if(result.assignment)result.assignment.semantic_structure_mode=structureMode;
+    if(result.assignment){result.assignment.semantic_structure_mode=structureMode;if(treeMode!=='off')result.assignment.knowledge_tree_mode=treeMode;}
     return c.json(result);
   });
   app.get("/context/:id", async (c) => {
@@ -58,7 +58,7 @@ export function daemonRoutes(sql: Database, semanticEnabled = false, structureMo
     const view = z.enum(["full", "mailbox", "work", "work_mailbox", "task_sources"]).parse(c.req.query("view") ?? "full");
     if (view === "work") {
       const assignment = await sql.begin(tx => workContext(tx,c.get("principal"),id));
-      return c.json({...assignment, ...(semanticEnabled ? {semantic_context_enabled: true} : {}),semantic_structure_mode:structureMode});
+      return c.json({...assignment, ...(semanticEnabled ? {semantic_context_enabled: true} : {}),semantic_structure_mode:structureMode,...(treeMode!=='off'?{knowledge_tree_mode:treeMode}:{})});
     }
     if (view === "work_mailbox") return c.json(await sql.begin('read only',tx => workMailbox(tx,c.get("principal"),id,after)));
     if (view === "task_sources") return c.json(await sql.begin(tx => taskSources(tx,c.get("principal"),id,after)));

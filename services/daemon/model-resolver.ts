@@ -5,11 +5,15 @@ import { OpenAIProvider, ProviderError, type Provider, type ProviderConfig } fro
 import { AnthropicProvider } from "../../packages/provider/anthropic.ts";
 import type { ProviderRetryObserver } from '../../packages/provider/retry.ts';
 import { SubscriptionProxy } from "./subscription-proxy.ts";
+import { auxiliarySelection } from "./auxiliary-model.ts";
 
 export type ProviderLease = { readonly provider: Provider; release(): Promise<void> };
+export type AuxiliaryLease = ProviderLease & { readonly model: string };
 export interface RunModelResolver {
   forRun(runId: string, signal: AbortSignal, expected?: ModelBinding): Promise<ProviderLease>;
   current(signal: AbortSignal): Promise<ProviderLease>;
+  /** Small same-family model for the knowledge tree, using the credentials of the run's model (or the default when no run). */
+  auxiliary?(signal: AbortSignal, runId?: string): Promise<AuxiliaryLease>;
 }
 export type ModelConnections = {
   readonly defaultProvider: Provider;
@@ -21,9 +25,19 @@ export type ModelConnections = {
 export class ModelResolver implements RunModelResolver {
   private readonly subscription: SubscriptionProxy;
   constructor(private readonly connections: ModelConnections) { this.subscription = connections.subscription ?? new SubscriptionProxy(); }
+  private defaultSelection(): ModelSelection {
+    const config = this.connections.defaultConfig;
+    return { provider: config.mode === "proxy" ? "subscription" : config.mode === "chatgpt" ? "chatgpt" : "openai", model: config.model, reasoning_effort: config.reasoningEffort ?? null };
+  }
+  async auxiliary(signal: AbortSignal, runId?: string): Promise<AuxiliaryLease> {
+    const access = ModelAccess.parse(await this.connections.http.get(runId ? `v1/daemon/model-settings/runs/${runId}` : "v1/daemon/model-settings/current", { signal }).json());
+    const selection = auxiliarySelection(access.binding?.selection ?? this.defaultSelection());
+    const lease = await this.open({ binding: { revision_id: access.binding?.revision_id ?? null, selection }, api_key: access.api_key }, runId);
+    return { ...lease, model: selection.model };
+  }
   async advertise(): Promise<void> {
     const config = this.connections.defaultConfig;
-    const selection: ModelSelection = { provider: config.mode === "proxy" ? "subscription" : config.mode === "chatgpt" ? "chatgpt" : "openai", model: config.model, reasoning_effort: config.reasoningEffort ?? null };
+    const selection = this.defaultSelection();
     const available: ModelSelection["provider"][] = [];
     if (config.tokenFile && existsSync(config.tokenFile)) available.push("chatgpt");
     if (config.apiKey) available.push("openai");

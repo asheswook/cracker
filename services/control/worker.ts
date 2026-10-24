@@ -14,6 +14,7 @@ import { createClefClassifier } from "../../packages/context/clef";
 import type { SemanticClassifier } from "../../packages/context/schema";
 import { CONTEXT_EMBEDDING_MODEL, createSemanticRetriever } from "../../packages/context/recall";
 import { synchronizeContextIndex } from "../../packages/context/recall-index";
+import type { KnowledgeTreeAi } from "../../packages/knowledge-tree/ai";
 import { z } from 'zod';
 import { screenUpgrade } from './screen-upgrade';
 
@@ -33,6 +34,7 @@ type Environment = {
   readonly SCREEN_TURN_API_TOKEN?: string;
   readonly AI?: Ai;
   readonly SEMANTIC_STRUCTURE_MODE?: string;
+  readonly KNOWLEDGE_TREE_MODE?: string;
 };
 
 function semanticClassifier(ai: Ai): SemanticClassifier {
@@ -44,6 +46,13 @@ function semanticClassifier(ai: Ai): SemanticClassifier {
       console.warn(JSON.stringify({event: "context.classifier_unavailable", type: error.name}));
       return {context_id: null, outcome: "uncertain", scores: [], model: "clef_unavailable"};
     }
+  };
+}
+
+function knowledgeTreeAi(ai: Ai): KnowledgeTreeAi {
+  return {
+    embed: (texts, signal) => ai.run(CONTEXT_EMBEDDING_MODEL, {text: [...texts], truncate_inputs: false}, {signal}),
+    clef: (input, signal) => ai.run('@cf/cloudflare/clef', input, {signal}),
   };
 }
 
@@ -105,6 +114,8 @@ export default {
       const push=notificationConfig(env);
       const response = await createApp(sql, {
         semanticStructureMode: z.enum(['off','shadow','on']).default('off').parse(env.SEMANTIC_STRUCTURE_MODE),
+        knowledgeTreeMode: z.enum(['off','shadow','on']).default('off').parse(env.KNOWLEDGE_TREE_MODE),
+        ...(env.AI ? { knowledgeTree: knowledgeTreeAi(env.AI) } : {}),
         semanticContexts: env.AI ? {
           classify: semanticClassifier(env.AI),
           retrieve: createSemanticRetriever(sql, (texts, signal) => {

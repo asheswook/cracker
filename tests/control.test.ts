@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
+import { applyOps as applyTreeOps } from "../packages/knowledge-tree/store";
 import { Command, DaemonPoll, Message, Task } from "../packages/protocol";
 import { dispatchDueSchedules } from "../services/control/repository/schedules";
 import { controlFixture } from "./control-fixture";
@@ -155,10 +156,17 @@ test("memory deletion suppresses re-extraction and isolates workspaces", async (
   const created = z
     .object({ memory: z.object({ id: z.uuid() }) })
     .parse(await (await request("/v1/memory", client, body)).json());
+  // The source exchange is in the knowledge tree.
+  const node = crypto.randomUUID();
+  const workspace = z.object({ workspace_id: z.uuid() }).parse((await sql`SELECT workspace_id FROM assistant.messages WHERE id=${message.id}`)[0]).workspace_id;
+  await applyTreeOps(sql, workspace, { user_message_id: message.id, ops: [{ op: "create_node", id: node, kind: "topic", title: "preference", aliases: [], entities: [], parent_id: null }, { op: "attach", node_id: node, user_message_id: message.id, noise: false, mentions: [], entities: [] }], expected: {} });
   // When user deletes it.
   expect(
     (await request(`/v1/memory/${created.memory.id}`, client, undefined, "DELETE")).status,
   ).toBe(200);
+  // Then the exchange also left the knowledge tree.
+  expect((await sql`SELECT count(*)::int AS n FROM assistant.knowledge_node_members WHERE user_message_id=${message.id}`)[0]).toMatchObject({ n: 0 });
+  expect((await sql`SELECT count(*)::int AS n FROM assistant.knowledge_nodes WHERE id=${node}`)[0]).toMatchObject({ n: 0 });
   // Then it cannot be extracted again or read by another workspace.
   expect((await request("/v1/memory", client, body)).status).toBe(409);
   expect(
