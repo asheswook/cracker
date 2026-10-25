@@ -1,0 +1,78 @@
+/* Draft and choice cards: the assistant's question, answered with one tap. Shares the result card's quiet surface. */
+.decision-card {
+  width: min(380px, 100%);
+  margin: 4px 0;
+  padding: 12px 14px;
+  border: 0.5px solid var(--line);
+  border-radius: 16px;
+  background: var(--message-canvas, var(--surface));
+  color: var(--message-ink, var(--ink));
+  font-size: var(--t-footnote);
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+.decision-card > header { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.decision-card-icon {
+  flex: none; display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 8px;
+  background: var(--message-received, var(--wash));
+}
+.decision-card-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.decision-card-state {
+  flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: var(--r-full);
+  background: var(--message-received, var(--wash)); color: var(--message-secondary, var(--muted)); font-size: var(--t-caption); font-weight: 500;
+}
+.decision-card dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; margin: 10px 0 0; }
+.decision-card dt { color: var(--message-secondary, var(--muted)); }
+.decision-card dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.draft-card-body {
+  margin: 10px 0 0; padding-top: 10px; border-top: 0.5px solid var(--line);
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto;
+}
+.draft-card-editor {
+  display: block; width: 100%; margin: 10px 0 0; padding: 10px 12px; box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--message-received, var(--wash));
+  color: inherit; font: inherit; line-height: 1.5; resize: vertical;
+}
+.draft-card-editor:focus { outline: none; border-color: var(--accent); }
+.decision-card footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.decision-card button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  min-height: 36px; padding: 0 14px; border: 0; border-radius: var(--r-full);
+  font: inherit; font-size: var(--t-footnote); font-weight: 500; cursor: pointer;
+  -webkit-tap-highlight-color: transparent; transition: opacity 120ms ease-out, background-color 120ms ease-out;
+}
+.decision-card button:disabled { opacity: 0.5; cursor: default; }
+.decision-card button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.decision-primary { background: var(--message-sent, var(--accent)); color: #fff; }
+.decision-secondary { background: var(--message-received, var(--wash)); color: var(--message-ink, var(--ink)); }
+.decision-option { background: transparent; color: var(--message-ink, var(--ink)); box-shadow: inset 0 0 0 1px var(--line); }
+@media (hover: hover) {
+  .decision-primary:not(:disabled):hover { opacity: 0.88; }
+  .decision-secondary:not(:disabled):hover, .decision-option:not(:disabled):hover { background: color-mix(in srgb, var(--message-ink, var(--ink)) 8%, transparent); }
+}
+.decision-card button:not(:disabled):active { opacity: 0.7; }
+.choice-card-question { margin: 0; font-size: var(--t-callout); line-height: 1.45; }
+.choice-card-options { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.choice-card-answer {
+  display: inline-flex; align-items: center; gap: 4px; margin: 8px 0 0; padding: 4px 10px; border-radius: var(--r-full);
+  background: var(--message-received, var(--wash)); font-weight: 500;
+}
+.decision-error { margin: 8px 0 0; color: var(--danger); font-size: var(--t-caption); }
+.message.user .answer-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; border-radius: 16px;
+  background: var(--message-sent, var(--accent)); color: #fff; font-size: var(--t-footnote);
+}
+@media (prefers-reduced-motion: reduce) { .decision-card button { transition: none; } }
+.bubble.user .answer-body { display: block; margin-top: 4px; opacity: 0.85; font-size: var(--t-footnote); white-space: pre-wrap; }
+.decision-quiet { background: transparent; color: var(--message-secondary, var(--muted)); padding: 0 8px !important; margin-right: auto; }
+@media (hover: hover) { .decision-quiet:not(:disabled):hover { color: var(--message-ink, var(--ink)); } }
+.choice-card-options .decision-quiet { margin-right: 0; margin-left: auto; }
+.decision-note { margin: 8px 0 0; color: var(--message-secondary, var(--muted)); font-size: var(--t-caption); }
+.decision-card[data-tone='busy'] .decision-card-state { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.decision-card[data-tone='done'] .decision-card-state { background: color-mix(in srgb, var(--success, #1f9d55) 14%, transparent); color: var(--success, #1f7a45); }
+.decision-card[data-tone='failed'] .decision-card-state { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+@media (prefers-color-scheme: dark) { .decision-card[data-tone='done'] .decision-card-state { color: #5fd08f; } }
+.choice-card-progress { color: var(--message-secondary, var(--muted)); font-weight: 400; }
+.spin { animation: decision-spin 1s linear infinite; }
+@keyframes decision-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }

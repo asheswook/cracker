@@ -4,6 +4,8 @@ export const BACKGROUND_RUN_PREFIX = '예약된 작업 실행: ';
 export const BACKGROUND_RUN_FALLBACK = '자동 작업';
 
 export function isBackgroundMessage(message: Message): boolean {
+  // A card waiting for the user is never folded away: it must stay answerable in the conversation.
+  if (message.blocks?.some(block => block.kind === 'draft' || block.kind === 'choice')) return false;
   return !message.notify && (message.origin === 'schedule' || message.origin === 'responsibility');
 }
 

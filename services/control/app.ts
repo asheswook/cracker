@@ -28,6 +28,7 @@ import { screenIceRoutes, type ScreenTurnSettings } from "./screen-ice";
 import { semanticContextRoutes, semanticContextClientRoutes } from "./routes/semantic-context";
 import { semanticStructureRoutes } from "./routes/semantic-structure";
 import { knowledgeTreeRoutes } from "./routes/knowledge-tree";
+import { topicRoutes } from "./routes/topics";
 import type { KnowledgeTreeAi } from "../../packages/knowledge-tree/ai";
 import type { SemanticClassifier, SemanticRetriever } from "../../packages/context/schema";
 import { fenceSession } from './repository/daemon-session';
@@ -140,6 +141,8 @@ export function createApp(
   app.route("/v1/daemon", artifactRoutes(daemonSql, options.artifactStore, true));
   app.route("/v1/daemon", workSearchRoutes(daemonSql, options.artifactStore, true));
   app.route("/v1", workSearchRoutes(sql, options.artifactStore));
+  app.route("/v1", topicRoutes(sql));
+  app.route("/v1/daemon", topicRoutes(daemonSql));
   app.route("/v1", artifactRoutes(sql, options.artifactStore));
   app.route("/v1/responsibilities", responsibilityClientRoutes(sql));
   app.route("/v1/daemon/responsibilities", responsibilityDaemonRoutes(daemonSql));

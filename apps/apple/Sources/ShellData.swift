@@ -35,10 +35,11 @@ enum ShellDate {
 }
 
 enum ShellPanel: String, CaseIterable, Identifiable {
-    case tasks, schedules, memory, computer, settings, notifications
+    case attention, tasks, schedules, memory, computer, settings, notifications
     var id: String { rawValue }
     var title: String {
         switch self {
+        case .attention: return "챙길 것"
         case .tasks: return "맡긴 일"
         case .schedules: return "예약"
         case .memory: return "기억"
@@ -49,6 +50,7 @@ enum ShellPanel: String, CaseIterable, Identifiable {
     }
     var symbol: String {
         switch self {
+        case .attention: return "tray"
         case .tasks: return "checklist"
         case .schedules: return "calendar"
         case .memory: return "brain"
@@ -61,6 +63,7 @@ enum ShellPanel: String, CaseIterable, Identifiable {
     var compact: Bool { self == .notifications }
     init?(webName: String) {
         switch webName {
+        case "attention": self = .attention
         case "tasks": self = .tasks
         case "schedules": self = .schedules
         case "memory": self = .memory

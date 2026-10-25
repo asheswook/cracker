@@ -6,6 +6,8 @@ import { createPortal } from 'react-dom';
 import { RefreshCw, Repeat2 } from 'lucide-react';
 import type { Message, Pending } from './types';
 import { Attachments } from './Attachments';
+import { ResultCard } from './ResultCard';
+import { ChoiceCard, DraftCard } from './DecisionCards';
 import { MessageBubble } from './MessageBubble';
 import { SystemEvent } from './SystemEvent';
 import { systemMessageContent } from './system-message';
@@ -16,6 +18,9 @@ import './message-time-reveal.css';
 import { feedItems } from './background-message';
 import type { BackgroundRun } from './background-message';
 import { BackgroundRunDialog } from './BackgroundRunDialog';
+import { useConversationTopics } from './topics/useConversationTopics';
+import { TopicSheet } from './topics/TopicSheet';
+import './topics/topics.css';
 import './background-message.css';
 
 const dayFormatter = new Intl.DateTimeFormat('ko-KR', {
@@ -74,6 +79,41 @@ export const MessageList = memo(function MessageList({
   const visibleMessages = useMemo(() => shown.slice(start), [shown, start]);
   const items = useMemo(() => feedItems(visibleMessages, objectives), [visibleMessages, objectives]);
   const [openRun, setOpenRun] = useState<string | null>(null);
+  const topics = useConversationTopics(conversation, messages.at(-1)?.id);
+  // Answers to cards, keyed by the card message and block, so an answered card shows its outcome instead of buttons.
+  const answers = useMemo(() => {
+    const out = new Map<string, Extract<NonNullable<Message['blocks']>[number], { kind: 'answer' }>>();
+    for (const message of messages) for (const block of message.blocks ?? []) if (block.kind === 'answer') out.set(`${block.message_id}:${block.block_id}`, block);
+    return out;
+  }, [messages]);
+  const [openTopic, setOpenTopic] = useState<string | null>(null);
+  // A chip is shown where the topic changes; a run of messages in one topic carries one chip.
+  const chips = useMemo(() => {
+    const out = new Map<string, { node: string; label: string; side: 'user' | 'assistant' }>();
+    let prev: string | null | undefined;
+    for (const item of items) {
+      const first = item.kind === 'run' ? item.messages[0] : item.message;
+      if (!first) continue;
+      const node = (item.kind === 'run' ? item.messages.map(m => topics.byMessage.get(m.id)?.node).find(Boolean) : topics.byMessage.get(first.id)?.node) ?? null;
+      if (node && node !== prev) {
+        const label = topics.nodes.get(node)?.label;
+        if (label) out.set(first.id, { node, label, side: first.role === 'user' ? 'user' : 'assistant' });
+      }
+      if (node || first.role === 'user') prev = node;
+    }
+    return out;
+  }, [items, topics]);
+  const chip = (id: string) => {
+    const c = chips.get(id);
+    return c ? [<button key={`topic-${id}`} type="button" className="topic-chip" data-side={c.side} aria-haspopup="dialog" aria-label={`주제 보기: ${c.label}`} onClick={() => setOpenTopic(c.node)}><span>{c.label}</span></button>] : [];
+  };
+  const jump = (messageId: string) => {
+    const node = document.getElementById(`message-${messageId}`);
+    if (!node) return;
+    node.scrollIntoView({ block: 'center', behavior: reduced ? 'instant' : 'smooth' });
+    node.classList.add('task-highlight');
+    setTimeout(() => node.classList.remove('task-highlight'), 2400);
+  };
   const opened = openRun ? items.find((item): item is BackgroundRun => item.kind === 'run' && item.messages[0]?.id === openRun) : undefined;
   const hidden = start;
   const dividers = useMemo(() => {
@@ -109,6 +149,7 @@ export const MessageList = memo(function MessageList({
               const newDay = item.messages.some(message => dividers.has(message.id));
               return [
                 ...(newDay ? [<DayDivider key={`day-${first.id}`} date={first.created_at} />] : []),
+                ...chip(first.id),
                 <Motion.article
                   key={first.client_message_id ?? first.id}
                   id={`message-${first.id}`}
@@ -140,13 +181,15 @@ export const MessageList = memo(function MessageList({
             if (systemContent === null) return [];
             const previous = previousItem?.kind === 'message' ? previousItem.message : undefined;
             const newDay = dividers.has(m.id);
+            const chipped = chip(m.id);
             return [
               ...(newDay ? [<DayDivider key={`day-${m.id}`} date={m.created_at} />] : []),
+              ...chipped,
               <Motion.article
                 key={m.client_message_id ?? m.id}
                 id={`message-${m.id}`}
                 data-task-id={m.task_id ?? undefined}
-                className={`message ${m.role} ${!newDay && previous?.role === m.role ? 'same-speaker' : 'new-speaker'}`}
+                className={`message ${m.role} ${!newDay && !chipped.length && previous?.role === m.role ? 'same-speaker' : 'new-speaker'}`}
                 aria-label={
                   m.role === 'system' ? '시스템 알림' : m.role === 'assistant' ? assistantName : '내 메시지'
                 }
@@ -157,6 +200,12 @@ export const MessageList = memo(function MessageList({
               >
                 {m.role === 'system' ? (
                   <SystemEvent>{systemContent}</SystemEvent>
+                ) : m.blocks?.length ? (
+                  // Cards carry the facts; the text fallback stays for notifications and search.
+                  m.blocks.map((block, i) => block.kind === 'result' ? <ResultCard key={i} block={block} />
+                    : block.kind === 'draft' ? <DraftCard key={i} message={m} block={block} answer={answers.get(`${m.id}:${block.id}`)} />
+                    : block.kind === 'choice' ? <ChoiceCard key={i} message={m} block={block} answer={answers.get(`${m.id}:${block.id}`)} />
+                    : <div key={i} className="bubble user"><span>{block.label}</span>{block.body && block.option !== 'later' ? <span className="answer-body">{block.body.length > 120 ? `${block.body.slice(0, 120)}…` : block.body}</span> : null}</div>)
                 ) : (
                   <MessageBubble role={m.role} content={m.content} />
                 )}
@@ -225,6 +274,10 @@ export const MessageList = memo(function MessageList({
           ]),
         ]}
       </AnimatePresence>
+      {openTopic && createPortal(
+        <TopicSheet key={openTopic} node={openTopic} onClose={() => setOpenTopic(null)} onJump={jump} />,
+        times.ref.current?.closest('.assistant-shell') ?? document.body,
+      )}
       {opened && createPortal(
         <BackgroundRunDialog key={openRun} run={opened} onClose={() => setOpenRun(null)} />,
         times.ref.current?.closest('.assistant-shell') ?? document.body,

@@ -42,7 +42,8 @@ async function scenario(outputs:ResponseOutputItem[][],tools=new ToolExecutor())
   const folders=await readdir(dir);const effects=await Promise.all(folders.map(folder=>Bun.file(join(dir,folder,'outputs/proof.txt')).exists()));
   const messages=z.array(z.object({content:z.string()})).parse(await sql`SELECT content FROM assistant.messages WHERE conversation_id=${conversation} AND role='assistant' ORDER BY sequence`);
   const phases=(await sql`SELECT phase FROM assistant.messages WHERE conversation_id=${conversation} AND role='assistant' ORDER BY sequence`).map(row=>row['phase']);
-  return {state,history,effect:effects.some(Boolean),zeroActions:journal.resumeSafe(run),messages,phases,messagesAtTool,failures,observations:journal.observations.forRun(run)};
+  const blocks=(await sql`SELECT blocks FROM assistant.messages WHERE conversation_id=${conversation} AND role='assistant' ORDER BY sequence`).map(row=>row['blocks']??null);
+  return {state,history,effect:effects.some(Boolean),zeroActions:journal.resumeSafe(run),messages,phases,blocks,messagesAtTool,failures,observations:journal.observations.forRun(run)};
  }finally{await runtime.stop();journal.close();await server.stop(true);await sql`UPDATE assistant.credentials SET revoked_at=now() WHERE workspace_id=${workspace}`;await sql.end();await rm(dir,{recursive:true,force:true});}
 }
 test('validated model progress is persisted before tools even when the call precedes commentary',async()=>{
@@ -59,6 +60,38 @@ test('replayed model progress is delivered once while new findings remain visibl
  // Then
  expect(result.messages.map(row=>row.content)).toEqual(['Inspecting the files.','Found two relevant files.','Done.']);
  expect(result.messagesAtTool).toEqual([['Inspecting the files.']]);expect(result.state).toBe('succeeded');
+});
+test('phase-less opening text alongside tool calls is delivered before the tools run',async()=>{
+ // Given: a provider without phases (Claude through the subscription proxy) sends an opening with its first call.
+ const plain=(text:string):ResponseOutputItem=>({type:'message',id:crypto.randomUUID(),role:'assistant',status:'completed',content:[{type:'output_text',text,annotations:[]}]});
+ // When
+ const result=await scenario([[plain('파일을 확인하고 여기 알려드릴게요.'),shell()],[plain('확인했습니다.')]],new FeedbackTools());
+ // Then: the opening is visible while the tool runs, and the completion follows.
+ expect(result.messagesAtTool).toEqual([['파일을 확인하고 여기 알려드릴게요.']]);
+ expect(result.messages.map(row=>row.content)).toEqual(['파일을 확인하고 여기 알려드릴게요.','확인했습니다.']);
+ expect(result.effect).toBe(true);expect(result.state).toBe('succeeded');
+});
+test('text explicitly marked final is still held while tool calls run',async()=>{
+ const result=await scenario([[message('final_answer','Premature answer'),shell()],[message('final_answer','Actual completion')]],new FeedbackTools());
+ expect(result.messagesAtTool).toEqual([[]]);
+ expect(result.messages.map(row=>row.content)).toEqual(['Actual completion']);
+});
+test('show_result stores a card message with its receipt and keeps the summary as text',async()=>{
+ // Given: the model reports a completed post with show_result, then a short final reply.
+ const card:ResponseOutputItem={type:'function_call',call_id:'card1',name:'show_result',arguments:JSON.stringify({action:'posted',channel:'Slack #개발',target:null,title:null,body:'오늘 13:30 회의 있습니다.',url:'https://example.slack.com/archives/C0/p1',at:'2026-10-24T12:15:00+09:00',summary:'Slack #개발에 일정을 올렸습니다.'})};
+ // When
+ const result=await scenario([[card],[message('final_answer','끝났습니다.')]]);
+ // Then
+ expect(result.state).toBe('succeeded');
+ expect(result.messages.map(row=>row.content)).toEqual(['Slack #개발에 일정을 올렸습니다.','끝났습니다.']);
+ expect(result.blocks[0]).toEqual([{kind:'result',action:'posted',channel:'Slack #개발',target:null,title:null,body:'오늘 13:30 회의 있습니다.',url:'https://example.slack.com/archives/C0/p1',at:'2026-10-24T12:15:00+09:00'}]);
+ expect(result.blocks[1]).toBeNull();
+});
+test('show_result drops a non-http link and an unparseable time instead of failing',async()=>{
+ const card:ResponseOutputItem={type:'function_call',call_id:'card2',name:'show_result',arguments:JSON.stringify({action:'sent',channel:'Gmail',target:'Elena',title:'Deck',body:null,url:'javascript:alert(1)',at:'tomorrow',summary:'메일을 보냈습니다.'})};
+ const result=await scenario([[card],[message('final_answer','보냈습니다.')]]);
+ expect(result.state).toBe('succeeded');
+ expect(result.blocks[0]).toEqual([{kind:'result',action:'sent',channel:'Gmail',target:'Elena',title:'Deck',body:null,url:null,at:null}]);
 });
 test('a simple final response receives no synthetic progress message',async()=>{
  // Given / When

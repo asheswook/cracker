@@ -3,8 +3,11 @@ import type { Query } from "../../services/control/db.ts";
 export async function enqueueMessageNotification(
   sql: Query,
   workspace: string,
-  message: { readonly id: string; readonly runId?: string },
+  message: { readonly id: string; readonly runId?: string; readonly progress?: boolean },
 ): Promise<void> {
+  // Progress ("확인해 볼게요") is for the open conversation, not the lock screen: only a reply, a card that needs the user,
+  // or an explicit notify_user interrupts. The caller knows which kind it is storing.
+  if (message.progress) return;
   const rows =
     await sql`INSERT INTO assistant.notification_intents(id,workspace_id,run_id,task_id,conversation_id,message_id,outcome)
     SELECT m.id,m.workspace_id,${message.runId ?? null},m.task_id,m.conversation_id,m.id,'message'

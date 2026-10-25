@@ -5,6 +5,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { z } from "zod";
+import { AdapterError, gmailFindSent, gmailList, gmailPage, gmailSendReply, gmailThread, slackRead } from "./source-adapters";
 
 /** Closes page targets whose renderer does not evaluate `1` within `waitMs`; returns their URLs. */
 export async function closeFrozenPages(endpoint: string, waitMs = 3000): Promise<string[]> {
@@ -93,10 +94,10 @@ export async function browserServer(endpoint = "http://127.0.0.1:9222") {
   };
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const listed = await (await connect()).listTools();
-    return { tools: listed.tools.filter(tool => !excluded.has(tool.name)).map(tool => ({ ...tool,
+    return { tools: [...SOURCE_TOOLS, ...listed.tools.filter(tool => !excluded.has(tool.name)).map(tool => ({ ...tool,
       description: `Built-in browser: the SAME visible Chrome, tabs and login session as computer use. No browser setup is needed. ${tool.description ?? ""}`,
       ...(tool.name === "browser_tabs" ? { description: "List, open, select or close tabs in the same visible Chrome. Use the stable tab_id returned by this tool for select/close; IDs survive reconnects. Never use numeric tab indexes.", inputSchema: { type: "object" as const, properties: { action: { type:"string", enum:["list","new","select","close"] }, tab_id:{type:"string"}, url:{type:"string"} }, required:["action"], additionalProperties:false } } : {}),
-    })) };
+    }))] };
   });
   server.setRequestHandler(CallToolRequestSchema, async request => {
     const { name, arguments: args } = request.params;
@@ -105,6 +106,50 @@ export async function browserServer(endpoint = "http://127.0.0.1:9222") {
       return { content: [{ type: "text", text: "Browser references invalidated after computer use." }] };
     }
     if (excluded.has(name)) throw new TypeError("Use browser_tabs to close an individual tab");
+    if (name.startsWith("source_")) {
+      // Fixed adapters: the arguments are ids, never code, URLs or selectors.
+      try {
+        const ctx = await getContext();
+        const open = () => ctx.newPage();
+        const a = z.record(z.string(), z.unknown()).parse(args ?? {});
+        let out: unknown;
+        switch (name) {
+          case "source_gmail_list": { const { page, base } = await gmailPage(ctx.pages(), open, String(a["account"])); out = await gmailList(page, base, { after: String(a["after"]), before: a["before"] ? String(a["before"]) : null }); break; }
+          case "source_gmail_thread": { const { page, base } = await gmailPage(ctx.pages(), open, String(a["account"])); out = await gmailThread(page, base, String(a["thread_id"])); break; }
+          case "source_slack_read": out = await slackRead(ctx.pages(), String(a["workspace"]), String(a["method"]), z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).parse(a["params"] ?? {})); break;
+          case "source_gmail_send_reply": {
+            const send = z.object({ account: z.string(), thread_id: z.string(), body: z.string().min(1), recipient_address: z.string().email(), revision: z.string().min(3) }).strict().parse(a);
+            const { page, base } = await gmailPage(ctx.pages(), open, send.account);
+            out = await gmailSendReply(page, base, send);
+            break;
+          }
+          case "source_gmail_find_sent": {
+            const check = z.object({ account: z.string(), thread_id: z.string(), body: z.string().min(1), revision: z.string().min(3) }).strict().parse(a);
+            const { page, base } = await gmailPage(ctx.pages(), open, check.account);
+            out = await gmailFindSent(page, base, check);
+            break;
+          }
+          default: throw new AdapterError("unknown_tool", name);
+        }
+        // Large results are cut structurally (valid JSON, marked), never mid-string.
+        let text = JSON.stringify(out);
+        // Display-size limit: shortened results say so (truncated / complete=false) and carry no revision.
+        if (text.length > 60000 && out && typeof out === "object" && Array.isArray((out as { messages?: unknown }).messages)) {
+          const o = out as Record<string, unknown> & { messages: Record<string, unknown>[] };
+          const cut = (v: unknown) => typeof v === "string" ? v.slice(0, 1500) : v;
+          text = JSON.stringify({ ...o, text: undefined, revision: null, complete: false, messages: o.messages.slice(-40).map(m => ({ ...m, body: cut(m["body"]), text: cut(m["text"]) })), truncated: true });
+        }
+        if (text.length > 60000 && out && typeof out === "object" && "rows" in (out as object)) {
+          const o = out as { rows: unknown[] };
+          text = JSON.stringify({ ...o, rows: o.rows.slice(0, 150), complete: false, reason: "result too large" });
+        }
+        if (text.length > 60000) text = JSON.stringify({ error: "too_large", message: "result too large" });
+        return { content: [{ type: "text", text }] };
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
+        return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: error instanceof AdapterError ? error.code : "failed", message: error.message.slice(0, 300) }) }] };
+      }
+    }
     try {
       if (browser && !browser.isConnected()) await reset();
       const client = await connect();
@@ -156,3 +201,17 @@ export async function browserServer(endpoint = "http://127.0.0.1:9222") {
   });
   return { server, close: async () => { await reset(); await server.close(); } };
 }
+
+/** Fixed source tools (see source-adapters.ts). The send tool is never offered to the model: the daemon calls it. */
+const SOURCE_TOOLS = [
+  { name: "source_gmail_list", description: "List Gmail threads of the given account in a date window (after/before as YYYY/MM/DD; any folder except spam/trash), all result pages. Returns rows, total and complete (false when not every page could be read). Reads only.",
+    inputSchema: { type: "object" as const, properties: { account: { type: "string" }, after: { type: "string" }, before: { type: ["string", "null"] } }, required: ["account", "after"], additionalProperties: false }, annotations: { readOnlyHint: true } },
+  { name: "source_gmail_thread", description: "Read one Gmail thread by its id: each message's sender, time, recipients and body, and the thread revision. Reads only.",
+    inputSchema: { type: "object" as const, properties: { account: { type: "string" }, thread_id: { type: "string" } }, required: ["account", "thread_id"], additionalProperties: false }, annotations: { readOnlyHint: true } },
+  { name: "source_slack_read", description: "Call one Slack read API method (auth.test, users.info, users.conversations, conversations.history, conversations.replies, conversations.info) for the given workspace with the signed-in session. Reads only.",
+    inputSchema: { type: "object" as const, properties: { workspace: { type: "string" }, method: { type: "string" }, params: { type: "object" } }, required: ["workspace", "method"], additionalProperties: false }, annotations: { readOnlyHint: true } },
+  { name: "source_gmail_send_reply", description: "Internal: send one approved reply. Not for the model.",
+    inputSchema: { type: "object" as const, properties: { account: { type: "string" }, thread_id: { type: "string" }, body: { type: "string" }, recipient_address: { type: "string" }, revision: { type: "string" } }, required: ["account", "thread_id", "body", "recipient_address", "revision"], additionalProperties: false } },
+  { name: "source_gmail_find_sent", description: "Internal: check whether an approved reply is in the thread. Not for the model.",
+    inputSchema: { type: "object" as const, properties: { account: { type: "string" }, thread_id: { type: "string" }, body: { type: "string" }, revision: { type: "string" } }, required: ["account", "thread_id", "body", "revision"], additionalProperties: false } },
+];

@@ -1,3 +1,6 @@
+import { gateDraftOutput, isObservationTask, isSendTask, linkReplyDraft, settleObservationTask, settleSendTask } from "../../../packages/attention/sources";
+import { markBriefDelivered, publishBriefMessage, settleBriefForTask } from "../../../packages/attention/coordinator";
+import { registerCards, resolveCardsForResult, settleCardsForTask } from "./card-answer";
 import { enqueueMessageNotification } from "../../../packages/notifications/store.ts";
 import { publishAttentionMessage } from "../../../packages/notifications/attention.ts";
 import { z } from "zod";
@@ -63,7 +66,16 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
       const task = z
         .object({ conversation_id: z.uuid(), origin: z.enum(["user", "schedule", "responsibility"]), lane: z.enum(['foreground','background']) })
         .parse((await sql`SELECT conversation_id,origin,lane FROM assistant.tasks WHERE id=${run.task_id}`)[0]);
-      const hidden=task.lane==='background'&&(event.phase!=='final_answer'||!event.content.trim()||event.content.trim()==='NO_REPORT');
+      const waitsForUser=(event.blocks??[]).some(block=>block.kind==='draft'||block.kind==='choice');
+      const empty=!event.content.trim()||event.content.trim()==='NO_REPORT';
+      // A morning brief: its final report is the brief (stored, then one push); late bodies are dropped; cards inside it do not push.
+      const brief=task.lane==='background'?await publishBriefMessage(sql,principal.workspace_id,run.task_id,{final:event.phase==='final_answer'&&!(event.blocks?.length),empty}):null;
+      // An observation run reports through report_observation; nothing it says is a message for the user.
+      const observing=task.lane==='background'&&brief===null&&(await isObservationTask(sql,principal.workspace_id,run.task_id)||await isSendTask(sql,principal.workspace_id,run.task_id));
+      // A reply-draft job: only a card for a thread still open at the version it read is shown, and it never pushes.
+      const drafting=task.lane==='background'&&brief===null&&!observing?await gateDraftOutput(sql,principal.workspace_id,run.task_id,{content:event.content,hasDraft:(event.blocks??[]).some(block=>block.kind==='draft'),final:event.phase==='final_answer'}):null;
+      const hidden=observing||(drafting?drafting.hidden:(brief?.hidden??(task.lane==='background'&&!waitsForUser&&(event.phase!=='final_answer'||empty))));
+      const notify=!observing&&!drafting&&(brief?.notify??waitsForUser);
       // Publish task-created files with the report, never with intermediate artifact events.
       const pendingArtifacts=task.lane==='background'&&!hidden?z.array(z.object({id:z.uuid()})).parse(await sql`
         SELECT DISTINCT a.id FROM assistant.message_artifacts ma JOIN assistant.messages m ON m.id=ma.message_id
@@ -81,7 +93,7 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
         .object({ id: z.uuid() })
         .parse(
           (
-            await sql`INSERT INTO assistant.messages(id,workspace_id,conversation_id,task_id,role,content,phase,response_to_message_id,applied_user_ids,output_kind,origin,hidden) VALUES(COALESCE(${event.message_id ?? null}::uuid,gen_random_uuid()),${principal.workspace_id},${task.conversation_id},${run.task_id},'assistant',${event.content},${event.phase ?? null},${event.response_to_message_id??null},${sql.array(event.applied_user_ids??[])}::uuid[],${event.output_kind??null},${task.origin},${hidden}) RETURNING id`
+            await sql`INSERT INTO assistant.messages(id,workspace_id,conversation_id,task_id,role,content,phase,response_to_message_id,applied_user_ids,output_kind,origin,hidden,notify,blocks) VALUES(COALESCE(${event.message_id ?? null}::uuid,gen_random_uuid()),${principal.workspace_id},${task.conversation_id},${run.task_id},'assistant',${event.content},${event.phase ?? null},${event.response_to_message_id??null},${sql.array(event.applied_user_ids??[])}::uuid[],${event.output_kind??null},${task.origin},${hidden},${notify},${event.blocks?JSON.stringify(event.blocks):null}::text::jsonb) RETURNING id`
           )[0],
         );
       if(event.response_to_message_id||event.applied_user_ids?.length) {
@@ -108,7 +120,14 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
         run_id: run.id, context_id: event.semantic_context_id, message_id: inserted.id,
         ...(event.semantic_source_message_id ? { source_message_id: event.semantic_source_message_id } : {}),
       });
-      if(!hidden)await enqueueMessageNotification(sql, principal.workspace_id, { id: inserted.id, runId: run.id });
+      // Cards that wait for the user always notify; plain progress text does not.
+      const progress=!waitsForUser&&(event.phase==='commentary'||event.output_kind==='progress');
+      if(waitsForUser&&!hidden&&(!drafting||drafting.register))await registerCards(sql,principal.workspace_id,inserted.id,event.blocks??[]);
+      // A reply draft prepared for a watched mail thread is attached to that thread's item.
+      if(drafting?.register)await linkReplyDraft(sql,principal.workspace_id,run.task_id,inserted.id);
+      if(event.blocks?.length)await resolveCardsForResult(sql,principal.workspace_id,run.task_id,inserted.id,event.blocks);
+      if(brief?.push)await markBriefDelivered(sql,principal.workspace_id,run.task_id,inserted.id);
+      if(!hidden&&!drafting&&(brief===null||brief.push))await enqueueMessageNotification(sql, principal.workspace_id, { id: inserted.id, runId: run.id, progress });
       break;
     }
     case "state": {
@@ -151,6 +170,10 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
         throw new DomainError("stop_pending", "Stop acknowledgement required", 409);
       await sql`UPDATE assistant.runs SET state=${event.state},updated_at=now() WHERE id=${run.id}`;
       await sql`UPDATE assistant.tasks SET state=${event.state},reason=${event.reason},updated_at=now() WHERE id=${run.task_id}`;
+      await settleCardsForTask(sql,principal.workspace_id,run.task_id,event.state);
+      await settleBriefForTask(sql,principal.workspace_id,run.task_id,event.state);
+      await settleObservationTask(sql,principal.workspace_id,run.task_id,event.state);
+      await settleSendTask(sql,principal.workspace_id,run.task_id,event.state);
       if (event.state === "failed" || event.state === "unknown")
         await publishAttentionMessage(sql, principal.workspace_id, { id: run.id, state: event.state });
       break;
@@ -174,6 +197,7 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
       switch (command.kind) {
         case "stop":
           await sql`UPDATE assistant.tasks SET state=${event.status === "applied" ? "cancelled" : "unknown"},reason=${event.detail},updated_at=now() WHERE id=${command.task_id}`;
+          if (event.status === "applied" && command.task_id) { await settleCardsForTask(sql, principal.workspace_id, command.task_id, "cancelled"); await settleBriefForTask(sql, principal.workspace_id, command.task_id, "cancelled"); await settleObservationTask(sql, principal.workspace_id, command.task_id, "cancelled"); await settleSendTask(sql, principal.workspace_id, command.task_id, "cancelled"); }
           await sql`UPDATE assistant.runs SET state=${event.status === "applied" ? "cancelled" : "unknown"},updated_at=now() WHERE id=${command.run_id}`;
           if (event.status === "failed" && command.run_id)
             await publishAttentionMessage(sql, principal.workspace_id, { id: command.run_id, state: "unknown" });

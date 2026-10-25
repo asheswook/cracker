@@ -19,6 +19,23 @@ export type Artifact = z.infer<typeof Artifact>;
 export const MessageReply = z.object({ message_id: Id, conversation_id: Id, sequence: z.coerce.number(),
   role: z.enum(['user', 'assistant', 'system']), content: z.string().max(500), available: z.boolean() });
 export type MessageReply = z.infer<typeof MessageReply>;
+export const ResultBlock = z.object({
+  kind: z.literal('result'),
+  action: z.enum(['sent', 'posted', 'scheduled', 'booked', 'updated', 'deleted', 'created']),
+  channel: z.string(), target: z.string().nullable(), title: z.string().nullable(), body: z.string().nullable(),
+  url: z.string().nullable(), at: z.string().nullable(), card: z.string().nullable().optional(),
+});
+export type ResultBlock = z.infer<typeof ResultBlock>;
+export const DraftBlock = z.object({ kind: z.literal('draft'), id: z.string(), channel: z.string(), target: z.string().nullable(), title: z.string().nullable(), body: z.string() });
+export type DraftBlock = z.infer<typeof DraftBlock>;
+export const ChoiceBlock = z.object({ kind: z.literal('choice'), id: z.string(), question: z.string(), options: z.array(z.object({ id: z.string(), label: z.string() })) });
+export type ChoiceBlock = z.infer<typeof ChoiceBlock>;
+export const AnswerBlock = z.object({ kind: z.literal('answer'), message_id: Id, block_id: z.string(), option: z.string(), label: z.string(), body: z.string().nullable() });
+export type AnswerBlock = z.infer<typeof AnswerBlock>;
+const KnownBlock = z.discriminatedUnion('kind', [ResultBlock, DraftBlock, ChoiceBlock, AnswerBlock]);
+export type MessageBlock = z.infer<typeof KnownBlock>;
+// Unknown future block kinds are dropped instead of failing the whole page; their text fallback stays in `content`.
+export const MessageBlocks = z.array(z.unknown()).transform(items => items.flatMap(item => { const parsed = KnownBlock.safeParse(item); return parsed.success ? [parsed.data] : []; }));
 export const Message = z.object({
   id: Id,
   conversation_id: Id,
@@ -31,6 +48,8 @@ export const Message = z.object({
   reply_to_message_id: Id.nullable().optional(),
   reply: MessageReply.nullable().optional(),
   attachments: Artifact.array().optional(),
+  blocks: MessageBlocks.nullable().optional(),
+  card_states: z.record(z.string(), z.object({ state: z.enum(['pending', 'snoozed', 'accepted', 'resolved', 'failed', 'dismissed', 'superseded', 'replaced']), option: z.string().nullable(), snoozed_until: z.string().nullable(), approved_body: z.string().nullable().optional(), retry_ok: z.boolean().optional() })).optional(),
   sequence: z.coerce.number(),
   created_at: z.string(),
   client_message_id: Id.nullable(),
@@ -110,4 +129,5 @@ export const MessagePage = z.object({
   messages: Message.array(),
   cursor: z.coerce.number(),
   receipts: z.object({ message_id: Id, read_at: z.string() }).array().default([]),
+  card_states: z.object({ message_id: Id, block_id: z.string(), state: z.enum(['pending', 'snoozed', 'accepted', 'resolved', 'failed', 'dismissed', 'superseded', 'replaced']), option: z.string().nullable(), snoozed_until: z.string().nullable() }).array().default([]),
 });

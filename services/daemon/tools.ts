@@ -182,7 +182,8 @@ export class ToolExecutor {
       const grant=await this.desktopLease.wait(owner.runId,owner.lane,max_seconds*1000,signal);signal.throwIfAborted();
       return grant.granted?{text:JSON.stringify({...grant,instruction:'Fresh observation required. Inspect the desktop or browser before acting; earlier references are stale.'})}:desktopBusy(grant);
     }
-    const shared=name==='computer'||name==='computer_exec'||name.startsWith('desktop_')||name.startsWith('browser_');
+    // Source adapters drive the same browser: they take the desktop lease and yield to the user like browser tools.
+    const shared=name==='computer'||name==='computer_exec'||name.startsWith('desktop_')||name.startsWith('browser_')||name.startsWith('source_');
     if(shared){
       const grant=this.desktopLease.acquire(owner.runId,owner.lane);if(!grant.granted)return desktopBusy(grant);
       this.desktopLease.begin(owner.runId);
@@ -241,6 +242,8 @@ function desktopMutation(name:string,args:string):boolean{
   if(name==='computer')return z.object({action:z.string()}).parse(JSON.parse(args)).action!=='screenshot';
   if(name==='computer_exec')return !/^\s*return\s+null\s*;?\s*$/.test(z.object({code:z.string()}).parse(JSON.parse(args)).code);
   if(['browser_snapshot','browser_take_screenshot','browser_console_messages','browser_network_requests','browser_network_request','browser_find'].includes(name))return false;
+  // Source adapters manage their own page state and do not use observation references.
+  if(name.startsWith('source_'))return false;
   if(name==='browser_tabs')return z.object({action:z.string()}).parse(JSON.parse(args)).action!=='list';
   return name.startsWith('browser_');
 }

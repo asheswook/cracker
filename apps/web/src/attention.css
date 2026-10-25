@@ -1,0 +1,33 @@
+.attention-panel { display: grid; gap: 20px; }
+.attention-section h3 {
+  display: flex; align-items: center; gap: 6px; margin: 0 0 8px;
+  font-size: var(--t-footnote); font-weight: 600; color: var(--message-secondary, var(--muted));
+}
+.attention-section h3 span {
+  margin-left: 2px; padding: 0 7px; border-radius: var(--r-full); background: var(--message-received, var(--wash));
+  font-variant-numeric: tabular-nums; font-weight: 500;
+}
+.attention-section[data-tone='needs'] h3 { color: var(--message-ink, var(--ink)); }
+.attention-section[data-tone='needs'] h3 svg { color: var(--accent); }
+.attention-section ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.attention-section button {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'kind time' 'title title' 'detail detail';
+  gap: 2px 8px; width: 100%; min-height: 44px; padding: 10px 12px; box-sizing: border-box;
+  border: 0.5px solid var(--line); border-radius: 14px; background: var(--surface);
+  color: var(--ink); font: inherit; text-align: start; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.attention-section[data-tone='needs'] button { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+@media (hover: hover) { .attention-section button:hover { background: var(--surface-muted); } }
+.attention-section button:active { background: var(--surface-muted); }
+.attention-section button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.attention-kind { grid-area: kind; font-size: var(--t-caption); color: var(--muted); }
+.attention-section[data-tone='needs'] .attention-kind { color: var(--accent); font-weight: 500; }
+.attention-title { grid-area: title; font-size: var(--t-footnote); line-height: 1.45; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.attention-detail { grid-area: detail; font-size: var(--t-caption); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attention-section time { grid-area: time; font-size: var(--t-caption); color: var(--muted); font-variant-numeric: tabular-nums; }
+.attention-note { margin: 0; color: var(--muted); font-size: var(--t-caption); }
+.attention-topic { color: var(--muted); font-weight: 400; }
+.attention-actions { display: flex; gap: 12px; padding: 0 12px 10px; font-size: var(--t-caption); }
+.attention-actions a, .attention-actions button { background: none; border: 0; padding: 4px 0; color: var(--message-secondary, var(--muted)); cursor: pointer; font: inherit; text-decoration: none; }
+@media (hover: hover) { .attention-actions a:hover, .attention-actions button:hover { color: var(--ink); } }
+.attention-actions :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }

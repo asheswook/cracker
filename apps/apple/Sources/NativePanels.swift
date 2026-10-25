@@ -14,7 +14,7 @@ struct NativePanelView: View {
             case .tasks: TasksPanel(store: panels, assistant: assistant, open: openConversation)
             case .schedules: SchedulesPanel(store: panels, open: openConversation)
             case .memory: MemoryPanel(store: panels)
-            case .computer, .settings: WebPanelView(panel: panel.webPanel)
+            case .attention, .computer, .settings: WebPanelView(panel: panel.webPanel)
             }
         }
         .navigationTitle(panel.title)

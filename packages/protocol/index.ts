@@ -26,6 +26,42 @@ export const Artifact = z.object({
   created_at: z.string(),
 });
 export const AssistantPhase = z.enum(["commentary", "final_answer"]);
+/**
+ * A card inside an assistant message. `result` reports an action that already happened on the user's instruction
+ * (message sent, post published, event created): it has no buttons. Later kinds (draft, decision, choices) extend this union.
+ */
+export const ResultBlock = z.object({
+  kind: z.literal("result"),
+  action: z.enum(["sent", "posted", "scheduled", "booked", "updated", "deleted", "created"]),
+  channel: z.string().trim().min(1).max(80),
+  target: z.string().trim().max(200).nullable(),
+  title: z.string().trim().max(200).nullable(),
+  body: z.string().max(4000).nullable(),
+  url: z.url().max(2000).refine(u => /^https?:/.test(u)).nullable(),
+  at: z.iso.datetime({ offset: true }).nullable(),
+  /** The approved card this action carries out ("<message id>:<block id>"), when it carries one out. */
+  card: z.string().regex(/^[0-9a-f-]{36}:[a-z0-9_-]{1,32}$/).nullable().optional(),
+}).strict();
+const BlockId = z.string().regex(/^[a-z0-9_-]{1,32}$/);
+/** Text the assistant wrote for the user to send: shown with 보내기 / 수정 / 나중에. Nothing is sent until the user answers. */
+export const DraftBlock = z.object({
+  kind: z.literal("draft"), id: BlockId,
+  channel: z.string().trim().min(1).max(80), target: z.string().trim().max(200).nullable(),
+  title: z.string().trim().max(200).nullable(), body: z.string().min(1).max(8000),
+}).strict();
+/** A short decision with 2-4 options (e.g. "3층 회의실 잡을까요?" 예 / 아니요 / 다른 층). */
+export const ChoiceBlock = z.object({
+  kind: z.literal("choice"), id: BlockId, question: z.string().trim().min(1).max(300),
+  options: z.array(z.object({ id: BlockId, label: z.string().trim().min(1).max(40) }).strict()).min(2).max(4),
+}).strict();
+/** On a user message: the button the user pressed on an earlier card. */
+export const AnswerBlock = z.object({
+  kind: z.literal("answer"), message_id: Id, block_id: BlockId,
+  option: z.string().regex(/^[a-z0-9_-]{1,32}$/), label: z.string().max(40), body: z.string().max(8000).nullable(),
+}).strict();
+export const MessageBlock = z.discriminatedUnion("kind", [ResultBlock, DraftBlock, ChoiceBlock, AnswerBlock]);
+export type MessageBlock = z.infer<typeof MessageBlock>;
+export const MessageBlocks = z.array(MessageBlock).min(1).max(8);
 export const Message = z.object({
   synthetic: z.boolean().optional(),
   task_status: z.object({task_id:Id,run_id:Id,state:z.enum(["failed","unknown"]),reason:z.string()}).optional(),
@@ -45,6 +81,8 @@ export const Message = z.object({
   client_message_id: Id.nullable(),
   read_at: z.string().nullable().optional(),
   attachments: z.array(Artifact).max(8).optional(),
+  blocks: MessageBlocks.nullable().optional(),
+  card_states: z.record(z.string(), z.object({ state: z.enum(['pending','snoozed','accepted','resolved','failed','dismissed','superseded','replaced']), option: z.string().nullable(), snoozed_until: z.string().nullable(), approved_body: z.string().nullable().optional(), retry_ok: z.boolean().optional() })).optional(),
 }).refine(message => message.phase == null || message.role === "assistant", {
   path: ["phase"], message: "Only assistant messages can have a phase",
 });
@@ -97,6 +135,8 @@ export const Assignment = z.object({
   persona: Persona.optional(),
   work_context: WorkContext.optional(),
   skill_binding: z.object({skill_id:Id,revision:z.number().int().positive(),content_hash:z.string(),name:z.string()}).optional(),
+  /** read_only: an assistant-owned look or draft run; the daemon refuses every tool that could write outside (code, not prompt). */
+  run_policy: z.enum(['read_only', 'send_once']).optional(),
   memory: z.array(z.object({ id: Id, text: z.string() })),
 });
 export const DaemonPoll = z.object({
@@ -122,8 +162,9 @@ export const DaemonEvent = z.discriminatedUnion("kind", [
       content: z.string().max(100000),
       phase: AssistantPhase.nullish(),
       attachment_ids: z.array(Id).max(8).optional(),
+      blocks: MessageBlocks.optional(),
     })
-    .refine((value) => value.phase === 'final_answer' || value.content.trim().length > 0 || (value.attachment_ids?.length ?? 0) > 0),
+    .refine((value) => value.phase === 'final_answer' || value.content.trim().length > 0 || (value.attachment_ids?.length ?? 0) > 0 || (value.blocks?.length ?? 0) > 0),
   z.object({
     kind: z.literal("state"),
     event_id: Id,

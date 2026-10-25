@@ -8,10 +8,12 @@ import { SchedulesPanel } from './SchedulesPanel';
 import { Computer } from './Computer';
 import { Settings } from './settings/Settings';
 import { errorMessage } from './api';
-import type { Id, Task } from './types';
+import { Id } from './types';
+import type { Task } from './types';
 import { WorkPanel } from './WorkPanel';
 import { HistoryPanel } from './HistoryPanel';
 import { MemoryPanel } from './MemoryPanel';
+import { AttentionPanel } from './AttentionPanel';
 import type { WorkSession } from './work-session';
 import type { TaskDestination } from './useWorkNavigation';
 export function Inspector({
@@ -72,6 +74,7 @@ export function Inspector({
             )}
             {panel === 'schedules' && <SchedulesPanel state={state} onTask={task => { void onTask(task).catch(error => setError(errorMessage(error))); }} />}
             {panel === 'memory' && <MemoryPanel />}
+            {panel === 'attention' && <AttentionPanel onOpen={(conversation, message) => { if (message) void onSource(Id.parse(conversation), Id.parse(message)); }} />}
           </Motion.div>
         </AnimatePresence>
       </div>

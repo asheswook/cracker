@@ -1,3 +1,5 @@
+import { tickAttention } from "../../packages/attention/coordinator";
+import { tickSources } from "../../packages/attention/sources";
 import { notificationConfig } from "../../packages/notifications/config.ts";
 import { dispatchNotifications } from "../../packages/notifications/dispatch.ts";
 import { createApp } from "./app";
@@ -162,6 +164,8 @@ export default {
     try {
       await quarantineStaleRuns(sql);
       await dispatchDueSchedules(sql);
+      try { await tickAttention(sql); await tickSources(sql); }
+      catch (error) { if (!(error instanceof Error)) throw error; console.error(JSON.stringify({ event: 'attention.tick_failed', type: error.name, message: error.message.slice(0, 200) })); }
       const rows = await sql<
         { id: string; workspace_id: string }[]
       >`SELECT id::text, workspace_id FROM assistant.outbox WHERE delivered_at IS NULL ORDER BY id LIMIT 100`;

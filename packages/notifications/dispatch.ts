@@ -98,8 +98,8 @@ export async function dispatchNotifications(
         if (!selected) return;
         const plain = await unseal(job.subscription_cipher, selected.encryptionKey);
         const url = `/?conversation=${job.conversation_id}&message=${job.message_id}`;
-        const source = z.object({ persona_name: z.string(), notification_show_content: z.boolean(), content: z.string(), attachment_names: z.array(z.string()) }).parse(
-          (await sql`SELECT w.persona_name,w.notification_show_content,m.content,ARRAY(SELECT a.name FROM assistant.message_artifacts ma JOIN assistant.artifacts a ON a.id=ma.artifact_id WHERE ma.message_id=m.id ORDER BY ma.position) AS attachment_names FROM assistant.messages m JOIN assistant.workspaces w ON w.id=m.workspace_id WHERE m.id=${job.message_id}`)[0],
+        const source = z.object({ persona_name: z.string(), notification_show_content: z.boolean(), content: z.string(), attachment_names: z.array(z.string()), blocks: z.array(z.object({ kind: z.string(), channel: z.string().optional(), target: z.string().nullable().optional(), question: z.string().optional() }).passthrough()).nullable().default(null) }).parse(
+          (await sql`SELECT w.persona_name,w.notification_show_content,m.content,m.blocks,ARRAY(SELECT a.name FROM assistant.message_artifacts ma JOIN assistant.artifacts a ON a.id=ma.artifact_id WHERE ma.message_id=m.id ORDER BY ma.position) AS attachment_names FROM assistant.messages m JOIN assistant.workspaces w ON w.id=m.workspace_id WHERE m.id=${job.message_id}`)[0],
         );
         const suppressed = await sql`UPDATE assistant.notification_deliveries d
             SET state='suppressed',last_error='viewing_app',lease_id=NULL,lease_until=NULL

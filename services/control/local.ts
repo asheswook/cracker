@@ -1,3 +1,5 @@
+import { tickAttention } from "../../packages/attention/coordinator";
+import { tickSources } from "../../packages/attention/sources";
 import { notificationConfig } from "../../packages/notifications/config.ts";
 import { dispatchNotifications } from "../../packages/notifications/dispatch.ts";
 import { z } from "zod";
@@ -17,12 +19,14 @@ const screenTurn = { SCREEN_TURN_KEY_ID: process.env["SCREEN_TURN_KEY_ID"], SCRE
 const app = createApp(sql, { semanticStructureMode:config.SEMANTIC_STRUCTURE_MODE, knowledgeTreeMode:config.KNOWLEDGE_TREE_MODE, screenTurn, notificationConfig: push, artifactStore, ...(extensionKey ? { extensionKey } : {}), allowedOrigins: ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:4173", "http://127.0.0.1:4173"] });
 const server = Bun.serve({ hostname: "127.0.0.1", port: config.PORT, fetch: app.fetch });
 let scheduling = false;
+let lastAttention = 0;
 let lastCleanup = 0;
 const timer = setInterval(async () => {
   if (scheduling) return;
   scheduling = true;
   try {
     await quarantineStaleRuns(sql); await dispatchDueSchedules(sql);
+    if (Date.now() - lastAttention >= 60000) { lastAttention = Date.now(); await tickAttention(sql).then(() => tickSources(sql)).catch(error => console.error(JSON.stringify({ event: 'attention.tick_failed', message: String(error).slice(0, 200) }))); }
     await dispatchNotifications(sql, push);
     if (Date.now() - lastCleanup >= 60000) {
       lastCleanup = Date.now();

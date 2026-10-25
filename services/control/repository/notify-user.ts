@@ -5,6 +5,8 @@ import type { Principal } from "../auth";
 import type { Query } from "../db";
 import { conversation, recordEvent } from "./common";
 import { loadRun } from "./runs";
+import { isBriefTask } from "../../../packages/attention/coordinator";
+import { isObservationTask, isReplyDraftTask, isSendTask } from "../../../packages/attention/sources";
 
 export const NotifyUserRequest = z.object({ run_id: Id, conversation_id: Id, client_message_id: Id, message: z.string().trim().min(1).max(2000) });
 export async function notifyUser(sql: Query, principal: Principal, request: z.infer<typeof NotifyUserRequest>) {
@@ -14,6 +16,9 @@ export async function notifyUser(sql: Query, principal: Principal, request: z.in
     (await sql`SELECT conversation_id,state,origin FROM assistant.tasks WHERE id=${run.task_id} AND workspace_id=${principal.workspace_id}`)[0],
   );
   if (task.conversation_id !== request.conversation_id) throw new DomainError("not_found", "Run conversation not found", 404);
+  // A brief speaks once, through its final report; notify_user is not a side channel around its publication gate.
+  if (await isBriefTask(sql, principal.workspace_id, run.task_id) || await isObservationTask(sql, principal.workspace_id, run.task_id) || await isReplyDraftTask(sql, principal.workspace_id, run.task_id) || await isSendTask(sql, principal.workspace_id, run.task_id))
+    throw new DomainError("brief_notify", "A morning brief notifies through its final report; do not call notify_user", 409);
   if (!["running", "waiting"].includes(run.state) || !["running", "waiting"].includes(task.state)) throw new DomainError("stale_run", "Active owned run required", 409);
   await conversation(sql, principal.workspace_id, task.conversation_id);
   const prior = (await sql`SELECT * FROM assistant.messages WHERE conversation_id=${task.conversation_id} AND client_message_id=${request.client_message_id}`)[0];

@@ -114,7 +114,7 @@ struct ShellView: View {
     @ToolbarContentBuilder private var shellToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             #if os(macOS)
-            ForEach([ShellPanel.tasks, .schedules, .memory, .computer]) { item in
+            ForEach([ShellPanel.attention, .tasks, .schedules, .memory, .computer]) { item in
                 Button { toggle(item) } label: { Label(item.title, systemImage: item.symbol) }
                     .help(item.title)
                     .disabled(!shell.authenticated)

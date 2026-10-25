@@ -8,10 +8,12 @@ import {
   LogOut,
   X,
   History,
+  Inbox,
 } from 'lucide-react';
 import { Mark, IconButton } from './primitives';
-export type Panel = 'computer' | 'tasks' | 'schedules' | 'memory' | 'settings' | 'history';
+export type Panel = 'computer' | 'attention' | 'tasks' | 'schedules' | 'memory' | 'settings' | 'history';
 const entries = [
+  { panel: 'attention', label: '챙길 것', icon: Inbox },
   { panel: 'tasks', label: '맡긴 일', icon: ListChecks },
   { panel: 'schedules', label: '예약', icon: CalendarDays },
   { panel: 'memory', label: '기억', icon: Layers3 },

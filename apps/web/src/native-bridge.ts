@@ -33,7 +33,7 @@ export type NativeComposerMessage =
   | { readonly method: 'composerState'; readonly state: import('./native-composer').NativeComposerState }
   | { readonly method: 'composerHide'; readonly document: string; readonly session: string };
 type Method = 'getNotificationState' | 'requestNotifications' | 'openNotificationSettings' | 'ready';
-const ShellConfiguration = z.object({ version: z.literal(1), role: z.enum(['body', 'panel']), panel: z.enum(['computer', 'settings', 'tasks', 'schedules', 'memory']).optional() });
+const ShellConfiguration = z.object({ version: z.literal(1), role: z.enum(['body', 'panel']), panel: z.enum(['computer', 'settings', 'attention', 'tasks', 'schedules', 'memory']).optional() });
 const ShellCommand = z.object({ version: z.literal(1), conversation: z.uuid(), message: z.uuid().optional() }).strict();
 export function nativeShellConfiguration() {
   return ShellConfiguration.safeParse(window.__ASSISTANT_SHELL__).data;

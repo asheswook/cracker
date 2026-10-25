@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
-import type { Components } from 'react-markdown';
+import type { Components, Options } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkCjkFriendly from 'remark-cjk-friendly/parseOnly';
 import { Check, Copy } from 'lucide-react';
@@ -58,7 +58,8 @@ const components: Components = {
       <span>{children}</span>
     ),
 };
-const plugins = [remarkCjkFriendly, remarkGfm];
+// Single tildes are ranges in Korean text ("16:00~18:00", "3~4배"), not strikethrough; only ~~double~~ strikes.
+const plugins: NonNullable<Options['remarkPlugins']> = [remarkCjkFriendly, [remarkGfm, { singleTilde: false }]];
 function messageUrl(url: string): string {
   if (url.startsWith('attachment://')) {
     const id = Id.safeParse(url.slice('attachment://'.length));

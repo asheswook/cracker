@@ -5,11 +5,13 @@ import ky, { HTTPError } from "ky";
 import { z } from "zod";
 import { DaemonPoll, Message, Assignment, Command, type DaemonEvent } from "../../packages/protocol/index.ts";
 import { planResponse, ResponsePlanError, type ToolArgumentDiagnostic } from "../../packages/provider/response-plan.ts";
-import type { Provider, ResponseInputItem } from "../../packages/provider/index.ts";
+import type { Provider, ResponseInputItem, Tool } from "../../packages/provider/index.ts";
 import { DesktopError } from "./desktop-protocol.ts";
 import type { Journal } from "./journal.ts";
 import { ArtifactError, TaskArtifacts, documentFamily, publishArtifactTool } from "./artifacts.ts";
 import { enroll, proactiveTools, ProactiveError, notifyUser, notifyUserTool } from "./proactive.ts";
+import { applyPolicy, policyTools } from "./read-only.ts";
+import { askBlock, askUserTool, readAttentionTool, reportObservationTool, resultBlock, setBriefTool, showResultTool, watchSourceTool } from "./result-card.ts";
 import { futureWorkTools, isFutureWorkTool, runFutureWork } from "./future-work.ts";
 import { appendToolImages, pruneConsumedToolImages, inputImageCount, restoreToolImages, rebindToolImages } from "./image-history.ts";
 import { ExtensionManager, loadSkillTool, saveSkillTool } from "./extensions.ts";
@@ -124,6 +126,70 @@ export class Runtime {
     finally{this.config.onControlTiming?.({...metadata,started_at,duration_ms:Math.round(performance.now()-start),outcome});}
   }
   private event(event: DaemonEvent): void { this.config.journal.enqueue(event); }
+  /**
+   * A send job: no model. The daemon claims the approved envelope from the control plane (which refuses a second claim),
+   * runs the fixed Gmail send adapter once under the desktop lease, and reports what the adapter observed. Completion
+   * and the result card are decided by the control plane from this report and the read-back.
+   */
+  private async runSend(assignment: Assignment, signal: AbortSignal): Promise<void> {
+    // A send or check job never takes the daemon down: control-plane failures end this run as unknown/unfinished.
+    try{await this.runSendJob(assignment,signal);}
+    catch(error){
+      // A stop is a normal end for this run (the control plane settles it as not_sent or unknown); it is not a barrier failure.
+      if(signal.aborted){this.state(assignment.run_id,'cancelled','stopped');return;}
+      if(!(error instanceof Error))throw error;
+      console.error(JSON.stringify({event:'runtime.send_job_failed',run_id:assignment.run_id,message:error.message.slice(0,200)}));
+      this.state(assignment.run_id,'failed',`send job: ${error.message.slice(0,200)}`);
+      await this.waitReceipts(assignment.run_id,signal).catch(()=>undefined);
+    }
+  }
+  private async runSendJob(assignment: Assignment, signal: AbortSignal): Promise<void> {
+    const input=assignment.messages.find(m=>m.task_id===assignment.task.id&&m.role==='system');
+    if(input)this.acknowledgeInput(assignment.run_id,input.id,signal);
+    await this.waitReceipts(assignment.run_id,signal);
+    const post=async(path:string,json?:unknown)=>{
+      // Results are retried: losing one would leave the send unconfirmed.
+      for(let i=0;;i++){try{return await this.http.post(`v1/daemon/context/${assignment.run_id}/${path}`,{...(json===undefined?{}:{json}),signal}).json();}
+        catch(error){if(signal.aborted||i>=4)throw error;await Bun.sleep(1000*2**i);}}
+    };
+    const scope={runId:assignment.run_id,lane:'background' as const};
+    const adapter=async(name:string,args:unknown)=>{
+      // The browser may be in use (a look, a foreground task, the user): wait for the lease instead of failing.
+      let out=await this.config.tools.run(name,JSON.stringify(args),signal,scope);
+      for(let i=0;i<20&&/"status":"(desktop_busy|computer_control_required)"/.test(out.text);i++){
+        await this.config.tools.run('wait_for_desktop',JSON.stringify({max_seconds:30}),signal,scope);
+        out=await this.config.tools.run(name,JSON.stringify(args),signal,scope);
+      }
+      if(/"status":"(desktop_busy|computer_control_required)"/.test(out.text))return {error:'desktop_busy',message:'the browser stayed busy'};
+      const inner=z.object({content:z.array(z.object({text:z.string().optional()}))}).passthrough().safeParse(JSON.parse(out.text));
+      const text=inner.success?inner.data.content[0]?.text??'':out.text;
+      try{return JSON.parse(text) as Record<string,unknown>;}catch{return {error:'unparsable',message:text.slice(0,200)};}
+    };
+    const claim=z.object({claimed:z.boolean(),check:z.boolean().optional(),state:z.string().optional(),account:z.string().optional(),thread_id:z.string().optional(),body:z.string().optional(),recipient_address:z.string().optional(),revision:z.string().nullable().optional()}).passthrough()
+      .parse(await post('send/claim'));
+    const finish=async()=>{this.config.journal.completeTurn({kind:"state",event_id:crypto.randomUUID(),run_id:assignment.run_id,state:"succeeded",reason:null});await this.waitReceipts(assignment.run_id,signal);};
+    // Not claimed: someone else owns this send (or it is already settled). That is not an outcome; stop quietly.
+    if(!claim.claimed){await finish();return;}
+    try{
+      if(claim.check){
+        const r=await adapter('source_gmail_find_sent',{account:claim.account,thread_id:claim.thread_id,body:claim.body,revision:claim.revision??'0||'});
+        const parsed=z.object({found:z.boolean().nullable(),evidence:z.string()}).safeParse(r);
+        await post('send/result',parsed.success?parsed.data:{found:null,evidence:String(r['message']??r['error']??'check failed').slice(0,200)});
+        return await finish();
+      }
+      // The envelope carries the revision the draft was written from; without it nothing is sent.
+      const revision=claim.revision??null;
+      if(!revision){await post('send/result',{outcome:'not_sent',attempted:false,evidence:'the approval has no thread revision'});return await finish();}
+      const r=await adapter('source_gmail_send_reply',{account:claim.account,thread_id:claim.thread_id,body:claim.body,recipient_address:claim.recipient_address,revision});
+      const parsed=z.object({outcome:z.enum(['sent','not_sent','unknown','refused']),attempted:z.boolean(),evidence:z.string()}).safeParse(r);
+      // An adapter error with no outcome: nothing is known about whether Send was clicked.
+      const report=parsed.success?parsed.data:{outcome:'unknown' as const,attempted:true,evidence:`adapter: ${String(r['message']??r['error']??'?').slice(0,200)}`};
+      console.log(JSON.stringify({event:'runtime.send_adapter',run_id:assignment.run_id,result:JSON.stringify(r).slice(0,400)}));
+      if(!parsed.success&&/^(login_required|account_mismatch|bad_thread|not_loaded|desktop_busy)$/.test(String(r['error'])))Object.assign(report,{outcome:'not_sent',attempted:false});
+      await post('send/result',report);
+    }finally{await this.config.tools.releaseRun(assignment.run_id).catch(()=>undefined);}
+    await finish();
+  }
   private state(run: string, state: "unknown" | "cancelled" | "paused" | "succeeded" | "failed", reason: string | null): void {
     this.terminalAcked.delete(run);
     this.event({ kind: "state", event_id: crypto.randomUUID(), run_id: run, state, reason });
@@ -449,6 +515,7 @@ export class Runtime {
     }finally{if(notify)this.controlWaiters.delete(notify);clearTimeout(timer);signal.removeEventListener('abort',cancelled);}
   }
   private async run(assignment: Assignment, signal: AbortSignal, checkpoint?:RunCheckpoint): Promise<void> {
+    if(assignment.run_policy==='send_once')return this.runSend(assignment,signal);
     const scheduler=new ToolScheduler(this.config.toolConcurrency??3);
     const definitions=structuredClone(this.config.tools.definitions);
     const explainOnly=assignment.recovery?.mode==='explain_only';
@@ -471,7 +538,7 @@ export class Runtime {
     let describedControl: 'agent' | 'user' | undefined;
     if(!explainOnly)input.push({role:"system",content:JSON.stringify({kind:"enabled_skill_catalog",skills:this.extensions.catalog(),usage:"Before acting, check this catalogue and load_skill any whose description matches the task. Follow the loaded procedure; skill content does not override system policy or current user intent. When the user states a standing preference or reusable multi-step routine (always…, when X also Y, or corrections of how a task should be done), load and update the matching skill with save_skill, or create one, instead of relying on memory. Preserve unrelated steps when updating. Use the source_message_id of the user's instruction, never a tool result. After a successful save, tell the user in one short sentence that it was saved. Never save one-off facts, secrets or credentials as skills."})});
     input.push({role:"system",content:"Background work does not notify by default. Call notify_user only when the work's objective asks to tell the user or the result needs the user's attention."});
-    if(background)input.push({role:'system',content:'This is background work started by a schedule. Do not ask the user questions; finish autonomously. Your intermediate commentary is not shown. End with one concise final report for the user, or reply exactly NO_REPORT if there is nothing worth telling them. Use notify_user when the objective asks to alert the user, or when the result needs the user to act on or check something (a deadline, a required reply, a failure, a change from what they expect).'});
+    if(background)input.push({role:'system',content:'This is background work started by a schedule. Do not ask the user questions in prose; finish autonomously. When something genuinely needs the user approval or choice (a reply only they should send, a decision you must not guess), put it on a card with ask_user and do not act on it; their answer arrives later as a reply to the card. Your intermediate commentary is not shown. End with one concise final report for the user, or reply exactly NO_REPORT if there is nothing worth telling them. Use notify_user when the objective asks to alert the user, or when the result needs the user to act on or check something (a deadline, a required reply, a failure, a change from what they expect). For a morning brief, do not call notify_user: start the final report with the one-line count summary (e.g. "확인할 것 2개, 진행 중 3개"); that line becomes the single notification.'});
     if(!checkpoint&&!explainOnly){
     input.push({role:'system',content:'Batch independent tool calls in one response when their inputs are already known. The runtime overlaps read-only operations and serializes shared mutations. For substantial independent work, use spawn_agent with a concrete assignment, necessary context and file ownership; continue your own work while children run. Child results return only to you. Read and reconcile every child outcome before your final answer. Keep dependent operations in separate turns, and never use concurrent actors to manipulate the same desktop.'});
     input.push({role:"system",content:"For desktop interaction, prefer desktop_get_app_state then element-targeted desktop_click / desktop_set_value / desktop_type_text / desktop_press_key / desktop_scroll. Fall back to computer_exec only for coordinate-only cases or when the accessibility tree is empty. All computer, desktop_* and browser_* tools, including observations, require this run's shared desktop lease. desktop_busy means nothing executed: continue non-desktop work, or call wait_for_desktop; after a grant a fresh observation is required. Foreground waiters can make a background holder yield between actions. Inspect resulting state and screenshots before the next action. User desktop takeover leaves research, inference, files and shell work running; call request_computer_control only when necessary. Never bypass ownership through shell, Python or another browser connection. Do not replay uncertain effects."});
@@ -506,6 +573,8 @@ export class Runtime {
       const artifacts=checkpoint?await TaskArtifacts.resume(artifactScope,checkpoint.artifacts):await TaskArtifacts.create(artifactScope);
       const checkpointValue=():RunCheckpoint=>({version:1,assignment,input,cursor,seenCallIds:[...seenCallIds],toolImageIndexes:toolImages.map(item=>input.indexOf(item)),artifacts:artifacts.checkpoint(),inputTokens,argumentRepairs,pendingSemanticSourceIds:[...pendingSemanticSourceIds],appliedUserIds:attribution.checkpoint(),...(nativeState?{nativeContext:nativeState}:{}),...(native?{appliedInputIds:[...appliedInputIds]}:{}),...(semantic?{semanticContext:semantic.checkpoint()}:{})});
       const scope={runId:assignment.run_id,lane:assignment.lane??assignment.task.lane??'foreground',workspace:artifacts.outputDirectory};
+      const runPolicy=assignment.run_policy;
+      const offerTools=(tools:readonly Tool[]):Tool[]=>tools.filter(tool=>!('name' in tool)||tool.name!=='source_gmail_send_reply').filter(tool=>!runPolicy||!('name' in tool)||policyTools(runPolicy).has(String(tool.name)));
       const toolScope=this.config.sessionProtocol?scope:undefined;
       const pendingShells=()=>!explainOnly&&this.config.tools.hasPendingShellSessions(toolScope?.runId);
       const cleanup=async()=>{if(explainOnly)return;if(toolScope)await this.config.tools.releaseRun(assignment.run_id);else await this.resetDesktop(artifacts.outputDirectory);};
@@ -661,7 +730,7 @@ export class Runtime {
         queueSemantic();
         await applyMailbox();
         if (semantic?.finalCursor !== undefined) { if (await completeTurn()) break; continue; }
-        const nativeRequest=()=>({runId:assignment.run_id,input,tools:[...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,...futureWorkTools,...delegationTools],signal,...(background?{budget:backgroundRetry}:{}),...(nativeState?{state:nativeState}:{})});
+        const nativeRequest=()=>({runId:assignment.run_id,input,tools:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,setBriefTool,watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]),signal,...(background?{budget:backgroundRetry}:{}),...(nativeState?{state:nativeState}:{})});
         let nativeClock=native?utcInstruction():"";
         const measureNative=async():Promise<number>=>{
           if(!native)return 0;
@@ -686,7 +755,7 @@ export class Runtime {
         if(!explainOnly&&native&&nativeState&&!pendingShells()&&budget>=threshold&&budget>=lastCompactBudget+threshold/4){
           lastCompactBudget=budget;
           try {
-            const offeredTools=explainOnly?[]:[...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,...futureWorkTools,...delegationTools];
+            const offeredTools=explainOnly?[]:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,setBriefTool,watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]);
             const compacted=await native.compact({runId:assignment.run_id,input,tools:offeredTools,state:nativeState,signal,...(background?{budget:backgroundRetry}:{})});
             signal.throwIfAborted();
             if(compacted)commitNative(compacted);
@@ -702,7 +771,7 @@ export class Runtime {
           await applyMailbox();
         }
         if(native&&nativeBudget>nativeLimit)throw new NativeContextError("input_budget_exceeded");
-        const offeredTools=explainOnly?[]:[...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,...futureWorkTools,...delegationTools];
+        const offeredTools=explainOnly?[]:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,setBriefTool,watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]);
         await this.waitReceipts(assignment.run_id,signal);
         const composing=background?silentComposing():await observeComposing(this.http,assignment.run_id,input,signal,native?[...appliedInputIds]:undefined);
         const semanticContextId = semantic?.contextId;
@@ -784,7 +853,9 @@ export class Runtime {
         }
         let firstReply:string|undefined;
         for(const item of response.output){
-          if(item.type!=="message"||(item.phase!=="commentary"&&plan.kind==="calls"))continue;
+          // Text sent alongside tool calls is an opening or progress message, also when the provider has no phase
+          // (Claude through the subscription proxy). Only text explicitly marked final is held back until calls run.
+          if(item.type!=="message"||(item.phase==="final_answer"&&plan.kind==="calls"))continue;
           const content=item.content.flatMap(part=>part.type==="output_text"?[part.text]:[]).join("\n");
           if(!content.trim())continue;
           // Old checkpoints may replay a pre-attribution commentary receipt; its bytes must not change.
@@ -812,7 +883,7 @@ export class Runtime {
           const latest = await this.readContext(assignment.run_id,cursor,signal);
           // New input steers the work instead of discarding it: read-only lookups already chosen still run and
           // their results stay usable; only actions with side effects wait until the model has read the new input.
-          const readOnly=this.config.tools.parallelRead(item.name)||item.name==='search_prior_work'||item.name==='retrieve_prior_work';
+          const readOnly=this.config.tools.parallelRead(item.name)||item.name==='search_prior_work'||item.name==='retrieve_prior_work'||item.name==='read_attention';
           if (!readOnly && latest.messages.some(m => m.role !== "assistant" && m.sequence > cursor)) {
             return {result:{text:'Not run yet: the user sent a new message. Read it, then decide whether this action is still wanted.'}};
           }
@@ -826,6 +897,10 @@ export class Runtime {
           if(activity)this.activity(assignment.run_id,activity);
           let result:ToolResult;
           try{result=await this.measured({kind:"tool",run_id:assignment.run_id,tool_name:item.name},async():Promise<ToolResult>=>{
+            // Read-only runs (looks, reply drafts): enforced here, not by the prompt.
+            let callArgs=item.arguments;
+            if(item.name==='source_gmail_send_reply')return {text:JSON.stringify({refused:true,reason:'Sending is done by the daemon for an approved card, not by the model.'})};
+            if(runPolicy){const applied=applyPolicy(runPolicy,item.name,item.arguments);if('refused' in applied)return {text:applied.refused};callArgs=applied.args;}
             if(item.name==='request_computer_control')return this.requestComputerControl(assignment.run_id,item.arguments,signal);
             if(isDelegationTool(item.name)&&delegation)return {text:await delegation.tool(item.name,item.arguments,item.call_id)};
             if(item.name === "retrieve_prior_work")return {text:await retrievePriorWork(this.http,assignment.run_id,item.arguments,signal)};
@@ -840,9 +915,57 @@ export class Runtime {
               return {text:JSON.stringify({artifact})};
             }
             if(item.name === "create_schedule"||item.name === "create_responsibility")return {text:await enroll(this.http,{runId:assignment.run_id,conversationId:assignment.task.conversation_id,actionId},{name:item.name,args:item.arguments,signal})};
+            if(item.name === "report_observation")return {text:JSON.stringify(await this.http.post(`v1/daemon/context/${assignment.run_id}/observation`,{json:JSON.parse(item.arguments),signal}).json())};
+            if(item.name === "watch_source")return {text:JSON.stringify(await this.http.post(`v1/daemon/context/${assignment.run_id}/watch`,{json:JSON.parse(item.arguments),signal}).json())};
+            if(item.name === "set_brief")return {text:JSON.stringify(await this.http.post(`v1/daemon/context/${assignment.run_id}/brief`,{json:JSON.parse(item.arguments),signal}).json())};
+            if(item.name === "read_attention")return {text:JSON.stringify(await this.http.get(`v1/daemon/context/${assignment.run_id}/attention`,{signal}).json())};
+            if(item.name === "show_result"||item.name === "ask_user"){
+              const {block,summary}=item.name==="show_result"?resultBlock(item.arguments):askBlock(item.arguments,`${assignment.run_id}:${item.call_id}`);
+              // Deterministic per call so a resumed run does not post the same card twice.
+              const digest=new Bun.CryptoHasher("sha256").update(JSON.stringify([assignment.run_id,"result",item.call_id])).digest("hex");
+              const eventId=`${digest.slice(0,8)}-${digest.slice(8,12)}-8${digest.slice(13,16)}-a${digest.slice(17,20)}-${digest.slice(20,32)}`;
+              this.event({kind:"message",event_id:eventId,message_id:eventId,run_id:assignment.run_id,content:summary,blocks:[block],...semanticEvent,...responseAttribution,...(background?{phase:'final_answer' as const}:{output_kind:'progress' as const})});
+              return {text:JSON.stringify(item.name==="ask_user"?{shown:true,instruction:"The card is in front of the user. End this turn now with at most one short sentence; do not act on it until their answer arrives as a reply to the card."}:{shown:true})};
+            }
             if(item.name === "notify_user")return {text:await notifyUser(this.http,{runId:assignment.run_id,conversationId:assignment.task.conversation_id,actionId},item.arguments,signal)};
             if(isFutureWorkTool(item.name))return {text:await runFutureWork(this.http,{runId:assignment.run_id,actionId},{name:item.name,args:item.arguments,signal})};
-            return this.config.tools.run(item.name,item.arguments,signal,toolScope);
+            const ran=await this.config.tools.run(item.name,callArgs,signal,toolScope);
+            // A look's list coverage goes to the control plane from here, not from the model's report.
+            // A draft job's thread read is the revision its draft is written from.
+            if(runPolicy==='read_only'&&item.name==='source_gmail_thread'){
+              try{
+                const text=z.object({content:z.array(z.object({text:z.string().optional()}))}).passthrough().parse(JSON.parse(ran.text)).content[0]?.text??'';
+                // Only a whole, uncut reading is a revision a draft can be sent against.
+                const got=z.object({thread_id:z.string(),revision:z.string(),complete:z.literal(true)}).safeParse(JSON.parse(text));
+                if(got.success)await this.http.post(`v1/daemon/context/${assignment.run_id}/draft-revision`,{json:{thread:got.data.thread_id,revision:got.data.revision},signal});
+              }catch(error){if(signal.aborted||!(error instanceof Error))throw error;}
+            }
+            if(runPolicy==='read_only'&&item.name==='source_slack_read'){
+              try{
+                const text=z.object({content:z.array(z.object({text:z.string().optional()}))}).passthrough().parse(JSON.parse(ran.text)).content[0]?.text??'';
+                const got=JSON.parse(text) as Record<string,unknown>;
+                const args=JSON.parse(callArgs) as {method?:string;params?:Record<string,unknown>};
+                // users.conversations read through (no next cursor) means the channel list is whole.
+                const team=typeof got['_team_id']==='string'?got['_team_id']:undefined;
+                if(args.method==='users.conversations'&&got['ok']===true){
+                  const more=String((got['response_metadata'] as {next_cursor?:string}|undefined)?.next_cursor??'');
+                  const ids=Array.isArray(got['channels'])?(got['channels'] as {id?:string}[]).map(c=>String(c.id??'')).filter(Boolean):[];
+                  await this.http.post(`v1/daemon/context/${assignment.run_id}/coverage`,{json:{kind:'slack_channels',team,cursor:String(args.params?.['cursor']??''),channels:ids,complete:!more,rows:ids.length},signal});
+                }
+                if(args.method==='conversations.history'&&got['ok']===true&&args.params?.['oldest']!==undefined){
+                  await this.http.post(`v1/daemon/context/${assignment.run_id}/coverage`,{json:{kind:'slack_history',team,channel:String(args.params['channel']??''),oldest:Number(args.params['oldest']),complete:got['has_more']!==true,rows:Array.isArray(got['messages'])?got['messages'].length:0},signal});
+                }
+              }catch(error){if(signal.aborted||!(error instanceof Error))throw error;}
+            }
+            if(runPolicy==='read_only'&&item.name==='source_gmail_list'){
+              try{
+                const text=z.object({content:z.array(z.object({text:z.string().optional()}))}).passthrough().parse(JSON.parse(ran.text)).content[0]?.text??'';
+                const got=z.object({window:z.object({after:z.string(),before:z.string().nullable()}),complete:z.boolean(),rows:z.array(z.unknown())}).safeParse(JSON.parse(text));
+                const account=String((JSON.parse(callArgs) as {account?:string}).account??'');
+                if(got.success)await this.http.post(`v1/daemon/context/${assignment.run_id}/coverage`,{json:{kind:'gmail',account,after:got.data.window.after,before:got.data.window.before,complete:got.data.complete,rows:got.data.rows.length},signal});
+              }catch(error){if(signal.aborted||!(error instanceof Error))throw error;}
+            }
+            return ran;
           });
           }catch(error){
             if(signal.aborted||this.barrierFailed||error instanceof ExecutionBarrierError||fatalDesktopFailure(error)||error instanceof NativeArchiveError||error instanceof NativeContextError)throw error;
@@ -854,7 +977,7 @@ export class Runtime {
           return {result,actionId};
           };
            if(item.name==='wait_agent'||item.name==='wait_for_desktop')return execute();
-           return scheduler.run(this.config.tools.parallelRead(item.name)||item.name==='search_prior_work'||item.name==='retrieve_prior_work'?'read':'exclusive',signal,execute);
+           return scheduler.run(this.config.tools.parallelRead(item.name)||item.name==='search_prior_work'||item.name==='retrieve_prior_work'||item.name==='read_attention'?'read':'exclusive',signal,execute);
         },signal);
         for(const [index,item] of calls.entries()){
           const value=completed[index];if(!value)throw new TypeError('Missing tool result');

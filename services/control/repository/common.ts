@@ -118,11 +118,13 @@ export async function messages(sql: Query, workspace: string, id: string, after 
       WHERE n.message_id=m.id AND r.workspace_id=m.workspace_id AND t.conversation_id=m.conversation_id
       ORDER BY r.created_at DESC,n.state DESC LIMIT 1) AS task_status,
     (SELECT min(i.applied_at) FROM assistant.input_receipts i WHERE i.workspace_id=m.workspace_id AND i.message_id=m.id AND m.role='user') AS read_at,
-    COALESCE((SELECT jsonb_agg(to_jsonb(a) ORDER BY ma.position) FROM assistant.message_artifacts ma JOIN assistant.artifacts a ON a.id=ma.artifact_id WHERE ma.message_id=m.id),'[]'::jsonb) AS attachments
+    COALESCE((SELECT jsonb_agg(to_jsonb(a) ORDER BY ma.position) FROM assistant.message_artifacts ma JOIN assistant.artifacts a ON a.id=ma.artifact_id WHERE ma.message_id=m.id),'[]'::jsonb) AS attachments,
+    (SELECT jsonb_object_agg(c.block_id,jsonb_build_object('state',c.state,'option',c.option,'snoozed_until',c.snoozed_until,'approved_body',c.approved_body,'retry_ok',c.retry_ok)) FROM assistant.card_states c WHERE c.workspace_id=m.workspace_id AND c.message_id=m.id) AS card_states
     FROM assistant.messages m WHERE m.workspace_id=${workspace} AND m.conversation_id=${id} AND NOT m.hidden AND m.sequence>${after} ORDER BY m.sequence`;
   const parsed=z.array(Message).parse(rows.map(row=>{
     const value={...row};
     if(value['task_status']===null)delete value['task_status'];
+    if(value['card_states']===null)delete value['card_states'];
     return value;
   }));
   const previews=new Map(await Promise.all([...new Set(parsed.flatMap(message=>message.reply_to_message_id?[message.reply_to_message_id]:[]))].map(async id=>[id,await replyPreview(sql,workspace,id)] as const)));

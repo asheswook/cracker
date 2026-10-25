@@ -1,0 +1,174 @@
+/* Topic chip: a quiet label above a run of messages that share a knowledge-tree topic. */
+.topic-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(320px, 100%);
+  min-height: 28px;
+  margin: 14px 0 2px;
+  padding: 0 10px 0 8px;
+  border: 0;
+  border-radius: var(--r-full);
+  background: transparent;
+  color: var(--message-secondary, var(--muted));
+  font: inherit;
+  font-size: var(--t-caption);
+  line-height: 16px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  align-self: flex-start;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+.topic-chip::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.55;
+}
+.topic-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topic-chip[data-side='user'] { align-self: flex-end; }
+@media (hover: hover) {
+  .topic-chip:hover { background: var(--message-received, var(--wash)); color: var(--message-ink, var(--ink)); }
+}
+.topic-chip:active { background: var(--message-received, var(--wash)); }
+.topic-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Branch sheet, built on .settings-dialog like the background-run sheet. */
+.settings-dialog.topic-sheet {
+  width: min(640px, calc(100vw - 32px));
+  max-height: min(800px, calc(100dvh - 48px));
+  background: var(--message-canvas, var(--surface));
+  color: var(--message-ink, var(--ink));
+}
+.topic-sheet > header { padding: 14px 12px 10px 24px; }
+.topic-sheet-heading { display: grid; gap: 2px; min-width: 0; }
+.topic-sheet-heading small { color: var(--message-secondary, var(--muted)); font-size: var(--t-caption); line-height: 16px; }
+.topic-sheet h2 {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--t-callout); font-weight: 600; line-height: 22px;
+}
+.topic-sheet .icon-button { width: 44px; height: 44px; border-radius: var(--r-full); }
+.topic-sheet-branches {
+  display: flex; gap: 6px; overflow-x: auto; padding: 0 24px 12px;
+  scrollbar-width: none; border-bottom: 0.5px solid var(--line);
+}
+.topic-sheet-branches::-webkit-scrollbar { display: none; }
+.topic-sheet-branches button {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px;
+  border: 0; border-radius: var(--r-full); background: var(--message-received, var(--wash));
+  color: var(--message-ink, var(--ink)); font: inherit; font-size: var(--t-caption); cursor: pointer;
+}
+.topic-sheet-branches button span { color: var(--message-secondary, var(--muted)); font-variant-numeric: tabular-nums; }
+.topic-sheet-branches button[aria-pressed='true'] { background: var(--message-ink, var(--ink)); color: var(--message-canvas, var(--surface)); }
+.topic-sheet-branches button[aria-pressed='true'] span { color: inherit; opacity: 0.7; }
+.topic-sheet-branches button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.topic-sheet-body {
+  display: flex; flex-direction: column; gap: 4px; min-height: 0;
+  padding: 16px 20px 24px; overflow: auto; overscroll-behavior: contain; outline: none;
+}
+.topic-sheet-summary {
+  margin: 0 0 12px; padding: 12px 14px; border-radius: var(--r-lg, 14px);
+  background: var(--message-received, var(--wash)); font-size: var(--t-footnote); line-height: 1.55;
+}
+.topic-sheet-summary ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+/* Work overview: what this branch is waiting on, running, produced and settled. Compact; the conversation stays the main content. */
+.topic-work {
+  display: grid; gap: 14px; margin: 0 0 14px; padding: 0 0 14px;
+  border-bottom: 0.5px solid var(--line);
+}
+.topic-work-group h3 {
+  display: flex; align-items: center; gap: 6px; margin: 0 0 6px; padding: 0 4px;
+  font-size: var(--t-caption); font-weight: 600; line-height: 16px; color: var(--message-secondary, var(--muted));
+}
+.topic-work-group h3 > span {
+  padding: 0 6px; border-radius: var(--r-full); background: var(--message-received, var(--wash));
+  font-variant-numeric: tabular-nums; font-weight: 500;
+}
+.topic-work-group ul { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.topic-work-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: 'kind title time' '. detail detail';
+  align-items: baseline; gap: 1px 10px; width: 100%; min-height: 36px; padding: 8px 10px; box-sizing: border-box;
+  border: 0; border-radius: 12px; background: transparent;
+  color: var(--message-ink, var(--ink)); font: inherit; text-align: start;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 120ms ease-out;
+}
+button.topic-work-row { cursor: pointer; }
+@media (hover: hover) { button.topic-work-row:hover { background: var(--message-received, var(--wash)); } }
+button.topic-work-row:active { background: var(--message-received, var(--wash)); }
+button.topic-work-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.topic-work-kind {
+  grid-area: kind; color: var(--message-secondary, var(--muted)); font-size: var(--t-caption); line-height: 18px; white-space: nowrap;
+}
+.topic-work-title {
+  grid-area: title; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--t-footnote); line-height: 18px;
+}
+.topic-work-detail {
+  grid-area: detail; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--message-secondary, var(--muted)); font-size: var(--t-caption); line-height: 16px;
+}
+.topic-work-row time {
+  grid-area: time; color: var(--message-secondary, var(--muted)); font-size: 10px; line-height: 18px;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+/* 나를 기다림 leads: card surface, accent edge and label, like the needs tone in 챙길 것. */
+.topic-work-group[data-tone='needs'] h3 { color: var(--message-ink, var(--ink)); }
+.topic-work-group[data-tone='needs'] h3::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+}
+.topic-work-group[data-tone='needs'] h3 > span { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.topic-work-group[data-tone='needs'] ul { gap: 6px; }
+.topic-work-group[data-tone='needs'] .topic-work-row {
+  min-height: 44px; padding: 10px 12px; border: 0.5px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: 14px; background: var(--surface);
+}
+@media (hover: hover) { .topic-work-group[data-tone='needs'] button.topic-work-row:hover { background: var(--surface-muted); } }
+.topic-work-group[data-tone='needs'] button.topic-work-row:active { background: var(--surface-muted); }
+.topic-work-group[data-tone='needs'] .topic-work-kind { color: var(--accent); font-weight: 500; }
+.topic-work-group[data-tone='needs'] .topic-work-title { font-weight: 500; }
+.topic-work-group[data-tone='progress'] .topic-work-kind { color: var(--accent); }
+.topic-work-group[data-tone='results'] .topic-work-kind { color: var(--success, #1f7a45); }
+.topic-work-more {
+  margin: 2px 0 0; padding: 4px 10px; min-height: 28px; border: 0; border-radius: var(--r-full);
+  background: transparent; color: var(--message-secondary, var(--muted)); font: inherit; font-size: var(--t-caption); cursor: pointer;
+}
+@media (hover: hover) { .topic-work-more:hover { color: var(--message-ink, var(--ink)); background: var(--message-received, var(--wash)); } }
+.topic-work-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 600px) {
+  .topic-work-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'kind time' 'title title' 'detail detail'; }
+  .topic-work-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+}
+.topic-sheet-node { margin: 12px 4px 2px; color: var(--message-secondary, var(--muted)); font-size: var(--t-caption); }
+.topic-sheet-row {
+  display: flex; align-items: flex-end; gap: 6px; width: 100%; padding: 0; border: 0;
+  background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer;
+}
+.topic-sheet-row.user { flex-direction: row-reverse; }
+.topic-sheet-row > .message { margin: 0; display: flex; flex: 0 1 auto; min-width: 0; max-width: 86%; }
+.topic-sheet-row.user > .message { justify-content: flex-end; }
+/* The sheet is narrower than the chat column: bubbles size to their text, not to the chat's max-width rule. */
+.assistant-shell .topic-sheet .topic-sheet-row .message .bubble,
+.topic-sheet .topic-sheet-row .bubble { width: fit-content; inline-size: fit-content; max-width: 100%; word-break: keep-all; }
+.topic-sheet-row .bubble { max-height: 220px; overflow: hidden; -webkit-mask-image: linear-gradient(#000 80%, transparent); mask-image: linear-gradient(#000 80%, transparent); }
+.topic-sheet-row time { flex: none; color: var(--message-secondary, var(--muted)); font-size: 10px; font-variant-numeric: tabular-nums; }
+.topic-sheet-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 18px; }
+.topic-sheet-note { margin: 8px 4px; color: var(--message-secondary, var(--muted)); font-size: var(--t-caption); }
+@media (max-width: 600px) {
+  .settings-dialog.topic-sheet {
+    width: 100vw; max-width: 100vw;
+    max-height: calc(100dvh - max(24px, env(safe-area-inset-top)) - 8px);
+    margin: auto 0 0; border-width: 1px 0 0; border-radius: var(--r-xl) var(--r-xl) 0 0;
+  }
+  .topic-sheet > header { padding: 10px 8px 8px 20px; }
+  .topic-sheet-branches { padding: 0 20px 10px; }
+  .topic-sheet-body { padding: 12px 16px max(24px, env(safe-area-inset-bottom)); }
+}
+@media (prefers-reduced-motion: reduce) { .topic-chip, .topic-work-row { transition: none; } }

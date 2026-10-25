@@ -421,6 +421,12 @@ export class ClientStore {
       const readAt = merged.get(message.id)?.read_at ?? message.read_at;
       merged.set(message.id, { ...message, read_at: readAt });
     }
+    for (const card of page.card_states) {
+      const message = merged.get(card.message_id);
+      const prior = message?.card_states?.[card.block_id];
+      if (message && (prior?.state !== card.state || prior?.option !== card.option || prior?.snoozed_until !== card.snoozed_until))
+        merged.set(message.id, { ...message, card_states: { ...(message.card_states ?? {}), [card.block_id]: { state: card.state, option: card.option, snoozed_until: card.snoozed_until } } });
+    }
     for (const receipt of page.receipts) {
       const message = merged.get(receipt.message_id);
       if (message?.role === 'user' && !message.read_at)
@@ -457,6 +463,29 @@ export class ClientStore {
     if (changedOutbox || changedMessages || changedCursor || composing!==this.value.composing || replyHandoff !== this.value.replyHandoff || working !== this.value.working || background!==this.value.background)
       this.patch({composing, replyHandoff, working, background, ...(changedOutbox ? { outbox } : {}), ...(changedMessages ? { messages } : {}), ...(changedCursor ? { syncedCursor } : {}) });
     if (changedOutbox) this.persist();
+  }
+  /** A button on a draft or choice card. The server turns it into a user message that replies to the card. */
+  private cardPresses = new Map<string, string>();
+  async answerCard(message: Message, blockId: string, option: string, body?: string) {
+    const conversation = message.conversation_id;
+    // One client id per press target, kept across retries, so a lost response is retried rather than rejected.
+    const key = `${message.id}:${blockId}:${option}:${body ?? ''}`;
+    const clientId = this.cardPresses.get(key) ?? crypto.randomUUID();
+    this.cardPresses.set(key, clientId);
+    const result = z.object({ card: z.object({ state: z.string(), snoozed_until: z.string().nullable().default(null) }) }).passthrough().parse(await http.post(`/v1/conversations/${conversation}/messages/${message.id}/answer`, {
+      json: { client_message_id: clientId, block_id: blockId, option, ...(body !== undefined ? { body } : {}) },
+      retry: { limit: 2, methods: ['post'], statusCodes: [408, 429, 500, 502, 503, 504] },
+    }).json<unknown>());
+    this.cardPresses.delete(key);
+    // The card message was synced before the answer; update its state in place.
+    const history = this.histories.get(conversation) ?? [];
+    const next = history.map(m => m.id === message.id ? { ...m, card_states: { ...(m.card_states ?? {}), [blockId]: { state: Message.shape.card_states.unwrap().valueType.shape.state.parse(result.card.state), option, snoozed_until: result.card.snoozed_until } } } : m);
+    this.histories.set(conversation, next);
+    if (this.value.selected === conversation) this.patch({ messages: next });
+    if (result.card.state === 'replaced') throw new Error('메일이 바뀌었거나 이미 처리돼서 이 초안은 보낼 수 없어요.');
+    if (option !== 'later' && option !== 'dismiss') this.expectingReplyUntil = Date.now() + 15000;
+    await this.sync(conversation);
+    void this.refresh();
   }
   async send(content: string, attachments: Artifact[] = [], reply?: Pending['reply']) {
     const id = this.value.assistantId;

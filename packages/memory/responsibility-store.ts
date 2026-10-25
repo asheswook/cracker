@@ -40,7 +40,9 @@ export async function createResponsibility(sql: Database, principal: Principal, 
 export async function snapshot(sql: Query, row: z.infer<typeof ResponsibilityRow>): Promise<ResponsibilitySnapshot> {
   const messages = z.array(z.object({ id: z.uuid(), role: z.string(), content: z.string(), created_at: z.string() })).parse(await sql`SELECT m.id,m.role,m.content,m.created_at FROM assistant.messages m WHERE m.workspace_id=${row.workspace_id} AND m.conversation_id=${row.conversation_id} AND NOT EXISTS(SELECT 1 FROM assistant.responsibility_notifications n WHERE n.message_id=m.id) ORDER BY m.sequence DESC LIMIT 100`);
   const tasks = z.array(z.object({ id: z.uuid(), objective: z.string(), state: z.string(), reason: z.string().nullable() })).parse(await sql`SELECT id,objective,state,reason FROM assistant.tasks WHERE workspace_id=${row.workspace_id} AND conversation_id=${row.conversation_id} ORDER BY id FOR SHARE`);
-  const context_hash = await hashToken(JSON.stringify({ objective: row.objective, trigger: row.trigger, messages, tasks }));
+  // Periodic watches observe the outside world, which is not in the conversation: each interval is a new occurrence.
+  const occurrence = row.trigger.kind === "periodic" ? Math.floor(Date.now() / (row.trigger.interval_minutes * 60_000)) : null;
+  const context_hash = await hashToken(JSON.stringify({ objective: row.objective, trigger: row.trigger, messages, tasks, ...(occurrence === null ? {} : { occurrence }) }));
   const history = z.array(z.object({ outcome: z.string(), reason: z.string() })).parse(await sql`SELECT outcome,reason FROM assistant.responsibility_evaluations WHERE responsibility_id=${row.id} ORDER BY created_at DESC LIMIT 5`);
   const notifications = z.array(z.object({ state: z.string(), content: z.string() })).parse(await sql`SELECT state,content FROM assistant.responsibility_notifications WHERE responsibility_id=${row.id} ORDER BY created_at DESC LIMIT 5`);
   return { history, notifications, id: row.id, objective: row.objective, trigger: row.trigger, context_hash, messages, tasks };

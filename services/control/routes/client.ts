@@ -1,3 +1,6 @@
+import { answerCard, CardAnswerRequest, settleCardsForTask } from "../repository/card-answer";
+import { settleBriefForTask } from "../../../packages/attention/coordinator";
+import { settleObservationTask, settleSendTask } from "../../../packages/attention/sources";
 import { Hono } from "hono";
 import { z } from "zod";
 import { Command, Conversation, DomainError, Id, ReadReceipt, Task } from "../../../packages/protocol";
@@ -65,10 +68,18 @@ export function clientRoutes(sql: Database) {
         working: await workingState(tx, workspace, id),
         background: await backgroundState(tx, workspace, id),
         cursor: result.at(-1)?.sequence ?? after,
+        // Card state changes do not move the message cursor; send recent ones so every open device converges.
+        card_states: after > 0 ? await tx`SELECT c.message_id,c.block_id,c.state,c.option,to_jsonb(c.snoozed_until)#>>'{}' AS snoozed_until FROM assistant.card_states c JOIN assistant.messages m ON m.workspace_id=c.workspace_id AND m.id=c.message_id
+          WHERE c.workspace_id=${workspace} AND m.conversation_id=${id} AND c.updated_at>now()-interval '14 days' ORDER BY c.updated_at DESC LIMIT 200` : [],
         receipts: receiptIds.length ? z.array(ReadReceipt).parse(await tx`SELECT m.id AS message_id,min(i.applied_at) AS read_at FROM assistant.messages m JOIN assistant.input_receipts i ON i.message_id=m.id AND i.workspace_id=m.workspace_id WHERE m.workspace_id=${workspace} AND m.conversation_id=${id} AND m.role='user' AND m.id IN ${tx(receiptIds)} AND i.applied_at IS NOT NULL GROUP BY m.id`) : [],
       };
     });
     return c.json(page);
+  });
+  app.post("/conversations/:id/messages/:message/answer", async (c) => {
+    const body = CardAnswerRequest.parse(await c.req.json());
+    const workspace = c.get("principal").workspace_id;
+    return c.json(await sql.begin((tx) => answerCard(tx, { workspace, conversation: Id.parse(c.req.param("id")), message: Id.parse(c.req.param("message")), ...body })));
   });
   app.post("/conversations/:id/messages", async (c) => {
     const body = z
@@ -138,6 +149,10 @@ export function clientRoutes(sql: Database) {
         if (task.state !== "queued")
           throw new DomainError("not_assigned", "Task has no VM to acknowledge stop", 409);
         await tx`UPDATE assistant.tasks SET state='cancelled',reason='Cancelled before VM assignment',updated_at=now() WHERE id=${id}`;
+        await settleCardsForTask(tx, workspace, id, "cancelled");
+        await settleBriefForTask(tx, workspace, id, "cancelled");
+        await settleObservationTask(tx, workspace, id, "cancelled");
+        await settleSendTask(tx, workspace, id, "cancelled");
         await recordEvent(tx, {
           workspace,
           kind: "task.cancelled_before_assignment",
