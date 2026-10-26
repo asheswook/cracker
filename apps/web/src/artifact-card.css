@@ -1,4 +1,4 @@
-/* 결과물 카드: flat surface, hairline border, one accent (the 열기 action). Sheet reuses the same vocabulary. */
+/* 결과물 카드: the file itself — a glimpse and its name; the whole card opens it. Sheet reuses the same vocabulary. */
 .attachments:has(.artifact-card) { flex-direction: column; align-items: stretch; }
 .assistant-shell .message.user .attachments:has(.artifact-card) { align-items: flex-end; }
 
@@ -7,31 +7,31 @@
   border: 0.5px solid var(--line); border-radius: var(--r-lg); background: var(--surface); color: var(--ink);
 }
 
-.artifact-row { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 10px; align-items: center; padding: 12px 12px 4px; }
+.artifact-card { position: relative; }
+.artifact-row { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 10px; align-items: center; padding: 10px 12px; }
 .artifact-icon {
   display: grid; place-items: center; width: 36px; height: 36px; border-radius: var(--r-sm);
   background: var(--wash); color: var(--muted); flex: none;
 }
-.artifact-info { display: grid; gap: 2px; min-width: 0; }
+/* The card is one tap target: the name's hit area covers it. */
+.artifact-open {
+  display: block; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: start;
+  text-decoration: none; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.artifact-open::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
+.artifact-card:has(.artifact-open:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.artifact-open:focus-visible { outline: none; }
+@media (hover: hover) { .artifact-card:has(.artifact-open:hover) { background: var(--surface-muted); } }
+.artifact-card:has(.artifact-open:active) { background: var(--surface-muted); }
 .artifact-name {
   font-size: var(--t-subhead); font-weight: 600; line-height: 1.35;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.artifact-meta { font-size: var(--t-caption); line-height: 1.35; color: var(--muted); font-variant-numeric: tabular-nums; }
-
-.artifact-actions { display: flex; gap: 4px; padding: 6px 8px 8px 58px; }
 .artifact-action {
   display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 36px; padding: 0 12px;
-  border: 0; border-radius: var(--r-full); background: none; color: var(--muted);
+  border: 0; border-radius: var(--r-full); background: var(--wash); color: var(--ink);
   font: inherit; font-size: var(--t-footnote); font-weight: 500; text-decoration: none; cursor: pointer;
-  -webkit-tap-highlight-color: transparent; transition: background-color var(--dur-quick, 120ms) ease, color var(--dur-quick, 120ms) ease;
 }
-.artifact-action[data-primary] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-@media (hover: hover) {
-  .artifact-action:hover { background: var(--wash); color: var(--ink); }
-  .artifact-action[data-primary]:hover { background: var(--accent-soft); color: var(--accent-hover); }
-}
-.artifact-action:active { background: var(--wash); }
 .artifact-action:focus-visible, .artifact-sheet-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* Inline previews sit above the name row, separated by a hairline. */
@@ -43,8 +43,7 @@
 @media (prefers-reduced-motion: reduce) { .artifact-preview-image[data-loading], .artifact-preview-text[data-loading] { animation: none; } }
 
 .artifact-preview-csv { display: grid; background: var(--surface-muted); }
-.artifact-table-scroll { overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
-.artifact-preview-meta { margin: 0; padding: 6px 12px 8px; font-size: var(--t-caption); color: var(--muted); font-variant-numeric: tabular-nums; }
+.artifact-table-scroll { overflow: hidden; }
 
 .artifact-table { border-collapse: collapse; min-width: 100%; font-size: var(--t-caption); line-height: 1.4; font-variant-numeric: tabular-nums; }
 .artifact-table th, .artifact-table td {

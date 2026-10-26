@@ -21,26 +21,7 @@ export function artifactKind(mediaType: string, name: string): ArtifactKind {
   return 'other';
 }
 
-export function kindLabel(kind: ArtifactKind, mediaType: string, name: string): string {
-  switch (kind) {
-    case 'csv': return '표 · CSV';
-    case 'markdown': return '문서 · Markdown';
-    case 'text': return '텍스트';
-    case 'pdf': return '문서 · PDF';
-    case 'docx': return 'Word 문서';
-    case 'zip': return '압축 파일';
-    case 'image': {
-      const sub = mediaType.split('/')[1]?.toUpperCase();
-      return sub ? `이미지 · ${sub === 'JPEG' ? 'JPG' : sub}` : '이미지';
-    }
-    default: {
-      const ext = extension(name);
-      return ext ? `파일 · ${ext.toUpperCase()}` : '파일';
-    }
-  }
-}
-
-/** Kinds that 열기 shows inside the app; everything else simply downloads. */
+/** Kinds the viewer shows inside the app; everything else downloads on tap. */
 export function canOpenInline(kind: ArtifactKind): boolean {
   return kind === 'csv' || kind === 'markdown' || kind === 'text' || kind === 'image' || kind === 'pdf';
 }
@@ -48,14 +29,6 @@ export function canOpenInline(kind: ArtifactKind): boolean {
 /** Kinds that get a small text-based preview on the card. */
 export function hasTextPreview(kind: ArtifactKind): boolean {
   return kind === 'csv' || kind === 'markdown' || kind === 'text';
-}
-
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  const mb = bytes / (1024 * 1024);
-  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
 }
 
 export function formatCount(value: number): string {
@@ -140,10 +113,6 @@ export function csvPreview(text: string, options: { rows?: number; columns?: num
     columnCount,
     partial,
   };
-}
-
-export function csvSummary(preview: Pick<CsvPreview, 'rowCount' | 'columnCount' | 'partial'>): string {
-  return `${formatCount(preview.rowCount)}행${preview.partial ? ' 이상' : ''} · ${formatCount(preview.columnCount)}열`;
 }
 
 /** First few lines of a text file, plus whether more follows. */

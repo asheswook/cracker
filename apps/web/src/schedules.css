@@ -62,7 +62,6 @@
 .schedule-actions .schedule-stop { margin-left: auto; color: var(--danger); }
 @media (hover: hover) { .schedule-actions > button:not(.button):hover { color: var(--ink); } }
 .schedule-actions :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
-.schedules-v2 .schedule-history { margin-top: 0; border-top: 0.5px solid var(--line); }
 
 .schedule-past { border-top: 0.5px solid var(--line); padding-top: 4px; }
 .schedule-past summary { list-style: none; align-items: center; min-height: 52px; }

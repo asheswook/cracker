@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ChevronRight, CircleAlert, CircleCheck, Search } from 'lucide-react';
+import { ChevronRight, CircleAlert, Search } from 'lucide-react';
 import type { Id, Task } from './types';
 import { WorkSearch } from './WorkSearch';
 import { errorMessage } from './api';
@@ -33,14 +33,15 @@ function TaskRow({ task, line, tone, destination, onOpen, quiet = false }: {
     catch (e) { if (mounted.current) setError(e instanceof WorkNavigationError ? e.message : errorMessage(e)); }
     finally { if (mounted.current) setBusy(false); }
   };
-  const Icon = tone === 'failed' || tone === 'attention' ? CircleAlert : tone === 'done' ? CircleCheck : null;
+  // A mark only where something is off; finished rows carry none, running ones a soft pulse.
+  const Icon = tone === 'failed' || tone === 'attention' ? CircleAlert : null;
   const title = taskTitle(task);
   return (
     <li className="work-row" data-tone={tone} data-quiet={quiet || undefined} data-task-id={task.id}>
       <button type="button" className="work-main" onClick={() => void open()} aria-busy={busy || undefined}
         aria-label={`${title}, ${line}. ${destination === 'reply' ? '답변 열기' : '요청 열기'}`}>
         <span className="work-mark" aria-hidden="true">
-          {Icon ? <Icon size={quiet ? 14 : 16} strokeWidth={1.9} /> : <span className="work-pulse" />}
+          {Icon ? <Icon size={quiet ? 14 : 16} strokeWidth={1.9} /> : tone === 'done' ? null : <span className="work-pulse" />}
         </span>
         <span className="work-text">
           <span className="work-title">{title}</span>

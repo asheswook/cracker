@@ -101,7 +101,6 @@ export function FeedThread({ mailId, url, id, onChanged, promise = false, chase 
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState('');
   const [note, setNote] = useState('');
-  const [rewriting, setRewriting] = useState(false);
   const [optimisticNote, setOptimisticNote] = useState<string | null>(null);
   const draftKey = useRef('');
   const fieldId = useId();
@@ -128,7 +127,7 @@ export function FeedThread({ mailId, url, id, onChanged, promise = false, chase 
   useEffect(() => {
     if (!card) return;
     const key = `${card.message_id}:${card.block_id}`;
-    if (draftKey.current !== key) { draftKey.current = key; setText(card.body); setRewriting(false); }
+    if (draftKey.current !== key) { draftKey.current = key; setText(card.body); }
   }, [card?.message_id, card?.block_id, card?.body]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (request?.state === 'failed') setNote(request.note ?? '');
@@ -138,7 +137,7 @@ export function FeedThread({ mailId, url, id, onChanged, promise = false, chase 
     setBusy(true);
     try {
       await http.post(`${path}/reply`, { json: { note: value.trim() || null } });
-      setNote(''); setRewriting(false);
+      setNote('');
       setOptimisticNote(value.trim());
       void load();
     } catch (e) { setError(await serverMessage(e)); }
@@ -175,42 +174,36 @@ export function FeedThread({ mailId, url, id, onChanged, promise = false, chase 
 
   let composer: React.ReactNode = null;
   if (preparing) {
-    const preparingNote = status.note;
-    composer = <p className="thread-status" role="status"><span className="thread-dot" aria-hidden="true" />답장 초안을 쓰고 있어요…{preparingNote && <span className="thread-sub">“{preparingNote}”</span>}</p>;
+    composer = <p className="thread-status" role="status"><span className="thread-dot" aria-hidden="true" />초안을 쓰고 있어요…</p>;
   } else if (status.failed) {
-    composer = <><p className="thread-error" role="alert">초안을 만들지 못했어요. 다시 시도해 주세요.</p>{askBox('어떻게 답할지 적어 주세요 (비워 두면 알아서 써요)', '답장 초안 만들기', false)}</>;
+    composer = <><p className="thread-error" role="alert">초안을 만들지 못했어요.</p>{askBox('어떻게 답할까요?', '초안 쓰기', false)}</>;
   } else if (status.expired && thread.open) {
-    composer = <><p className="thread-status">답장 요청이 만료됐어요. 다시 요청해 주세요.</p>{askBox('어떻게 답할지 적어 주세요 (비워 두면 알아서 써요)', '답장 초안 만들기', false)}</>;
+    composer = askBox('어떻게 답할까요?', '초안 쓰기', false);
   } else if (card?.card_state === 'accepted') {
     composer = <p className="thread-status" role="status"><span className="thread-dot" aria-hidden="true" />보내는 중…</p>;
   } else if (card?.card_state === 'resolved' && promise && thread.open) {
     // Sent, but the promise is still open until the user says it is done: another mail can be drafted.
-    composer = <><p className="thread-status" data-tone="done" role="status">보냈어요. 약속을 다 지켰으면 '했어요'를 눌러 주세요.</p>{askBox('더 보낼 내용이 있으면 적어 주세요', '보낼 메일 초안 만들기', false)}</>;
+    composer = <><p className="thread-status" data-tone="done" role="status">보냈어요</p>{askBox('더 보낼 내용이 있나요?', '초안 쓰기', false)}</>;
   } else if (card?.card_state === 'resolved') {
     composer = <p className="thread-status" data-tone="done" role="status">보냈어요</p>;
   } else if (canEdit && card) {
     composer = (
       <div className="thread-compose">
-        {card.card_state === 'failed' && <p className="thread-error">지난번엔 보내지 못했어요. 확인하고 다시 보내 주세요.</p>}
+        {card.card_state === 'failed' && <p className="thread-error">보내지 못했어요.</p>}
         <label htmlFor={fieldId} className="thread-to">받는 사람 <span>{card.target ?? thread.counterpart ?? '—'}</span></label>
         <textarea id={fieldId} value={text} onChange={e => setText(e.target.value)} rows={Math.min(10, Math.max(3, text.split('\n').length + 1))} disabled={busy} aria-describedby={unfilled ? `${fieldId}-hint` : undefined} />
         {unfilled && <p id={`${fieldId}-hint`} className="thread-hint">[ ] 부분을 채워 주세요</p>}
+        {/* The text is the draft: edit it here, or tell the assistant in the conversation. */}
         <div className="thread-bar">
-          <button type="button" onClick={() => setRewriting(r => !r)} aria-expanded={rewriting} disabled={busy}>다시 쓰기</button>
           <button type="button" data-primary="" disabled={busy || unfilled || !text.trim()} onClick={() => void send(card)}><Send size={13} aria-hidden="true" />보내기</button>
         </div>
-        {rewriting && askBox('어떻게 답할까요?', '다시 쓰기', true)}
       </div>
     );
   } else if (thread.open && (!card || card.card_state === 'replaced')) {
-    composer = chase
-      ? askBox('덧붙일 말이 있으면 적어 주세요 (비워 두면 짧게 다시 여쭤봐요)', '재촉 메일 초안 만들기', false)
-      : promise
-      // Only text and links can go out from here (same thread, no attachments): say so.
-      ? askBox('보낼 내용을 적어 주세요 (링크나 설명, 첨부는 원문에서)', '보낼 메일 초안 만들기', false)
-      : askBox('어떻게 답할지 적어 주세요 (비워 두면 알아서 써요)', '답장 초안 만들기', false);
+    // An empty note is fine: the assistant writes it on its own.
+    composer = askBox(chase ? '덧붙일 말이 있나요?' : promise ? '무엇을 보낼까요?' : '어떻게 답할까요?', '초안 쓰기', false);
   } else if (card?.card_state === 'failed') {
-    composer = <p className="thread-status">보내지 못했어요. 대화에서 확인해 주세요.</p>;
+    composer = <p className="thread-status">보내지 못했어요.</p>;
   }
 
   return (
@@ -228,10 +221,9 @@ export function FeedThread({ mailId, url, id, onChanged, promise = false, chase 
           })}
         </ol>
       ) : (
-        <p className="thread-note">아직 원문을 읽지 않았어요.{link && <> <a href={link} target="_blank" rel="noopener noreferrer">원문 보기<ExternalLink size={11} aria-hidden="true" /></a></>}</p>
+        link ? <p className="thread-note"><a href={link} target="_blank" rel="noopener noreferrer">원문 보기<ExternalLink size={11} aria-hidden="true" /></a></p> : null
       )}
-      {thread.truncated && <p className="thread-note">긴 메일이라 일부만 보여요.{link && <> <a href={link} target="_blank" rel="noopener noreferrer">원문 보기<ExternalLink size={11} aria-hidden="true" /></a></>}</p>}
-      {thread.read_at && <p className="thread-read">마지막으로 읽음 {relative(thread.read_at)}</p>}
+      {thread.messages.length > 0 && thread.truncated && link && <p className="thread-note"><a href={link} target="_blank" rel="noopener noreferrer">원문 보기<ExternalLink size={11} aria-hidden="true" /></a></p>}
       {error && <p className="thread-error" role="alert">{error}</p>}
       {composer && <div className="thread-reply">{composer}</div>}
     </div>

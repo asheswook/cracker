@@ -61,7 +61,7 @@ test('a failed refresh retains only the current login data', async () => {
   expect(snapshot()).toEqual({ data: null, error: '' });
 });
 
-test('automated actionable mail stays in 지금 할 일; only non-actionable mail is folded', async () => {
+test('automated actionable mail stays in 지금 할 일; non-actionable automated mail is not shown', async () => {
   expect(automated(item('Talbot'))).toBe(false);
   expect(automated(item('Build Bot'))).toBe(true);
   get = spyOn(http, 'get').mockImplementation(() => ({ json: async () => feed(
@@ -70,9 +70,26 @@ test('automated actionable mail stays in 지금 할 일; only non-actionable mai
   await refreshAttention();
   const html = renderToStaticMarkup(createElement(AttentionPanel, { onOpen: () => {} }));
   expect(html).toContain('지금 할 일 <span class="feed-count">2</span>');
-  expect(html.indexOf('Build Bot')).toBeLessThan(html.indexOf('자동 알림'));
-  expect(html).toContain('자동 알림 1개');
-  expect(html).toContain('자동 ·');
+  expect(html).toContain('Build Bot');
+  expect(html).not.toContain('Alert Bot');
+  expect(html).not.toContain('자동 알림');
+});
+
+test('the feed shows no internal states: no watches, retries or sends being checked, no filter', async () => {
+  const at = new Date().toISOString(), conversation_id = crypto.randomUUID();
+  const base = { detail: null, at, conversation_id, message_id: null };
+  get = spyOn(http, 'get').mockImplementation(() => ({ json: async () => Attention.parse({
+    needs_you: [],
+    in_progress: [
+      Item.parse({ ...base, id: 'watch:w', kind: 'watch', title: 'Gmail 지켜보는 중 · me', state: 'retrying', detail: 'degraded:', source: 'Gmail' }),
+      Item.parse({ ...base, id: 'send:s', kind: 'send', title: 'Re: 미팅', state: 'checking', detail: '답장이 나갔는지 확인 중', who: 'Alex' }),
+    ],
+    done: [Item.parse({ ...base, id: 'result:r', kind: 'result', title: 'Gmail · Re: 미팅', state: 'sent', source: 'Gmail', who: 'Alex', message_id: crypto.randomUUID() })],
+  }) }) as ReturnType<typeof http.get>);
+  await refreshAttention();
+  const html = renderToStaticMarkup(createElement(AttentionPanel, { onOpen: () => {} }));
+  expect(html).toContain('Alex에게 Gmail 답장을 보냈어요');
+  for (const hidden of ['지켜보는', '다시 시도', '확인 중', '확인하고 있어요', '한 일', 'feed-filter']) expect(html).not.toContain(hidden);
 });
 
 test('brief labels distinguish today from a recent delivery on the previous local day', () => {

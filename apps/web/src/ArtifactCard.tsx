@@ -4,7 +4,7 @@ import { http } from './api';
 import type { Artifact } from './types';
 import { MarkdownMessage } from './MarkdownMessage';
 import {
-  artifactKind, canOpenInline, csvPreview, csvSummary, formatBytes, formatCount, hasTextPreview, kindLabel,
+  artifactKind, canOpenInline, csvPreview, formatCount, hasTextPreview,
   parseCsv, readCapped, textPreview, type ArtifactKind,
 } from './artifact-preview';
 import './artifact-card.css';
@@ -114,16 +114,11 @@ function CardPreview({ artifact, kind, enabled }: { artifact: Artifact; kind: Ar
   if (kind === 'csv') {
     const preview = csvPreview(text.value.text, { partial: !text.value.complete });
     if (!preview.columnCount) return null;
-    const hidden = preview.columnCount - preview.header.length;
     return (
       <div className="artifact-preview-csv">
         <div className="artifact-table-scroll">
           <CsvTable header={preview.header} body={preview.body} label={`${artifact.name} 미리보기`} />
         </div>
-        <p className="artifact-preview-meta">
-          {csvSummary(preview)}
-          {hidden > 0 && <> · 열 {formatCount(hidden)}개 더 있음</>}
-        </p>
       </div>
     );
   }
@@ -152,16 +147,14 @@ function SheetBody({ artifact, kind }: { artifact: Artifact; kind: ArtifactKind 
           <div className="artifact-sheet-table">
             <CsvTable header={pad(header)} body={data.map(pad)} label={artifact.name} sticky />
           </div>
-          <p className="artifact-sheet-note">
-            {cut ? `처음 ${formatCount(data.length)}행만 보여요` : `${formatCount(data.length)}행 · ${formatCount(columns)}열`}
-          </p>
+          {cut && <p className="artifact-sheet-note">처음 {formatCount(data.length)}행만 보여요</p>}
         </>
       );
     }
     return (
       <div className="artifact-sheet-doc">
         {kind === 'markdown' ? <MarkdownMessage content={body} /> : <pre>{body}</pre>}
-        {!complete && <p className="artifact-sheet-note">파일 앞부분만 보여요. 전체는 다운로드해서 확인해 주세요.</p>}
+        {!complete && <p className="artifact-sheet-note">앞부분만 보여요</p>}
       </div>
     );
   }
@@ -183,7 +176,7 @@ function SheetMessage({ artifact, children }: { artifact: Artifact; children: Re
   );
 }
 
-function ArtifactSheet({ artifact, kind, label, onClose }: { artifact: Artifact; kind: ArtifactKind; label: string; onClose: () => void }) {
+function ArtifactSheet({ artifact, kind, onClose }: { artifact: Artifact; kind: ArtifactKind; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   useEffect(() => {
@@ -212,7 +205,6 @@ function ArtifactSheet({ artifact, kind, label, onClose }: { artifact: Artifact;
         <span className="artifact-icon" data-kind={kind}><KindIcon kind={kind} /></span>
         <div className="artifact-sheet-title">
           <h2 id={titleId}>{artifact.name}</h2>
-          <span>{label} · {formatBytes(artifact.bytes)}</span>
         </div>
         <a className="artifact-sheet-button" href={contentPath(artifact)} download={artifact.name} aria-label="다운로드" title="다운로드">
           <Download size={18} aria-hidden />
@@ -228,42 +220,27 @@ function ArtifactSheet({ artifact, kind, label, onClose }: { artifact: Artifact;
   );
 }
 
+/**
+ * A file in the conversation: the file itself (a small preview when there is one, its name and icon).
+ * Tapping opens it; download lives in the viewer. Files with nothing to show (zip, docx) download on tap.
+ */
 export function ArtifactCard({ artifact }: { artifact: Artifact }) {
   const kind = artifactKind(artifact.media_type, artifact.name);
-  const label = kindLabel(kind, artifact.media_type, artifact.name);
   const [ref, near] = useNearViewport<HTMLDivElement>();
   const [open, setOpen] = useState(false);
   if (artifact.state === 'deleted')
     return <span className="attachment-deleted">삭제된 파일 · {artifact.name}</span>;
-  const opens = canOpenInline(kind);
+  // The name is the control; its hit area stretches over the whole card (a table cannot live inside a button).
   return (
     <div ref={ref} className="artifact-card" data-kind={kind}>
       <CardPreview artifact={artifact} kind={kind} enabled={near} />
-      <div className="artifact-row">
+      <span className="artifact-row">
         <span className="artifact-icon" data-kind={kind}><KindIcon kind={kind} /></span>
-        <div className="artifact-info">
-          <span className="artifact-name" title={artifact.name}>{artifact.name}</span>
-          <span className="artifact-meta">{label} · {formatBytes(artifact.bytes)}</span>
-        </div>
-      </div>
-      <div className="artifact-actions">
-        {opens ? (
-          <>
-            <button type="button" className="artifact-action" data-primary onClick={() => setOpen(true)} aria-label={`${artifact.name} 열기`}>
-              열기
-            </button>
-            <a className="artifact-action" href={contentPath(artifact)} download={artifact.name} aria-label={`${artifact.name} 다운로드`}>
-              <Download size={14} aria-hidden /> 다운로드
-            </a>
-          </>
-        ) : (
-          // Nothing to show in the app for zip/docx/etc., so 열기 is the download itself — one button, not two that do the same.
-          <a className="artifact-action" data-primary href={contentPath(artifact)} download={artifact.name} aria-label={`${artifact.name} 다운로드`}>
-            <Download size={14} aria-hidden /> 다운로드
-          </a>
-        )}
-      </div>
-      {open && <ArtifactSheet artifact={artifact} kind={kind} label={label} onClose={() => setOpen(false)} />}
+        {canOpenInline(kind)
+          ? <button type="button" className="artifact-name artifact-open" title={artifact.name} onClick={() => setOpen(true)} aria-haspopup="dialog">{artifact.name}</button>
+          : <a className="artifact-name artifact-open" title={artifact.name} href={contentPath(artifact)} download={artifact.name}>{artifact.name}</a>}
+      </span>
+      {open && <ArtifactSheet artifact={artifact} kind={kind} onClose={() => setOpen(false)} />}
     </div>
   );
 }

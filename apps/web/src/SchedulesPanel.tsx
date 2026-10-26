@@ -125,10 +125,10 @@ export function SchedulesPanel({ state, onSource }: {
   };
   const routineRow = (item: Routine) => {
     const trigger = item.trigger;
-    const timezone = trigger.kind === 'daily' || trigger.kind === 'deadline' ? trigger.timezone : undefined;
     const failed = item.last_action?.task?.state === 'failed';
     return row(item.id, Repeat2, scheduleTitle(item),
-      <>{triggerLabel(trigger)} · 다음 {whenLabel(item.next_review_at, timezone)}</>,
+      // The rule says when ("매일 낮 12:00", "기한 내일 18:00까지"); the next run is never a mystery worth a line.
+      <>{triggerLabel(trigger)}</>,
       failed ? '지난번엔 못 했어요' : null,
       <>
         <OriginalAskLink conversation={item.conversation_id} message={item.source_message_id} onOpen={onSource} />
@@ -148,15 +148,16 @@ export function SchedulesPanel({ state, onSource }: {
       {loadError && <ErrorNotice>{loadError}</ErrorNotice>}
       {!loaded && !loadError && <LoadingSkeleton layout="cards" label="불러오는 중…" />}
       {loaded && !routines.length && !upcoming.length && <p className="schedule-empty">예약된 일이 없어요.</p>}
+      {/* Headings only when there is something to tell apart. */}
       {routines.length > 0 && (
-        <section className="schedule-section" aria-labelledby="schedule-repeat">
-          <h2 id="schedule-repeat" className="schedule-label">반복</h2>
+        <section className="schedule-section" aria-labelledby={upcoming.length ? 'schedule-repeat' : undefined} aria-label={upcoming.length ? undefined : '반복'}>
+          {upcoming.length > 0 && <h2 id="schedule-repeat" className="schedule-label">반복</h2>}
           <ul className="schedule-list" role="list">{routines.map(routineRow)}</ul>
         </section>
       )}
       {upcoming.length > 0 && (
-        <section className="schedule-section" aria-labelledby="schedule-upcoming">
-          <h2 id="schedule-upcoming" className="schedule-label">예정</h2>
+        <section className="schedule-section" aria-labelledby={routines.length ? 'schedule-upcoming' : undefined} aria-label={routines.length ? undefined : '예정'}>
+          {routines.length > 0 && <h2 id="schedule-upcoming" className="schedule-label">예정</h2>}
           <ul className="schedule-list" role="list">{upcoming.map(onceRow)}</ul>
         </section>
       )}
