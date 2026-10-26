@@ -47,23 +47,6 @@ You talk to it from the web, or from the included iOS and macOS apps. The interf
 <img src="docs/assets/desktop.png" alt="Desktop layout with sidebar navigation and the feed">
 </details>
 
-## Cracker at work
-
-While Cracker is working, the character in the header shows what it's doing.
-
-<table align="center">
-  <tr>
-    <td align="center"><img src="docs/assets/motion-thinking.gif" width="152" alt="Cracker thinking"><br><sub>thinking</sub></td>
-    <td align="center"><img src="docs/assets/motion-typing.gif" width="152" alt="Cracker writing a reply"><br><sub>writing a reply</sub></td>
-    <td align="center"><img src="docs/assets/motion-computer.gif" width="152" alt="Cracker using its computer"><br><sub>using the computer</sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/assets/motion-web.gif" width="152" alt="Cracker searching the web"><br><sub>searching the web</sub></td>
-    <td align="center"><img src="docs/assets/motion-code.gif" width="152" alt="Cracker running code"><br><sub>running code</sub></td>
-    <td align="center"><img src="docs/assets/motion-memory.gif" width="152" alt="Cracker recalling memories"><br><sub>recalling</sub></td>
-  </tr>
-</table>
-
 ## Make it yours
 
 Cracker is the default. In settings you can change:
