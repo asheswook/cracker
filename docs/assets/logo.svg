@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Cracker app icon">
+  <defs>
+    <clipPath id="squircle"><rect width="1024" height="1024" rx="228" ry="228"/></clipPath>
+  </defs>
+  <g clip-path="url(#squircle)">
+    <rect width="1024" height="1024" fill="#3e556f"/>
+    <rect x="217" y="296" width="900" height="900" rx="220" fill="#c08139"/>
+    <rect x="217" y="258" width="900" height="900" rx="220" fill="#e9ae60"/>
+    <g fill="#c08139" opacity=".55"><circle cx="413" cy="441" r="34"/><circle cx="676" cy="441" r="34"/><circle cx="938" cy="441" r="34"/></g>
+    <g fill="#2a211c"><circle cx="479" cy="769" r="52"/><circle cx="872" cy="769" r="52"/></g>
+  </g>
+</svg>

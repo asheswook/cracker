@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 290" width="760" height="290" role="img" aria-label="Architecture: web, iOS and macOS clients talk to a Cloudflare Worker with PostgreSQL, which hands work to a daemon on a Linux VM with Chromium, shell, MCP servers and skills, which calls model providers" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>Architecture: web, iOS and macOS clients talk to a Cloudflare Worker with PostgreSQL, which hands work to a daemon on a Linux VM with Chromium, shell, MCP servers and skills, which calls model providers</title>
+<defs>
+<marker id="a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1.5L8.5 5 1 8.5" fill="none" stroke="#c08139" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
+<marker id="ag" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1.5L8.5 5 1 8.5" fill="none" stroke="#6f8a55" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
+<marker id="ar" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1.5L8.5 5 1 8.5" fill="none" stroke="#b5636a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
+<symbol id="cracker" viewBox="10 12 80 80"><path d="M32 15H68A17 17 0 0 1 85 32V66A17 17 0 0 1 68 83H32A17 17 0 0 1 15 66V32A17 17 0 0 1 32 15Z" fill="#c08139" transform="translate(0 3.5)"/><path d="M32 15H68A17 17 0 0 1 85 32V66A17 17 0 0 1 68 83H32A17 17 0 0 1 15 66V32A17 17 0 0 1 32 15Z" fill="#eaae60"/><g fill="#c08139" opacity=".55"><circle cx="30" cy="29" r="2.6"/><circle cx="70" cy="29" r="2.6"/><circle cx="50" cy="29" r="2.6"/></g><g fill="#2a211c"><circle cx="35" cy="54" r="4"/><circle cx="65" cy="54" r="4"/></g></symbol>
+</defs>
+<rect x="1" y="1" width="758" height="288" rx="22" fill="#fbf7f1" stroke="#eadfce" stroke-width="1.5"/>
+<text x="88.0" y="46" font-size="10" font-weight="700" fill="#7a6a5c" text-anchor="middle" letter-spacing="1.2">CLIENTS</text>
+<text x="269.0" y="46" font-size="10" font-weight="700" fill="#7a6a5c" text-anchor="middle" letter-spacing="1.2">CONTROL</text>
+<text x="488.0" y="46" font-size="10" font-weight="700" fill="#7a6a5c" text-anchor="middle" letter-spacing="1.2">LINUX VM</text>
+<text x="676.0" y="46" font-size="10" font-weight="700" fill="#7a6a5c" text-anchor="middle" letter-spacing="1.2">MODELS</text>
+<rect x="28" y="76" width="120" height="42" rx="21" fill="#ffffff" stroke="#eadfce" stroke-width="1.5"/>
+<text x="88" y="102" font-size="13" font-weight="600" fill="#2a211c" text-anchor="middle">Web</text>
+<rect x="28" y="132" width="120" height="42" rx="21" fill="#ffffff" stroke="#eadfce" stroke-width="1.5"/>
+<text x="88" y="158" font-size="13" font-weight="600" fill="#2a211c" text-anchor="middle">iOS</text>
+<rect x="28" y="188" width="120" height="42" rx="21" fill="#ffffff" stroke="#eadfce" stroke-width="1.5"/>
+<text x="88" y="214" font-size="13" font-weight="600" fill="#2a211c" text-anchor="middle">macOS</text>
+<rect x="184" y="62" width="170" height="192" rx="16" fill="#ffffff" stroke="#eadfce" stroke-width="1.5"/>
+<rect x="198" y="78" width="142" height="64" rx="12" fill="#fbecd4" stroke="#cfa970" stroke-width="1.5"/>
+<text x="269" y="104" font-size="13" font-weight="650" fill="#2a211c" text-anchor="middle">Cloudflare Worker</text>
+<text x="269" y="123" font-size="11.5" font-weight="400" fill="#7a6a5c" text-anchor="middle">Hono API</text>
+<path d="M269 148V170" fill="none" stroke="#c08139" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M213 184v48a56 9 0 0 0 112 0v-48" fill="#ffffff" stroke="#cfa970" stroke-width="1.5"/>
+<ellipse cx="269" cy="184" rx="56" ry="9" fill="#fbecd4" stroke="#cfa970" stroke-width="1.5"/>
+<text x="269" y="214" font-size="12.5" font-weight="650" fill="#2a211c" text-anchor="middle">PostgreSQL</text>
+<text x="269" y="230" font-size="10.5" font-weight="400" fill="#7a6a5c" text-anchor="middle">state &amp; memory</text>
+<rect x="390" y="62" width="196" height="192" rx="16" fill="#fbecd4" stroke="#eaae60" stroke-width="1.5"/>
+<use href="#cracker" x="406" y="74" width="30" height="30"/>
+<text x="444" y="87" font-size="13" font-weight="650" fill="#2a211c" text-anchor="start">Daemon</text>
+<text x="444" y="103" font-size="10.5" font-weight="400" fill="#7a6a5c" text-anchor="start">model loop · tools</text>
+<rect x="402" y="124" width="82" height="48" rx="10" fill="#ffffff" stroke="#cfa970" stroke-width="1.5"/>
+<text x="443" y="153" font-size="11" font-weight="600" fill="#2a211c" text-anchor="middle">Chromium</text>
+<rect x="492" y="124" width="82" height="48" rx="10" fill="#ffffff" stroke="#cfa970" stroke-width="1.5"/>
+<text x="533" y="153" font-size="11" font-weight="600" fill="#2a211c" text-anchor="middle">Shell &amp; files</text>
+<rect x="402" y="184" width="82" height="48" rx="10" fill="#ffffff" stroke="#cfa970" stroke-width="1.5"/>
+<text x="443" y="213" font-size="11" font-weight="600" fill="#2a211c" text-anchor="middle">MCP servers</text>
+<rect x="492" y="184" width="82" height="48" rx="10" fill="#ffffff" stroke="#cfa970" stroke-width="1.5"/>
+<text x="533" y="213" font-size="11" font-weight="600" fill="#2a211c" text-anchor="middle">Skills</text>
+<rect x="620" y="76" width="112" height="42" rx="21" fill="#ffffff" stroke="#eadfce" stroke-width="1.5"/>
+<text x="676" y="102" font-size="13" font-weight="600" fill="#2a211c" text-anchor="middle">OpenAI</text>
+<rect x="620" y="132" width="112" height="42" rx="21" fill="#ffffff" stroke="#eadfce" stroke-width="1.5"/>
+<text x="676" y="158" font-size="13" font-weight="600" fill="#2a211c" text-anchor="middle">Anthropic</text>
+<rect x="620" y="188" width="112" height="42" rx="21" fill="#ffffff" stroke="#eadfce" stroke-width="1.5"/>
+<text x="676" y="207" font-size="11.5" font-weight="600" fill="#2a211c" text-anchor="middle">Subscription</text>
+<text x="676" y="221" font-size="10.5" font-weight="400" fill="#7a6a5c" text-anchor="middle">proxy</text>
+<path d="M152 158.0H178" fill="none" stroke="#c08139" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#a)"/>
+<path d="M360 158.0H384" fill="none" stroke="#c08139" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M592 158.0H614" fill="none" stroke="#c08139" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#a)"/>
+<text x="380" y="278" font-size="11" font-weight="400" fill="#7a6a5c" text-anchor="middle">Clients only talk to the control service; the daemon on its own computer does the work.</text>
+</svg>

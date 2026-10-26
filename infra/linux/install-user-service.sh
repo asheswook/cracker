@@ -51,7 +51,8 @@ pnpm install --frozen-lockfile
 sh infra/linux/install-browser-runtime.sh
 bun run build:browser
 pnpm check
-# CLIProxyAPI v8.0.28 (MIT), no-plugin release; keys never leave this VM.
+# CLIProxyAPI v8.0.28 (MIT, Luis Pater; https://github.com/router-for-me/CLIProxyAPI): the official release
+# binary of that tag is installed with its LICENSE; keys never leave this VM.
 proxy_dir="$HOME/.local/share/cliproxyapi"
 proxy_config="$config_dir/cliproxy"
 case "$(uname -m)" in

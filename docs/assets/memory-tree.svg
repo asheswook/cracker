@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 430" width="760" height="430" role="img" aria-label="A knowledge tree growing from conversations: topics split into sub-topics, branches link to each other, a rule governs a topic, and exchanges hang under the topics that own them" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>A knowledge tree growing from conversations: topics split into sub-topics, branches link to each other, a rule governs a topic, and exchanges hang under the topics that own them</title>
+<defs>
+<marker id="a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1.5L8.5 5 1 8.5" fill="none" stroke="#c08139" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
+<marker id="ag" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1.5L8.5 5 1 8.5" fill="none" stroke="#6f8a55" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
+<marker id="ar" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1.5L8.5 5 1 8.5" fill="none" stroke="#b5636a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
+<symbol id="cracker" viewBox="10 12 80 80"><path d="M32 15H68A17 17 0 0 1 85 32V66A17 17 0 0 1 68 83H32A17 17 0 0 1 15 66V32A17 17 0 0 1 32 15Z" fill="#c08139" transform="translate(0 3.5)"/><path d="M32 15H68A17 17 0 0 1 85 32V66A17 17 0 0 1 68 83H32A17 17 0 0 1 15 66V32A17 17 0 0 1 32 15Z" fill="#eaae60"/><g fill="#c08139" opacity=".55"><circle cx="30" cy="29" r="2.6"/><circle cx="70" cy="29" r="2.6"/><circle cx="50" cy="29" r="2.6"/></g><g fill="#2a211c"><circle cx="35" cy="54" r="4"/><circle cx="65" cy="54" r="4"/></g></symbol>
+</defs>
+<rect x="1" y="1" width="758" height="428" rx="22" fill="#fbf7f1" stroke="#eadfce" stroke-width="1.5"/>
+<path d="M380 80C380 110.0 90 110.0 90 140" fill="none" stroke="#cfa970" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M380 80C380 110.0 286 110.0 286 140" fill="none" stroke="#cfa970" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M380 80C380 110.0 524 110.0 524 140" fill="none" stroke="#cfa970" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M380 80C380 110.0 680 110.0 680 140" fill="none" stroke="#cfa970" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M286 196V240" fill="none" stroke="#cfa970" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M286 240C286 250.0 214 250.0 214 260" fill="none" stroke="#cfa970" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M286 240C286 250.0 358 250.0 358 260" fill="none" stroke="#cfa970" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="286" cy="240" r="4" fill="#eaae60" stroke="#c08139" stroke-width="1.4"/>
+<text x="296" y="244" font-size="10.5" font-weight="600" fill="#c08139" text-anchor="start">split</text>
+<path d="M524 196V260" fill="none" stroke="#cfa970" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M680 196V260" fill="none" stroke="#cfa970" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M214 316C214 332 181 330 181 344" fill="none" stroke="#b9a892" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M214 316C214 332 211 330 211 344" fill="none" stroke="#b9a892" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M214 316C214 332 241 330 241 344" fill="none" stroke="#b9a892" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M172 344h18a5 5 0 0 1 5 5v5a5 5 0 0 1-5 5h-11l-5 4 1-4h-3a5 5 0 0 1-5-5v-5a5 5 0 0 1 5-5z" fill="#ffffff" stroke="#cfa970" stroke-width="1.3" stroke-linejoin="round"/><g fill="#cfa970"><circle cx="176" cy="351.5" r="1.3"/><circle cx="181" cy="351.5" r="1.3"/><circle cx="186" cy="351.5" r="1.3"/></g>
+<path d="M202 344h18a5 5 0 0 1 5 5v5a5 5 0 0 1-5 5h-11l-5 4 1-4h-3a5 5 0 0 1-5-5v-5a5 5 0 0 1 5-5z" fill="#ffffff" stroke="#cfa970" stroke-width="1.3" stroke-linejoin="round"/><g fill="#cfa970"><circle cx="206" cy="351.5" r="1.3"/><circle cx="211" cy="351.5" r="1.3"/><circle cx="216" cy="351.5" r="1.3"/></g>
+<path d="M232 344h18a5 5 0 0 1 5 5v5a5 5 0 0 1-5 5h-11l-5 4 1-4h-3a5 5 0 0 1-5-5v-5a5 5 0 0 1 5-5z" fill="#ffffff" stroke="#cfa970" stroke-width="1.3" stroke-linejoin="round"/><g fill="#cfa970"><circle cx="236" cy="351.5" r="1.3"/><circle cx="241" cy="351.5" r="1.3"/><circle cx="246" cy="351.5" r="1.3"/></g>
+<path d="M358 316C358 332 325 330 325 344" fill="none" stroke="#b9a892" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M358 316C358 332 355 330 355 344" fill="none" stroke="#b9a892" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M358 316C358 332 385 330 385 344" fill="none" stroke="#b9a892" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M316 344h18a5 5 0 0 1 5 5v5a5 5 0 0 1-5 5h-11l-5 4 1-4h-3a5 5 0 0 1-5-5v-5a5 5 0 0 1 5-5z" fill="#ffffff" stroke="#cfa970" stroke-width="1.3" stroke-linejoin="round"/><g fill="#cfa970"><circle cx="320" cy="351.5" r="1.3"/><circle cx="325" cy="351.5" r="1.3"/><circle cx="330" cy="351.5" r="1.3"/></g>
+<path d="M346 344h18a5 5 0 0 1 5 5v5a5 5 0 0 1-5 5h-11l-5 4 1-4h-3a5 5 0 0 1-5-5v-5a5 5 0 0 1 5-5z" fill="#ffffff" stroke="#cfa970" stroke-width="1.3" stroke-linejoin="round"/><g fill="#cfa970"><circle cx="350" cy="351.5" r="1.3"/><circle cx="355" cy="351.5" r="1.3"/><circle cx="360" cy="351.5" r="1.3"/></g>
+<path d="M376 344h18a5 5 0 0 1 5 5v5a5 5 0 0 1-5 5h-11l-5 4 1-4h-3a5 5 0 0 1-5-5v-5a5 5 0 0 1 5-5z" fill="#ffffff" stroke="#cfa970" stroke-width="1.3" stroke-linejoin="round"/><g fill="#cfa970"><circle cx="380" cy="351.5" r="1.3"/><circle cx="385" cy="351.5" r="1.3"/><circle cx="390" cy="351.5" r="1.3"/></g>
+<path d="M524 316C524 332 506 330 506 344" fill="none" stroke="#b9a892" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M524 316C524 332 536 330 536 344" fill="none" stroke="#b9a892" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M497 344h18a5 5 0 0 1 5 5v5a5 5 0 0 1-5 5h-11l-5 4 1-4h-3a5 5 0 0 1-5-5v-5a5 5 0 0 1 5-5z" fill="#ffffff" stroke="#cfa970" stroke-width="1.3" stroke-linejoin="round"/><g fill="#cfa970"><circle cx="501" cy="351.5" r="1.3"/><circle cx="506" cy="351.5" r="1.3"/><circle cx="511" cy="351.5" r="1.3"/></g>
+<path d="M527 344h18a5 5 0 0 1 5 5v5a5 5 0 0 1-5 5h-11l-5 4 1-4h-3a5 5 0 0 1-5-5v-5a5 5 0 0 1 5-5z" fill="#ffffff" stroke="#cfa970" stroke-width="1.3" stroke-linejoin="round"/><g fill="#cfa970"><circle cx="531" cy="351.5" r="1.3"/><circle cx="536" cy="351.5" r="1.3"/><circle cx="541" cy="351.5" r="1.3"/></g>
+<path d="M680 316C680 332 647 330 647 344" fill="none" stroke="#b9a892" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M680 316C680 332 677 330 677 344" fill="none" stroke="#b9a892" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M680 316C680 332 707 330 707 344" fill="none" stroke="#b9a892" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M638 344h18a5 5 0 0 1 5 5v5a5 5 0 0 1-5 5h-11l-5 4 1-4h-3a5 5 0 0 1-5-5v-5a5 5 0 0 1 5-5z" fill="#ffffff" stroke="#cfa970" stroke-width="1.3" stroke-linejoin="round"/><g fill="#cfa970"><circle cx="642" cy="351.5" r="1.3"/><circle cx="647" cy="351.5" r="1.3"/><circle cx="652" cy="351.5" r="1.3"/></g>
+<path d="M668 344h18a5 5 0 0 1 5 5v5a5 5 0 0 1-5 5h-11l-5 4 1-4h-3a5 5 0 0 1-5-5v-5a5 5 0 0 1 5-5z" fill="#ffffff" stroke="#cfa970" stroke-width="1.3" stroke-linejoin="round"/><g fill="#cfa970"><circle cx="672" cy="351.5" r="1.3"/><circle cx="677" cy="351.5" r="1.3"/><circle cx="682" cy="351.5" r="1.3"/></g>
+<path d="M698 344h18a5 5 0 0 1 5 5v5a5 5 0 0 1-5 5h-11l-5 4 1-4h-3a5 5 0 0 1-5-5v-5a5 5 0 0 1 5-5z" fill="#ffffff" stroke="#cfa970" stroke-width="1.3" stroke-linejoin="round"/><g fill="#cfa970"><circle cx="702" cy="351.5" r="1.3"/><circle cx="707" cy="351.5" r="1.3"/><circle cx="712" cy="351.5" r="1.3"/></g>
+<path d="M398 258C408 230 474 230 484 258" fill="none" stroke="#6f8a55" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 5" marker-end="url(#ag)" marker-start="url(#ag)"/>
+<rect x="407.0" y="227" width="68" height="18" rx="9" fill="#eef3e6" stroke="#adc48e" stroke-width="1"/>
+<text x="441.0" y="240" font-size="10.5" font-weight="600" fill="#6f8a55" text-anchor="middle">reference</text>
+<path d="M156 174H218" fill="none" stroke="#b5636a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 5" marker-end="url(#ar)"/>
+<text x="188.0" y="164" font-size="10.5" font-weight="600" fill="#b5636a" text-anchor="middle">governs</text>
+<rect x="276" y="36" width="208" height="44" rx="22" fill="#eaae60" stroke="#c08139" stroke-width="1.6"/>
+<circle cx="301.0" cy="58.0" r="16.0" fill="#ffffff" opacity=".9"/><use href="#cracker" x="288" y="45" width="26" height="26"/>
+<text x="394" y="63" font-size="13" font-weight="700" fill="#2a211c" text-anchor="middle">All conversations</text>
+<rect x="26.0" y="140.0" width="128" height="56" rx="12" fill="#f9e9ea" stroke="#e6a7ab" stroke-width="1.6"/>
+<path d="M38.0 153.0v14M38.0 153.0h9l-2.5 3.5 2.5 3.5h-9" fill="#b5636a" stroke="#b5636a" stroke-width="1.4" stroke-linejoin="round"/>
+<text x="54.0" y="164.0" font-size="12.5" font-weight="650" fill="#2a211c" text-anchor="start">Weekly report</text>
+<text x="40.0" y="179.5" font-size="11" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="49.0" y="174.0" width="63" height="4" rx="2" fill="#ecd3a6"/>
+<text x="90" y="214" font-size="10.5" font-weight="600" fill="#b5636a" text-anchor="middle">rule</text>
+<rect x="222.0" y="140.0" width="128" height="56" rx="12" fill="#fbecd4" stroke="#eaae60" stroke-width="1.6"/>
+<text x="286" y="162.0" font-size="12.5" font-weight="650" fill="#2a211c" text-anchor="middle">Q3 planning</text>
+<text x="236.0" y="179.5" font-size="11" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="245.0" y="174.0" width="72" height="4" rx="2" fill="#ecd3a6"/>
+<text x="236.0" y="188.5" font-size="11" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="245.0" y="183.0" width="54" height="4" rx="2" fill="#ecd3a6"/>
+<text x="278" y="218" font-size="10.5" font-weight="600" fill="#c08139" text-anchor="end">overview</text>
+<rect x="460.0" y="140.0" width="128" height="56" rx="12" fill="#ffffff" stroke="#cfa970" stroke-width="1.6"/>
+<text x="524" y="162.0" font-size="12.5" font-weight="650" fill="#2a211c" text-anchor="middle">Hiring</text>
+<text x="474.0" y="179.5" font-size="11" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="483.0" y="174.0" width="63" height="4" rx="2" fill="#ecd3a6"/>
+<text x="474.0" y="188.5" font-size="11" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="483.0" y="183.0" width="40" height="4" rx="2" fill="#ecd3a6"/>
+<rect x="616.0" y="140.0" width="128" height="56" rx="12" fill="#ffffff" stroke="#cfa970" stroke-width="1.6"/>
+<text x="680" y="162.0" font-size="12.5" font-weight="650" fill="#2a211c" text-anchor="middle">Travel</text>
+<text x="630.0" y="179.5" font-size="11" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="639.0" y="174.0" width="54" height="4" rx="2" fill="#ecd3a6"/>
+<text x="630.0" y="188.5" font-size="11" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="639.0" y="183.0" width="36" height="4" rx="2" fill="#ecd3a6"/>
+<rect x="154.0" y="260.0" width="120" height="56" rx="12" fill="#ffffff" stroke="#cfa970" stroke-width="1.6"/>
+<text x="214" y="282.0" font-size="12.5" font-weight="650" fill="#2a211c" text-anchor="middle">Budget</text>
+<text x="168.0" y="299.5" font-size="11" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="177.0" y="294.0" width="70" height="4" rx="2" fill="#ecd3a6"/>
+<text x="168.0" y="308.5" font-size="11" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="177.0" y="303.0" width="49" height="4" rx="2" fill="#ecd3a6"/>
+<rect x="298.0" y="260.0" width="120" height="56" rx="12" fill="#ffffff" stroke="#cfa970" stroke-width="1.6"/>
+<text x="358" y="282.0" font-size="12.5" font-weight="650" fill="#2a211c" text-anchor="middle">Roadmap</text>
+<text x="312.0" y="299.5" font-size="11" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="321.0" y="294.0" width="57" height="4" rx="2" fill="#ecd3a6"/>
+<text x="312.0" y="308.5" font-size="11" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="321.0" y="303.0" width="41" height="4" rx="2" fill="#ecd3a6"/>
+<rect x="464.0" y="260.0" width="120" height="56" rx="12" fill="#ffffff" stroke="#cfa970" stroke-width="1.6"/>
+<text x="524" y="282.0" font-size="12.5" font-weight="650" fill="#2a211c" text-anchor="middle">Interviews</text>
+<text x="478.0" y="299.5" font-size="11" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="487.0" y="294.0" width="53" height="4" rx="2" fill="#ecd3a6"/>
+<text x="478.0" y="308.5" font-size="11" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="487.0" y="303.0" width="33" height="4" rx="2" fill="#ecd3a6"/>
+<rect x="620.0" y="260.0" width="120" height="56" rx="12" fill="#ffffff" stroke="#cfa970" stroke-width="1.6"/>
+<text x="680" y="282.0" font-size="12.5" font-weight="650" fill="#2a211c" text-anchor="middle">Offsite</text>
+<text x="634.0" y="299.5" font-size="11" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="643.0" y="294.0" width="62" height="4" rx="2" fill="#ecd3a6"/>
+<text x="634.0" y="308.5" font-size="11" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="643.0" y="303.0" width="41" height="4" rx="2" fill="#ecd3a6"/>
+<rect x="40" y="389" width="22" height="14" rx="4" fill="#ffffff" stroke="#cfa970" stroke-width="1.4"/>
+<text x="70" y="400" font-size="11" font-weight="500" fill="#7a6a5c" text-anchor="start">topic</text>
+<text x="112" y="401" font-size="13" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="121" y="394" width="26" height="4" rx="2" fill="#ecd3a6"/>
+<text x="154" y="400" font-size="11" font-weight="500" fill="#7a6a5c" text-anchor="start">facts, each citing a quote</text>
+<path d="M316 388h18a5 5 0 0 1 5 5v5a5 5 0 0 1-5 5h-11l-5 4 1-4h-3a5 5 0 0 1-5-5v-5a5 5 0 0 1 5-5z" fill="#ffffff" stroke="#cfa970" stroke-width="1.3" stroke-linejoin="round"/><g fill="#cfa970"><circle cx="320" cy="395.5" r="1.3"/><circle cx="325" cy="395.5" r="1.3"/><circle cx="330" cy="395.5" r="1.3"/></g>
+<text x="346" y="400" font-size="11" font-weight="500" fill="#7a6a5c" text-anchor="start">exchange</text>
+<path d="M410 396H438" fill="none" stroke="#cfa970" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="446" y="400" font-size="11" font-weight="500" fill="#7a6a5c" text-anchor="start">part of</text>
+<path d="M500 396H528" fill="none" stroke="#6f8a55" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 5"/>
+<text x="536" y="400" font-size="11" font-weight="500" fill="#7a6a5c" text-anchor="start">reference</text>
+<path d="M604 396H632" fill="none" stroke="#b5636a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 5"/>
+<text x="640" y="400" font-size="11" font-weight="500" fill="#7a6a5c" text-anchor="start">governs</text>
+</svg>

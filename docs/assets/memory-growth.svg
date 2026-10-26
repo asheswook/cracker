@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 254" width="760" height="254" role="img" aria-label="How the tree grows: attach or create, summarise with quoted facts, merge, split, link, and every 25 exchanges add parent overviews" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>How the tree grows: attach or create, summarise with quoted facts, merge, split, link, and every 25 exchanges add parent overviews</title>
+<defs>
+<marker id="a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1.5L8.5 5 1 8.5" fill="none" stroke="#c08139" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
+<marker id="ag" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1.5L8.5 5 1 8.5" fill="none" stroke="#6f8a55" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
+<marker id="ar" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1.5L8.5 5 1 8.5" fill="none" stroke="#b5636a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
+<symbol id="cracker" viewBox="10 12 80 80"><path d="M32 15H68A17 17 0 0 1 85 32V66A17 17 0 0 1 68 83H32A17 17 0 0 1 15 66V32A17 17 0 0 1 32 15Z" fill="#c08139" transform="translate(0 3.5)"/><path d="M32 15H68A17 17 0 0 1 85 32V66A17 17 0 0 1 68 83H32A17 17 0 0 1 15 66V32A17 17 0 0 1 32 15Z" fill="#eaae60"/><g fill="#c08139" opacity=".55"><circle cx="30" cy="29" r="2.6"/><circle cx="70" cy="29" r="2.6"/><circle cx="50" cy="29" r="2.6"/></g><g fill="#2a211c"><circle cx="35" cy="54" r="4"/><circle cx="65" cy="54" r="4"/></g></symbol>
+</defs>
+<rect x="1" y="1" width="758" height="252" rx="22" fill="#fbf7f1" stroke="#eadfce" stroke-width="1.5"/>
+<rect x="18" y="22" width="112" height="150" rx="14" fill="#ffffff" stroke="#eadfce" stroke-width="1.5"/>
+<circle cx="34" cy="40" r="9" fill="#eaae60"/>
+<text x="34" y="44" font-size="10.5" font-weight="700" fill="#2a211c" text-anchor="middle">1</text>
+<text x="48" y="44" font-size="11.5" font-weight="650" fill="#2a211c" text-anchor="start">Attach / create</text>
+<text x="74.0" y="198" font-size="11" font-weight="400" fill="#7a6a5c" text-anchor="middle">Joins a topic,</text>
+<text x="74.0" y="213" font-size="11" font-weight="400" fill="#7a6a5c" text-anchor="middle">or opens one</text>
+<path d="M62.0 64h18a5 5 0 0 1 5 5v5a5 5 0 0 1-5 5h-11l-5 4 1-4h-3a5 5 0 0 1-5-5v-5a5 5 0 0 1 5-5z" fill="#ffffff" stroke="#cfa970" stroke-width="1.3" stroke-linejoin="round"/><g fill="#cfa970"><circle cx="66.0" cy="71.5" r="1.3"/><circle cx="71.0" cy="71.5" r="1.3"/><circle cx="76.0" cy="71.5" r="1.3"/></g>
+<path d="M68.0 88C60.0 106 46.0 112 44.0 126" fill="none" stroke="#c08139" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#a)"/>
+<path d="M80.0 88C88.0 106 102.0 112 104.0 126" fill="none" stroke="#c08139" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3 4" marker-end="url(#a)"/>
+<rect x="24.0" y="130" width="40" height="22" rx="6" fill="#fbecd4" stroke="#cfa970" stroke-width="1.4"/><rect x="31.0" y="139.0" width="26" height="4" rx="2" fill="#ecd3a6"/>
+<rect x="84.0" y="130" width="40" height="22" rx="6" fill="#ffffff" stroke="#cfa970" stroke-width="1.4" stroke-dasharray="3 3"/><text x="104.0" y="145.0" font-size="11" font-weight="700" fill="#c08139" text-anchor="middle">+</text>
+<rect x="141" y="22" width="112" height="150" rx="14" fill="#ffffff" stroke="#eadfce" stroke-width="1.5"/>
+<circle cx="157" cy="40" r="9" fill="#eaae60"/>
+<text x="157" y="44" font-size="10.5" font-weight="700" fill="#2a211c" text-anchor="middle">2</text>
+<text x="171" y="44" font-size="11.5" font-weight="650" fill="#2a211c" text-anchor="start">Summarise</text>
+<text x="197.0" y="198" font-size="11" font-weight="400" fill="#7a6a5c" text-anchor="middle">Facts cite</text>
+<text x="197.0" y="213" font-size="11" font-weight="400" fill="#7a6a5c" text-anchor="middle">exact quotes</text>
+<rect x="155.0" y="62" width="84" height="62" rx="8" fill="#fbecd4" stroke="#cfa970" stroke-width="1.4"/>
+<text x="163.0" y="82" font-size="13" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="173.0" y="76" width="52" height="4.5" rx="2.2" fill="#cfa970" opacity=".7"/>
+<text x="163.0" y="98" font-size="13" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="173.0" y="92" width="41" height="4.5" rx="2.2" fill="#cfa970" opacity=".7"/>
+<text x="163.0" y="114" font-size="13" font-weight="700" fill="#c08139" text-anchor="start">“</text>
+<rect x="173.0" y="108" width="46" height="4.5" rx="2.2" fill="#cfa970" opacity=".7"/>
+<path d="M225.0 124V140" fill="none" stroke="#b9a892" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="2 3"/>
+<path d="M215.0 140h18a5 5 0 0 1 5 5v5a5 5 0 0 1-5 5h-11l-5 4 1-4h-3a5 5 0 0 1-5-5v-5a5 5 0 0 1 5-5z" fill="#ffffff" stroke="#cfa970" stroke-width="1.3" stroke-linejoin="round"/><g fill="#cfa970"><circle cx="219.0" cy="147.5" r="1.3"/><circle cx="224.0" cy="147.5" r="1.3"/><circle cx="229.0" cy="147.5" r="1.3"/></g>
+<rect x="264" y="22" width="112" height="150" rx="14" fill="#ffffff" stroke="#eadfce" stroke-width="1.5"/>
+<circle cx="280" cy="40" r="9" fill="#eaae60"/>
+<text x="280" y="44" font-size="10.5" font-weight="700" fill="#2a211c" text-anchor="middle">3</text>
+<text x="294" y="44" font-size="11.5" font-weight="650" fill="#2a211c" text-anchor="start">Merge</text>
+<text x="320.0" y="198" font-size="11" font-weight="400" fill="#7a6a5c" text-anchor="middle">Same topic over</text>
+<text x="320.0" y="213" font-size="11" font-weight="400" fill="#7a6a5c" text-anchor="middle">days becomes one</text>
+<rect x="270.0" y="66" width="38" height="22" rx="6" fill="#fbecd4" stroke="#cfa970" stroke-width="1.4"/><rect x="277.0" y="75.0" width="24" height="4" rx="2" fill="#ecd3a6"/>
+<rect x="332.0" y="66" width="38" height="22" rx="6" fill="#fbecd4" stroke="#cfa970" stroke-width="1.4"/><rect x="339.0" y="75.0" width="24" height="4" rx="2" fill="#ecd3a6"/>
+<path d="M289.0 90C289.0 110 312.0 114 316.0 124" fill="none" stroke="#c08139" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#a)"/>
+<path d="M351.0 90C351.0 110 328.0 114 324.0 124" fill="none" stroke="#c08139" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#a)"/>
+<rect x="296.0" y="128" width="48" height="24" rx="6" fill="#fbecd4" stroke="#cfa970" stroke-width="1.4"/><rect x="303.0" y="138.0" width="34" height="4" rx="2" fill="#ecd3a6"/>
+<rect x="387" y="22" width="112" height="150" rx="14" fill="#ffffff" stroke="#eadfce" stroke-width="1.5"/>
+<circle cx="403" cy="40" r="9" fill="#eaae60"/>
+<text x="403" y="44" font-size="10.5" font-weight="700" fill="#2a211c" text-anchor="middle">4</text>
+<text x="417" y="44" font-size="11.5" font-weight="650" fill="#2a211c" text-anchor="start">Split</text>
+<text x="443.0" y="198" font-size="11" font-weight="400" fill="#7a6a5c" text-anchor="middle">12+ exchanges:</text>
+<text x="443.0" y="213" font-size="11" font-weight="400" fill="#7a6a5c" text-anchor="middle">parent + branches</text>
+<rect x="419.0" y="64" width="48" height="24" rx="6" fill="#eaae60" stroke="#c08139" stroke-width="1.4"/><rect x="426.0" y="74.0" width="34" height="4" rx="2" fill="#ecd3a6"/>
+<path d="M443.0 88V104" fill="none" stroke="#cfa970" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="443.0" cy="104" r="3" fill="#eaae60" stroke="#c08139" stroke-width="1.2"/>
+<path d="M443.0 104C443.0 116 414.0 114 414.0 128" fill="none" stroke="#cfa970" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M443.0 104C443.0 116 472.0 114 472.0 128" fill="none" stroke="#cfa970" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="395.0" y="128" width="38" height="22" rx="6" fill="#fbecd4" stroke="#cfa970" stroke-width="1.4"/><rect x="402.0" y="137.0" width="24" height="4" rx="2" fill="#ecd3a6"/>
+<rect x="453.0" y="128" width="38" height="22" rx="6" fill="#fbecd4" stroke="#cfa970" stroke-width="1.4"/><rect x="460.0" y="137.0" width="24" height="4" rx="2" fill="#ecd3a6"/>
+<rect x="510" y="22" width="112" height="150" rx="14" fill="#ffffff" stroke="#eadfce" stroke-width="1.5"/>
+<circle cx="526" cy="40" r="9" fill="#eaae60"/>
+<text x="526" y="44" font-size="10.5" font-weight="700" fill="#2a211c" text-anchor="middle">5</text>
+<text x="540" y="44" font-size="11.5" font-weight="650" fill="#2a211c" text-anchor="start">Link</text>
+<text x="566.0" y="198" font-size="11" font-weight="400" fill="#7a6a5c" text-anchor="middle">Branches that</text>
+<text x="566.0" y="213" font-size="11" font-weight="400" fill="#7a6a5c" text-anchor="middle">touch get linked</text>
+<rect x="518.0" y="114" width="38" height="22" rx="6" fill="#fbecd4" stroke="#cfa970" stroke-width="1.4"/><rect x="525.0" y="123.0" width="24" height="4" rx="2" fill="#ecd3a6"/>
+<rect x="576.0" y="114" width="38" height="22" rx="6" fill="#fbecd4" stroke="#cfa970" stroke-width="1.4"/><rect x="583.0" y="123.0" width="24" height="4" rx="2" fill="#ecd3a6"/>
+<path d="M537.0 112C537.0 80 595.0 80 595.0 112" fill="none" stroke="#6f8a55" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 4" marker-end="url(#ag)" marker-start="url(#ag)"/>
+<text x="566.0" y="78" font-size="10" font-weight="600" fill="#6f8a55" text-anchor="middle">reference</text>
+<rect x="633" y="22" width="112" height="150" rx="14" fill="#ffffff" stroke="#eadfce" stroke-width="1.5"/>
+<circle cx="649" cy="40" r="9" fill="#eaae60"/>
+<text x="649" y="44" font-size="10.5" font-weight="700" fill="#2a211c" text-anchor="middle">6</text>
+<text x="663" y="44" font-size="11.5" font-weight="650" fill="#2a211c" text-anchor="start">Every 25</text>
+<text x="689.0" y="198" font-size="11" font-weight="400" fill="#7a6a5c" text-anchor="middle">A sweep adds</text>
+<text x="689.0" y="213" font-size="11" font-weight="400" fill="#7a6a5c" text-anchor="middle">parent overviews</text>
+<rect x="663.0" y="64" width="52" height="24" rx="6" fill="#eaae60" stroke="#c08139" stroke-width="1.4"/><rect x="670.0" y="74.0" width="38" height="4" rx="2" fill="#ecd3a6"/>
+<path d="M689.0 88C689.0 106 653.0 106 653.0 124" fill="none" stroke="#cfa970" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="638.0" y="124" width="30" height="20" rx="6" fill="#fbecd4" stroke="#cfa970" stroke-width="1.4"/><rect x="645.0" y="132.0" width="16" height="4" rx="2" fill="#ecd3a6"/>
+<path d="M689.0 88C689.0 106 689.0 106 689.0 124" fill="none" stroke="#cfa970" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="674.0" y="124" width="30" height="20" rx="6" fill="#fbecd4" stroke="#cfa970" stroke-width="1.4"/><rect x="681.0" y="132.0" width="16" height="4" rx="2" fill="#ecd3a6"/>
+<path d="M689.0 88C689.0 106 725.0 106 725.0 124" fill="none" stroke="#cfa970" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="710.0" y="124" width="30" height="20" rx="6" fill="#fbecd4" stroke="#cfa970" stroke-width="1.4"/><rect x="717.0" y="132.0" width="16" height="4" rx="2" fill="#ecd3a6"/>
+</svg>
