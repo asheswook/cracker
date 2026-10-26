@@ -165,3 +165,12 @@ test("responsibility cancellation prevents pending action dispatch", async () =>
   // Then
   expect(z.object({ state: z.string(), task_id: z.string().nullable() }).parse((await sql`SELECT state,task_id FROM assistant.responsibility_actions WHERE responsibility_id=${row.id}`)[0])).toEqual({ state: "cancelled", task_id: null });
 });
+
+test('a daily routine with an end date completes after it instead of running on', async () => {
+  const { input } = await fixture();
+  const r = await createResponsibility(sql, client, ResponsibilityInput.parse({ ...input, client_responsibility_id: crypto.randomUUID(), trigger: { kind: 'daily', hour: 18, minute: 0, timezone: 'Asia/Seoul' }, until_at: new Date(Date.now() - 60_000).toISOString() }));
+  await sql`UPDATE assistant.responsibilities SET next_review_at=now()-interval '1 minute' WHERE id=${r.id}`;
+  await dueResponsibilities(sql, machine);
+  expect((await sql`SELECT state FROM assistant.responsibilities WHERE id=${r.id}`)[0]?.['state']).toBe('complete');
+  expect((await sql`SELECT count(*)::int AS n FROM assistant.responsibility_actions WHERE responsibility_id=${r.id}`)[0]?.['n']).toBe(0);
+});

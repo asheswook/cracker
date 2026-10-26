@@ -10,7 +10,7 @@ import { hashToken } from "../../services/control/auth.ts";
 import { recordEvent } from "../../services/control/repository/common.ts";
 import { fenceRun } from '../../services/control/repository/daemon-session';
 import { QuietHours, Trigger, type ResponsibilitySnapshot, ResponsibilityInput, type EvaluationRequest, quietNow } from "./responsibility-schema.ts";
-export const ResponsibilityRow = z.object({ title: z.string().nullable().default(null), skill_id:z.uuid().nullable().default(null),skill_revision:z.number().int().positive().nullable().default(null), id: z.uuid(), workspace_id: z.uuid(), conversation_id: z.uuid(), vm_id: z.uuid(), client_responsibility_id: z.uuid(), source_message_id: z.uuid(), source_quote: z.string(), objective: z.string(), trigger: Trigger, notification_mode: z.enum(["enabled", "quiet"]), quiet_hours: QuietHours.nullable(), state: z.enum(["active", "complete", "cancelled"]), next_review_at: z.string() });
+export const ResponsibilityRow = z.object({ title: z.string().nullable().default(null), until_at: z.coerce.string().nullable().default(null), skill_id:z.uuid().nullable().default(null),skill_revision:z.number().int().positive().nullable().default(null), id: z.uuid(), workspace_id: z.uuid(), conversation_id: z.uuid(), vm_id: z.uuid(), client_responsibility_id: z.uuid(), source_message_id: z.uuid(), source_quote: z.string(), objective: z.string(), trigger: Trigger, notification_mode: z.enum(["enabled", "quiet"]), quiet_hours: QuietHours.nullable(), state: z.enum(["active", "complete", "cancelled"]), next_review_at: z.string() });
 export async function createResponsibility(sql: Database, principal: Principal, input: ResponsibilityInput & { readonly run_id?: string }) {
   return sql.begin(async tx => {
     await tx`SELECT id FROM assistant.workspaces WHERE id=${principal.workspace_id} FOR UPDATE`;
@@ -28,12 +28,12 @@ export async function createResponsibility(sql: Database, principal: Principal, 
     const prior = await tx`SELECT * FROM assistant.responsibilities WHERE workspace_id=${principal.workspace_id} AND client_responsibility_id=${input.client_responsibility_id}`;
     if (prior[0]) {
       const existing = ResponsibilityRow.parse(prior[0]);
-      const identity = ResponsibilityInput.omit({ title: true });
+      const identity = ResponsibilityInput.omit({ title: true, until_at: true });
       if (JSON.stringify(identity.parse(existing)) !== JSON.stringify(identity.parse(input))) throw new DomainError("idempotency_conflict", "Responsibility key reused", 409);
       return existing;
     }
     const due = input.trigger.kind === "deadline" ? input.trigger.due_at : input.trigger.kind === "daily" ? await nextDailyAt(tx,input.trigger,new Date().toISOString()) : new Date().toISOString();
-    const created = ResponsibilityRow.parse((await tx`INSERT INTO assistant.responsibilities(title,workspace_id,conversation_id,vm_id,client_responsibility_id,source_message_id,source_quote,objective,trigger,notification_mode,quiet_hours,next_review_at,skill_id,skill_revision) VALUES(${input.title || null},${principal.workspace_id},${input.conversation_id},${input.vm_id},${input.client_responsibility_id},${input.source_message_id},${input.source_quote},${input.objective},${JSON.stringify(input.trigger)}::text::jsonb,${input.notification_mode},${JSON.stringify(input.quiet_hours)}::text::jsonb,${due},${input.skill_id},${input.skill_revision}) RETURNING *`)[0]);
+    const created = ResponsibilityRow.parse((await tx`INSERT INTO assistant.responsibilities(until_at,title,workspace_id,conversation_id,vm_id,client_responsibility_id,source_message_id,source_quote,objective,trigger,notification_mode,quiet_hours,next_review_at,skill_id,skill_revision) VALUES(${input.until_at ?? null},${input.title || null},${principal.workspace_id},${input.conversation_id},${input.vm_id},${input.client_responsibility_id},${input.source_message_id},${input.source_quote},${input.objective},${JSON.stringify(input.trigger)}::text::jsonb,${input.notification_mode},${JSON.stringify(input.quiet_hours)}::text::jsonb,${due},${input.skill_id},${input.skill_revision}) RETURNING *`)[0]);
     await recordEvent(tx, { workspace: principal.workspace_id, kind: "responsibility.created", payload: JSON.stringify({ responsibility_id: created.id }) });
     return created;
   });
@@ -57,6 +57,8 @@ export async function dueResponsibilities(sql: Database, principal: Principal): 
     const rows = z.array(ResponsibilityRow).parse(await tx`SELECT * FROM assistant.responsibilities WHERE workspace_id=${principal.workspace_id} AND vm_id=${principal.vm_id} AND state='active' AND (next_review_at<=now() OR (trigger->>'kind'='task_change' AND failure_count=0)) ORDER BY next_review_at LIMIT 10 FOR UPDATE`);
     const pending: ResponsibilitySnapshot[] = [];
     for (const row of rows) {
+      // Past its end date the routine is done: nothing more is run.
+      if(row.until_at&&new Date(row.until_at).getTime()<=Date.now()){await tx`UPDATE assistant.responsibilities SET state='complete',management_revision=management_revision+1 WHERE id=${row.id}`;continue;}
       if(row.trigger.kind==="daily"){await enqueueDaily(tx,{...row,trigger:row.trigger});continue;}
       const current = await snapshot(tx, row);
       if ((await tx`SELECT id FROM assistant.responsibility_evaluations WHERE workspace_id=${principal.workspace_id} AND responsibility_id=${row.id} AND context_hash=${current.context_hash}`)[0]) {

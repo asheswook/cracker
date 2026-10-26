@@ -11,7 +11,7 @@ import './schedules.css';
 import { LoadingSkeleton } from './LoadingSkeleton';
 
 const Responsibility = z.object({
-  id: Id, objective: z.string(), title: z.string().nullable().optional(),
+  id: Id, objective: z.string(), title: z.string().nullable().optional(), until_at: z.string().nullable().optional(),
   conversation_id: Id.optional(), source_message_id: Id.nullable().optional(), state: z.enum(['active', 'complete', 'cancelled']),
   trigger: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('daily'), hour: z.number(), minute: z.number(), timezone: z.string() }),
@@ -29,6 +29,11 @@ function zoneSuffix(timezone: string) {
   if (timezone === localZone) return '';
   const city = timezone.split('/').at(-1)?.replaceAll('_', ' ') ?? timezone;
   return ` · ${city} 기준`;
+}
+/** The last day, as people say it: "금요일", or "11월 3일" when it is more than a week away. */
+function untilLabel(iso: string) {
+  const d = new Date(iso), days = (d.getTime() - Date.now()) / 86_400_000;
+  return days >= 0 && days < 7 ? new Intl.DateTimeFormat('ko-KR', { weekday: 'long' }).format(d) : new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric' }).format(d);
 }
 function triggerLabel(trigger: z.infer<typeof Responsibility>['trigger']) {
   switch (trigger.kind) {
@@ -130,7 +135,7 @@ export function SchedulesPanel({ state, onSource }: {
   const upcoming = state.schedules.filter(item => item.status === 'pending').sort((a, b) => Date.parse(a.due_at) - Date.parse(b.due_at));
   const routineRow = (item: z.infer<typeof Responsibility>) => (
     // The rule says when ("매일 낮 12:00", "기한 내일 18:00까지"); the next run is never a mystery worth a line.
-    <ScheduleRow key={item.id} icon={Repeat2} title={scheduleTitle(item)} when={triggerLabel(item.trigger)}
+    <ScheduleRow key={item.id} icon={Repeat2} title={scheduleTitle(item)} when={item.until_at ? `${triggerLabel(item.trigger)} · ${untilLabel(item.until_at)}까지` : triggerLabel(item.trigger)}
       note={item.last_action?.task?.state === 'failed' ? '지난번엔 못 했어요' : null}
       conversation={item.conversation_id} message={item.source_message_id} onSource={onSource} />
   );
