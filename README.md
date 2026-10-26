@@ -4,7 +4,9 @@
 
 # 크래커 · Cracker
 
-**A self-hosted assistant you hand things to, and it keeps going until they're done.**
+**Bake your own assistant.**
+
+Shape it, name it, teach it how you work. It runs on your own server.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-c08139.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](tsconfig.json)
@@ -13,7 +15,7 @@
 
 </div>
 
-Cracker is a personal assistant you run yourself. It keeps an eye on Gmail and Slack, sends you a morning brief, and drafts replies that go out only after you approve them. Routines and reminders run on their own schedule. The work happens on the assistant's own Linux computer, which has a browser, a shell, MCP servers and skills. Cracker remembers things across conversations, and a task stays open until it's finished.
+Cracker is a personal assistant you host yourself. It reads your Gmail and Slack, sends a short brief each morning, and drafts replies that only go out when you press send. Routines and reminders run on a schedule. It works on its own Linux computer with a browser, a shell, MCP servers and skills, and it remembers what you talked about last month.
 
 You talk to it from the web, or from the included iOS and macOS apps. The interface is in Korean.
 
@@ -47,9 +49,9 @@ You talk to it from the web, or from the included iOS and macOS apps. The interf
 <img src="docs/assets/desktop.png" alt="Desktop layout with sidebar navigation and the feed">
 </details>
 
-## Make it yours
+## Bake your own
 
-Cracker is the default. In settings you can change:
+The honey saltine is the default. In settings you can change:
 
 - **Look**: six biscuit shapes (saltine, butter cookie, graham, sandwich, wafer, ring), eight colors, four eye styles, optional blush and an accessory (headphones, beret or bow), with a live preview.
 - **Persona**: the assistant's name, its role and the way it talks. On first run you can start from a preset (a thinking partner, a careful researcher or a hands-on doer) or write your own.
