@@ -1,3 +1,4 @@
+import { MarkdownMessage } from './MarkdownMessage';
 import { useState } from 'react';
 import {
   CalendarCheck, CalendarClock, ChevronDown, ChevronRight, CircleAlert, CircleCheck, CircleHelp, ListChecks, LogIn, Mail, MailCheck,
@@ -219,7 +220,9 @@ export function AttentionPanel({ onOpen }: { readonly onOpen: (conversation: str
     );
   };
   const shownPinned = allPinned ? needs : needs.slice(0, PINNED_PREVIEW);
+  // The brief is written as markdown: the first line is its headline, the rest renders as the message would.
   const briefLines = brief ? brief.body.split(/\r?\n/).map(l => l.trim()).filter(Boolean) : [];
+  const plainLine = (l: string) => l.replace(/^#+\s*/, '').replace(/^[-•·*]\s+/, '').replace(/\*\*|__/g, '').trim();
 
   return (
     <div className="feed">
@@ -227,11 +230,11 @@ export function AttentionPanel({ onOpen }: { readonly onOpen: (conversation: str
       {brief && briefLines.length > 0 && (
         <section className="feed-brief" aria-labelledby="feed-brief-title">
           <p className="feed-brief-kicker"><Sunrise size={14} aria-hidden="true" />{briefLabel(brief.at, now)}</p>
-          <h2 id="feed-brief-title">{briefLines[0]}</h2>
+          <h2 id="feed-brief-title">{plainLine(briefLines[0]!)}</h2>
           {briefLines.length > 1 && (
-            <ul className="feed-brief-lines" data-clamped={!briefOpen || undefined}>
-              {briefLines.slice(1).map((l, i) => <li key={i}>{l.replace(/^[-•·*]\s*/, '')}</li>)}
-            </ul>
+            <div className="feed-brief-lines" data-clamped={!briefOpen || undefined}>
+              <MarkdownMessage content={brief.body.split(/\r?\n/).filter(l => l.trim()).slice(1).join('\n')} />
+            </div>
           )}
           {briefLines.length > 4 && (
             <div className="feed-brief-bar">

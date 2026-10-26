@@ -16,8 +16,11 @@
 .feed-brief { padding: 16px 18px; border-radius: 18px; background: var(--wash); }
 .feed-brief-kicker { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: var(--t-caption); color: var(--muted); }
 .feed-brief h2 { margin: 0; font-size: var(--t-body); font-weight: 600; line-height: 1.45; color: var(--ink); text-wrap: pretty; }
-.feed-brief-lines { display: grid; gap: 4px; margin: 10px 0 0; padding: 0 0 0 1.1em; font-size: var(--t-footnote); line-height: 1.55; color: var(--ink); }
-.feed-brief-lines[data-clamped] li:nth-child(n + 4) { display: none; }
+.feed-brief-lines { margin: 10px 0 0; font-size: var(--t-footnote); line-height: 1.55; color: var(--ink); }
+.feed-brief-lines :is(p, ul, ol) { margin: 0 0 6px; }
+.feed-brief-lines :is(ul, ol) { padding-left: 1.1em; }
+.feed-brief-lines :is(h1, h2, h3, h4) { margin: 8px 0 4px; font-size: inherit; font-weight: 600; }
+.feed-brief-lines[data-clamped] { max-height: 7.8em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
 .feed-brief-bar { display: flex; gap: 16px; margin-top: 8px; }
 .feed-brief-bar:empty { display: none; }
 .feed-brief-bar button, .feed-more {

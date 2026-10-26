@@ -13,6 +13,10 @@ export class PanelErrorBoundary extends Component<{
     return { failed: true };
   }
 
+  componentDidCatch(error: unknown) {
+    console.error('panel failed', error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error));
+  }
+
   render() {
     if (!this.state.failed) return this.props.children;
     return (
