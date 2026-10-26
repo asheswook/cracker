@@ -47,6 +47,8 @@ export async function taskTarget(task: Task, sourceMessageId: Id | undefined, de
   const target = TaskNavigation.parse(await http.get(`/v1/tasks/${task.id}/navigation`, signal ? { signal } : {}).json<unknown>());
   if (target.task_id !== task.id || target.conversation_id !== task.conversation_id)
     throw new WorkNavigationError('작업의 메시지 정보를 확인할 수 없어요. 다시 시도해 주세요.');
+  // A scheduled or routine run's own request is a hidden wake message: open the user's original ask instead.
+  if (target.source && (destination === 'request' || !target.reply_message_id)) return { conversation: Id.parse(target.source.conversation_id), message: Id.parse(target.source.message_id) };
   const message = destination === 'reply' ? target.reply_message_id ?? target.request_message_id : target.request_message_id;
   if (!message) throw new WorkNavigationError(destination === 'reply' ? '이 작업에 저장된 답변이 없어요. 요청 원문을 확인해 주세요.' : '이 작업에 저장된 요청 원문이 없어요.');
   return { conversation: Id.parse(target.conversation_id), message: Id.parse(message) };

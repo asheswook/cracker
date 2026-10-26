@@ -77,6 +77,8 @@ export function createNotificationFixtures(notificationConfig: NotificationConfi
       });
     return {
       post,
+      daemonPost: (path: string, body: object) =>
+        app.request(path, { method: "POST", headers: { authorization: `Bearer ${daemon}`, "content-type": "application/json" }, body: JSON.stringify(body) }),
       poll: () =>
         app.request("/v1/daemon/poll", { headers: { authorization: `Bearer ${daemon}` } }),
       workspace,

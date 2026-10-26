@@ -69,7 +69,8 @@ export async function attention(sql: Query, workspace: string, options: { readon
         WHERE c.workspace_id=${workspace} AND (c.state='pending' OR (c.state='snoozed' AND c.snoozed_until<=now()) OR c.state='accepted'
               OR (c.state IN ('resolved','failed') AND c.updated_at>${since}))
         AND coalesce(t.objective,'') !~* '^\s*QA' AND NOT EXISTS(SELECT 1 FROM assistant.attention_source_drafts d WHERE d.card_message_id=m.id) ORDER BY m.created_at DESC LIMIT 100`,
-    sql`SELECT t.id,t.conversation_id,t.objective,t.state,t.reason,t.lane,t.updated_at,
+    sql`SELECT t.id,t.conversation_id,t.objective,t.title AS task_title,t.state,t.reason,t.lane,t.origin,t.updated_at,
+        EXISTS(SELECT 1 FROM assistant.attention_source_runs x WHERE x.task_id=t.id UNION ALL SELECT 1 FROM assistant.attention_source_drafts x WHERE x.task_id=t.id UNION ALL SELECT 1 FROM assistant.attention_source_sends x WHERE x.task_id=t.id) AS internal,
         (SELECT m.id FROM assistant.messages m WHERE m.task_id=t.id AND m.workspace_id=t.workspace_id AND NOT m.hidden ORDER BY m.sequence LIMIT 1) AS first_message,
         COALESCE(
           (SELECT n.title FROM assistant.messages u JOIN assistant.knowledge_node_members k ON k.workspace_id=u.workspace_id AND k.user_message_id=u.id AND k.role='owner'
@@ -118,7 +119,12 @@ export async function attention(sql: Query, workspace: string, options: { readon
       at: iso(t['updated_at']), conversation_id: String(t['conversation_id']), message_id: t['first_message'] ? String(t['first_message']) : null, state: String(t['state']) };
     // A run that stopped is not the user's decision; it is work in trouble. Background failures recover on their own
     // schedule; a stopped foreground request stays visible as work that needs attention, not as a question for the user.
-    if (t['state'] === 'failed' || t['state'] === 'unknown') { if (t['lane'] !== 'background') progress.push({ ...item, state: 'stopped' }); }
+    // A reminder or routine the user set up that could not run is theirs to know about (once, by its name); the
+    // assistant's own mail looks, drafts and sends recover on their own and stay out of sight.
+    if (t['state'] === 'failed' || t['state'] === 'unknown') {
+      if (t['lane'] !== 'background') progress.push({ ...item, state: 'stopped' });
+      else if (!t['internal'] && t['origin'] !== 'user') progress.push({ ...item, title: t['task_title'] ? String(t['task_title']) : item.title, state: 'stopped' });
+    }
     else progress.push(item);
   }
   for (const r of responsibilities) progress.push({ id: `responsibility:${r['id']}`, kind: 'responsibility', title: objectiveLine(String(r['objective'])), topic: r['topic'] ? topicLabel(String(r['topic'])) : null,

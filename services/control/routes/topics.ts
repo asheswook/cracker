@@ -70,6 +70,30 @@ export function topicRoutes(sql: Database) {
       return { enabled: body.enabled, time: body.time ?? 'assistant chooses from the user\'s morning pattern', applies: 'from the next brief that has not gone out yet' };
     }));
   });
+  // Daemon: the user changes a 피드 mail/Slack item by saying so (their quote must be in this turn's own messages).
+  app.post('/context/:run/feed-item', async c => {
+    const principal = c.get('principal');
+    const run = z.uuid().parse(c.req.param('run'));
+    await authorizeReferenceRun(sql, principal, run);
+    const body = z.object({ item_id: z.uuid(), source_quote: z.string().trim().min(2).max(300), due_at: z.iso.datetime({ offset: true }).nullable(),
+      blocked: z.string().trim().max(300).nullable(), clear_blocked: z.boolean(), done: z.boolean(), dismiss: z.boolean() }).parse(await c.req.json());
+    return c.json(await sql.begin(async tx => {
+      const source = (await tx`SELECT m.id FROM assistant.runs r JOIN assistant.messages m ON m.workspace_id=r.workspace_id AND m.task_id=r.task_id
+        WHERE r.id=${run} AND m.role='user' AND m.origin='user' AND NOT m.synthetic AND position(${body.source_quote} in m.content)>0 LIMIT 1`)[0];
+      if (!source) throw new DomainError('invalid_source', 'source_quote must be the user\'s own words from this conversation turn', 400);
+      const workspace = principal.workspace_id;
+      if (body.done || body.dismiss) {
+        if (!(await answerSourceItem(tx, workspace, body.item_id, body.dismiss ? 'dismiss' : 'handled'))) throw new DomainError('not_found', 'No open item with that id', 404);
+        return { ok: true, closed: body.dismiss ? 'not_needed' : 'handled' };
+      }
+      const change: { due_at?: string | null; blocked?: string | null } = {};
+      if (body.due_at) change.due_at = body.due_at;
+      if (body.blocked) change.blocked = body.blocked; else if (body.clear_blocked) change.blocked = null;
+      if (!Object.keys(change).length) throw new DomainError('nothing_to_change', 'Say what to change', 400);
+      if (!(await updateObligation(tx, workspace, body.item_id, change))) throw new DomainError('not_found', 'No open item with that id', 404);
+      return { ok: true, changed: Object.keys(change) };
+    }));
+  });
   // Daemon: an observation run reports what it saw (structured, once).
   app.post('/context/:run/observation', async c => {
     const principal = c.get('principal');

@@ -233,7 +233,7 @@ export function AttentionPanel({ onOpen }: { readonly onOpen: (conversation: str
           <h2 id="feed-brief-title">{plainLine(briefLines[0]!)}</h2>
           {briefLines.length > 1 && (
             <div className="feed-brief-lines" data-clamped={!briefOpen || undefined}>
-              <MarkdownMessage content={brief.body.split(/\r?\n/).filter(l => l.trim()).slice(1).join('\n')} />
+              <MarkdownMessage content={brief.body.replace(/^\s*[^\n]*\n?/, '')} />
             </div>
           )}
           {briefLines.length > 4 && (

@@ -90,6 +90,22 @@ export const readAttentionTool: Tool = {
   parameters: { type: "object", properties: {}, required: [], additionalProperties: false },
 };
 
+/** update_feed_item: what the user says about a mail/Slack item in the 피드 ("금요일로 미뤄", "자료가 없어 막혔어", "이건 됐어"). */
+export const updateFeedItemTool: Tool = {
+  type: "function",
+  name: "update_feed_item",
+  description:
+    "Change one watched mail/Slack item from the user's 피드 when the user says so: due_at moves its date (ISO with offset), blocked records why it is stuck (null clears it), " +
+    "done=true closes it as handled by the user, dismiss=true closes it as not needed. Find the item with read_attention (needs_you items with id 'mail:<uuid>'; pass the uuid). " +
+    "Use only for what the user just said; quote their words in source_quote. Set only the fields they asked to change (others null). If more than one item could be meant, ask which.",
+  strict: true,
+  parameters: { type: "object", properties: {
+    item_id: { type: "string" }, source_quote: { type: "string" },
+    due_at: { type: ["string", "null"] }, blocked: { type: ["string", "null"] },
+    clear_blocked: { type: "boolean" }, done: { type: "boolean" }, dismiss: { type: "boolean" },
+  }, required: ["item_id", "source_quote", "due_at", "blocked", "clear_blocked", "done", "dismiss"], additionalProperties: false },
+};
+
 /** set_brief: the user changes the morning brief by asking ("브리핑 8시에", "브리핑 꺼줘", "알아서 해"). */
 export const setBriefTool: Tool = {
   type: "function",

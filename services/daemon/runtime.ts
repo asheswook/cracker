@@ -11,7 +11,7 @@ import type { Journal } from "./journal.ts";
 import { ArtifactError, TaskArtifacts, documentFamily, publishArtifactTool } from "./artifacts.ts";
 import { enroll, proactiveTools, ProactiveError, notifyUser, notifyUserTool } from "./proactive.ts";
 import { applyPolicy, offered } from "./read-only.ts";
-import { askBlock, askUserTool, readAttentionTool, reportObservationTool, resultBlock, setBriefTool, showResultTool, watchSourceTool } from "./result-card.ts";
+import { askBlock, askUserTool, readAttentionTool, reportObservationTool, resultBlock, setBriefTool, showResultTool, updateFeedItemTool, watchSourceTool } from "./result-card.ts";
 import { futureWorkTools, isFutureWorkTool, runFutureWork } from "./future-work.ts";
 import { appendToolImages, pruneConsumedToolImages, inputImageCount, restoreToolImages, rebindToolImages } from "./image-history.ts";
 import { ExtensionManager, loadSkillTool, saveSkillTool } from "./extensions.ts";
@@ -731,7 +731,7 @@ export class Runtime {
         queueSemantic();
         await applyMailbox();
         if (semantic?.finalCursor !== undefined) { if (await completeTurn()) break; continue; }
-        const nativeRequest=()=>({runId:assignment.run_id,input,tools:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,setBriefTool,watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]),signal,...(background?{budget:backgroundRetry}:{}),...(nativeState?{state:nativeState}:{})});
+        const nativeRequest=()=>({runId:assignment.run_id,input,tools:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,updateFeedItemTool,setBriefTool,watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]),signal,...(background?{budget:backgroundRetry}:{}),...(nativeState?{state:nativeState}:{})});
         let nativeClock=native?utcInstruction():"";
         const measureNative=async():Promise<number>=>{
           if(!native)return 0;
@@ -756,7 +756,7 @@ export class Runtime {
         if(!explainOnly&&native&&nativeState&&!pendingShells()&&budget>=threshold&&budget>=lastCompactBudget+threshold/4){
           lastCompactBudget=budget;
           try {
-            const offeredTools=explainOnly?[]:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,setBriefTool,watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]);
+            const offeredTools=explainOnly?[]:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,updateFeedItemTool,setBriefTool,watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]);
             const compacted=await native.compact({runId:assignment.run_id,input,tools:offeredTools,state:nativeState,signal,...(background?{budget:backgroundRetry}:{})});
             signal.throwIfAborted();
             if(compacted)commitNative(compacted);
@@ -772,7 +772,7 @@ export class Runtime {
           await applyMailbox();
         }
         if(native&&nativeBudget>nativeLimit)throw new NativeContextError("input_budget_exceeded");
-        const offeredTools=explainOnly?[]:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,setBriefTool,watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]);
+        const offeredTools=explainOnly?[]:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,updateFeedItemTool,setBriefTool,watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]);
         await this.waitReceipts(assignment.run_id,signal);
         const composing=background?silentComposing():await observeComposing(this.http,assignment.run_id,input,signal,native?[...appliedInputIds]:undefined);
         const semanticContextId = semantic?.contextId;
@@ -919,6 +919,7 @@ export class Runtime {
             if(item.name === "report_observation")return {text:JSON.stringify(await this.http.post(`v1/daemon/context/${assignment.run_id}/observation`,{json:JSON.parse(item.arguments),signal}).json())};
             if(item.name === "watch_source")return {text:JSON.stringify(await this.http.post(`v1/daemon/context/${assignment.run_id}/watch`,{json:JSON.parse(item.arguments),signal}).json())};
             if(item.name === "set_brief")return {text:JSON.stringify(await this.http.post(`v1/daemon/context/${assignment.run_id}/brief`,{json:JSON.parse(item.arguments),signal}).json())};
+            if(item.name === "update_feed_item")return {text:JSON.stringify(await this.http.post(`v1/daemon/context/${assignment.run_id}/feed-item`,{json:JSON.parse(item.arguments),signal}).json())};
             if(item.name === "read_attention")return {text:JSON.stringify(await this.http.get(`v1/daemon/context/${assignment.run_id}/attention`,{signal}).json())};
             if(item.name === "show_result"||item.name === "ask_user"){
               const {block,summary}=item.name==="show_result"?resultBlock(item.arguments):askBlock(item.arguments,`${assignment.run_id}:${item.call_id}`);
