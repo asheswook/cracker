@@ -186,7 +186,7 @@ async function tickWorkspace(sql: Database, workspace: string, now: Date) {
     }
     const conversation = z.object({ id: z.uuid().nullable() }).parse((await tx`SELECT default_conversation_id AS id FROM assistant.workspaces WHERE id=${workspace}`)[0]).id;
     if (!conversation) return 'no_conversation';
-    const created = await createBackgroundTask(tx, { workspace, conversation, objective: BRIEF_OBJECTIVE, origin: 'responsibility', clientId: await briefClientId(workspace, `${today}:${s.updated_at.toISOString()}`) });
+    const created = await createBackgroundTask(tx, { workspace, conversation, objective: BRIEF_OBJECTIVE, title: '아침 브리핑', origin: 'responsibility', clientId: await briefClientId(workspace, `${today}:${s.updated_at.toISOString()}`) });
     await tx`INSERT INTO assistant.attention_brief_runs(task_id,workspace_id,local_date) VALUES(${created.task.id},${workspace},${today}::date) ON CONFLICT DO NOTHING`;
     await tx`UPDATE assistant.attention_briefs SET state='dispatched',task_id=${created.task.id},dispatched_at=${now},expires_at=${now}::timestamptz+${BRIEF_TTL_MINUTES}*interval '1 minute',
       snapshot=${JSON.stringify(snapshot)}::text::jsonb WHERE workspace_id=${workspace} AND local_date=${today}::date`;

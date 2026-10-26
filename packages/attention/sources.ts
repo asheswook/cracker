@@ -113,7 +113,7 @@ async function startLook(tx: Query, s: Record<string, unknown>, now: Date, once:
   const readThrough = lastPartial ? new Date(String(lastPartial['as_of'])) : null;
   const objective = observeObjective({ kind: s['kind'] as Kind, account: String(s['account']), window_start: windowStart, backfill_before: backfill, read_through: readThrough, as_of: now, recheck, once: !!once });
   const conversation = once ? once.conversation : String(s['conversation_id']);
-  const created = await createBackgroundTask(tx, { workspace: String(s['workspace_id']), conversation, objective, origin: 'responsibility', clientId: crypto.randomUUID() });
+  const created = await createBackgroundTask(tx, { workspace: String(s['workspace_id']), conversation, objective, title: `${s['kind'] === 'slack' ? 'Slack 확인' : '메일 확인'} · ${String(s['account'])}`.slice(0, 60), origin: 'responsibility', clientId: crypto.randomUUID() });
   if (s['skill_id'] && s['skill_revision']) await bindSkill(tx, { workspace: String(s['workspace_id']), task: created.task.id, message: created.message.id, skill: String(s['skill_id']), revision: Number(s['skill_revision']), kind: 'scheduled' });
   await tx`INSERT INTO assistant.attention_source_runs(source_id,workspace_id,task_id,window_start,as_of,source_revision,expires_at,once,recheck_keys,conversation_id,request_message_id)
     VALUES(${id},${String(s['workspace_id'])},${created.task.id},${windowStart},${now},${Number(s['revision'])},${now}::timestamptz+${OBSERVE_TTL_MINUTES}*interval '1 minute',${!!once},${tx.array(recheck.map(r => r.thread_key))},
@@ -570,7 +570,7 @@ async function dispatchReplyDrafts(sql: Database, now: Date) {
       if (!locked['reply_request_id'] && await quietWait(tx, String(i['workspace_id']), now)) return;
       const objective = replyObjective({ kind: i['kind'] as Kind, account: String(i['account']), url: i['url'] ? String(i['url']) : null, thread_key: String(i['thread_key']), subject: String(i['subject']), counterpart: i['counterpart'] ? String(i['counterpart']) : null, reason: String(i['reason']), promise: i['category'] === 'promise', chase: i['category'] === 'waiting', note: locked['reply_note'] ? String(locked['reply_note']) : null, keep: locked['reply_keep_body'] ? String(locked['reply_keep_body']) : null, evidence: i['evidence'] ? String(i['evidence']) : null });
       const conversation = String(i['once_conversation'] ?? i['conversation_id']);
-      const created = await createBackgroundTask(tx, { workspace: String(i['workspace_id']), conversation, objective, origin: 'responsibility', clientId: crypto.randomUUID() });
+      const created = await createBackgroundTask(tx, { workspace: String(i['workspace_id']), conversation, objective, title: '답장 초안', origin: 'responsibility', clientId: crypto.randomUUID() });
       if (i['skill_id'] && i['skill_revision']) await bindSkill(tx, { workspace: String(i['workspace_id']), task: created.task.id, message: created.message.id, skill: String(i['skill_id']), revision: Number(i['skill_revision']), kind: 'scheduled' });
       await tx`INSERT INTO assistant.attention_source_drafts(purpose,reply_request_id,task_id,workspace_id,source_id,item_id,source_revision,version,expires_at) VALUES(${i['category'] === 'waiting' ? 'chase' : i['category'] === 'promise' ? 'deliver' : 'reply'},${locked['reply_request_id'] ?? null},${created.task.id},${String(i['workspace_id'])},${String(i['source_id'])},${String(i['id'])},${Number(i['revision'])},${String(i['version'])},${now}::timestamptz+${OBSERVE_TTL_MINUTES}*interval '1 minute')`;
     });
@@ -737,7 +737,7 @@ export async function startSend(sql: Query, input: { workspace: string; card: st
   // Not sendable as it is: the caller starts a fresh draft for this thread (outside this refused approval).
   if (!row['draft_revision']) return { blocked: '이 초안은 메일 원문을 끝까지 확인하지 못해서 보낼 수 없었어요. 원문을 다시 읽고 새 초안을 만들고 있어요', redraft: input.card, body: input.body };
   const objective = sendObjective({ kind: row['kind'] as Kind, account: String(row['account']), thread_key: String(row['thread_key']), subject: String(row['subject']) });
-  const created = await createBackgroundTask(sql, { workspace: input.workspace, conversation: String(row['conversation_id']), objective, origin: 'responsibility', clientId: crypto.randomUUID() });
+  const created = await createBackgroundTask(sql, { workspace: input.workspace, conversation: String(row['conversation_id']), objective, title: '답장 보내기', origin: 'responsibility', clientId: crypto.randomUUID() });
   // The envelope: what the user saw on the card (recipient from the card, not re-read), the thread and its message count.
   await sql`INSERT INTO assistant.attention_source_sends(purpose,request_anchor,item_version,task_id,workspace_id,card_message_id,block_id,item_id,account,thread_key,version,body,body_hash,recipient,recipient_address,revision)
     VALUES(${String(row['purpose'] ?? 'reply')},${row['request_anchor'] ?? null},${String(row['version'])},${created.task.id},${input.workspace},${input.card},${input.block},${String(row['id'])},${String(row['account'])},${String(row['thread_key'])},${String(row['version'])},${input.body},${await bodyHash(input.body)},
@@ -833,7 +833,7 @@ async function startSendCheck(sql: Query, workspace: string, sendTask: string) {
     await sql`UPDATE assistant.attention_source_sends SET state='needs_user',check_task_id=NULL,note='could not confirm after 3 checks' WHERE task_id=${sendTask}`;
     return;
   }
-  const created = await createBackgroundTask(sql, { workspace, conversation: String(send['ic'] ?? send['sc']), objective: `Check whether an approved reply went out (thread ${String(send['thread_key'])}).`, origin: 'responsibility', clientId: crypto.randomUUID() });
+  const created = await createBackgroundTask(sql, { workspace, conversation: String(send['ic'] ?? send['sc']), objective: `Check whether an approved reply went out (thread ${String(send['thread_key'])}).`, title: '발송 확인', origin: 'responsibility', clientId: crypto.randomUUID() });
   await sql`UPDATE assistant.attention_source_sends SET state='checking',check_task_id=${created.task.id},check_attempts=check_attempts+1 WHERE task_id=${sendTask}`;
   await sql`INSERT INTO assistant.attention_source_check_tasks(task_id,workspace_id,send_task_id) VALUES(${created.task.id},${workspace},${sendTask}) ON CONFLICT DO NOTHING`;
 }

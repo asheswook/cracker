@@ -11,11 +11,13 @@ const Source = z.object({
   source_quote: z.string().min(1).max(10000),
 });
 export const ScheduleConfiguration = z.object({
+  title: z.string().trim().max(60).nullable().transform(v => v || null),
   objective: z.string().min(1).max(100000),
   due_at: z.iso.datetime({ offset: true }),
   timezone: z.string().min(1).max(100),
 });
 export const ResponsibilityConfiguration = z.object({
+  title: z.string().trim().max(60).nullable().transform(v => v || null),
   objective: z.string().min(1).max(4000),
   trigger: Trigger,
   notification_mode: z.enum(["enabled", "quiet"]),

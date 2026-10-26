@@ -89,6 +89,8 @@ export const Message = z.object({
 export const Conversation = z.object({ id: Id, title: z.string(), created_at: z.string() });
 export const Task = z.object({
   lane: TaskLane.optional(),
+  title: z.string().nullable().optional(),
+  origin: z.enum(['user', 'schedule', 'responsibility']).optional(),
   id: Id,
   conversation_id: Id,
   objective: z.string(),

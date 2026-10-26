@@ -10,7 +10,7 @@ export const ScheduleRequest = z.object({
   run_id: Id,
   client_schedule_id: Id,
   objective: z.string().trim().min(1).max(100000),
-  title: z.string().trim().max(60).nullable().default(null),
+  title: z.string().trim().max(60).nullable().default(null).transform(v => v || null),
   due_at: z.iso.datetime({ offset: true }),
   timezone: z.string().min(1).max(100),
   source_message_id: Id,

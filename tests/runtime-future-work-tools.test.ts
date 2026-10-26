@@ -2,12 +2,26 @@ import { expect, test } from "bun:test";
 import ky from "ky";
 import { z } from "zod";
 import { futureWorkTools, runFutureWork } from "../services/daemon/future-work.ts";
+import { ResponsibilityConfiguration, ScheduleConfiguration } from "../packages/proactive/schema.ts";
+import { ResponsibilityInput } from "../packages/memory/responsibility-schema.ts";
+import { ScheduleRequest } from "../services/control/repository/schedule-enrollment.ts";
 
 const scope = { runId: crypto.randomUUID(), actionId: "synthetic-run:edit-1" };
 const source = { source_message_id: crypto.randomUUID(), source_quote: "Update the existing routine." };
 const target = { kind: "responsibility", id: crypto.randomUUID(), expected_version: "a".repeat(64) } as const;
-const configuration = { objective: "Include a submission reminder", trigger: { kind: "daily", hour: 12, minute: 0, timezone: "Asia/Seoul" }, notification_mode: "enabled", quiet_hours: null };
+const configuration = { title: "정오 알림", objective: "Include a submission reminder", trigger: { kind: "daily", hour: 12, minute: 0, timezone: "Asia/Seoul" }, notification_mode: "enabled", quiet_hours: null };
 const updated = { work: { kind: "responsibility", id: target.id, version: "b".repeat(64), state: "active", conversation_id: crypto.randomUUID(), configuration, next_due_at: "2027-01-01T03:00:00.000Z", skill_id: null, skill_revision: null }, already_dispatched_task_ids: [] };
+
+test("work titles normalize blank values and enforce the display limit", () => {
+  for (const schema of [ResponsibilityInput.shape.title, ScheduleRequest.shape.title, ResponsibilityConfiguration.shape.title, ScheduleConfiguration.shape.title]) {
+    expect(schema.parse("  ")).toBeNull();
+    expect(schema.parse(null)).toBeNull();
+    expect(schema.parse("  메일 확인  ")).toBe("메일 확인");
+    expect(schema.safeParse("가".repeat(61)).success).toBe(false);
+  }
+  expect(ResponsibilityInput.shape.title.parse(undefined)).toBeNull();
+  expect(ScheduleRequest.shape.title.parse(undefined)).toBeNull();
+});
 
 test("future work parameter schemas describe strict objects including every trigger alternative", () => {
   // Given all model-visible parameter definitions, including transformed timezone inputs.

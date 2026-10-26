@@ -13,7 +13,7 @@ export async function dispatchActions(tx: Transaction, principal: Principal): Pr
       await tx`UPDATE assistant.responsibility_actions SET state='cancelled' WHERE id=${row.action_id}`;
       continue;
     }
-    const {task,message}=await createBackgroundTask(tx,{workspace:principal.workspace_id,conversation:row.conversation_id,objective:row.action_objective,origin:'responsibility',clientId:row.action_id});
+    const {task,message}=await createBackgroundTask(tx,{workspace:principal.workspace_id,conversation:row.conversation_id,objective:row.action_objective,title:row.title,origin:'responsibility',clientId:row.action_id});
     if(row.skill_id&&row.skill_revision)await bindSkill(tx,{workspace:principal.workspace_id,task:task.id,message:message.id,skill:row.skill_id,revision:row.skill_revision,kind:'scheduled'});
     await tx`UPDATE assistant.responsibility_actions SET state='dispatched',task_id=${task.id},dispatched_at=now() WHERE id=${row.action_id}`;
     await recordEvent(tx, { workspace: principal.workspace_id, kind: "responsibility.dispatched", payload: JSON.stringify({ responsibility_id: row.id, action_id: row.action_id, task_id: task.id }) });

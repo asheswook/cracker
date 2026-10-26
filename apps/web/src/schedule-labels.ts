@@ -36,7 +36,8 @@ export function scheduleTitle(item: { readonly title?: string | null | undefined
 }
 /** What happened last time, in a word (and why, when it failed). */
 export function lastRunLabel(task: { readonly state: string; readonly reason: string | null } | null | undefined, lastError: string | null): { text: string; failed: boolean } | null {
-  if (task?.state === 'failed' || task?.state === 'unknown') return { text: `지난번 실패${taskReason(task.reason)?.text ? ` · ${taskReason(task.reason)!.text}` : ''}`, failed: true };
+  if (task?.state === 'unknown') return { text: '지난번 결과 확인 못 함', failed: true };
+  if (task?.state === 'failed') return { text: `지난번 실패${taskReason(task.reason)?.text ? ` · ${taskReason(task.reason)!.text}` : ''}`, failed: true };
   if (lastError) return { text: `지난번 확인 실패${taskReason(lastError)?.text ? ` · ${taskReason(lastError)!.text}` : ''}`, failed: true };
   if (!task) return null;
   const word: Record<string, string> = { succeeded: '지난번 완료', cancelled: '지난번 취소됨', running: '지금 실행 중', queued: '실행 대기 중', waiting: '응답 기다리는 중', pausing: '멈추는 중', paused: '잠시 멈춤', cancelling: '취소하는 중' };

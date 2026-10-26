@@ -17,6 +17,7 @@ export async function dispatchDueSchedules(sql: Database): Promise<number> {
           workspace_id: z.uuid(),
           conversation_id: z.uuid(),
           objective: z.string(),skill_id:z.uuid().nullable(),skill_revision:z.number().int().nullable(),
+          title: z.string().nullable(),
         }),
       )
       .parse(
@@ -28,6 +29,7 @@ export async function dispatchDueSchedules(sql: Database): Promise<number> {
         workspace: schedule.workspace_id,
         conversation: schedule.conversation_id,
         objective: schedule.objective,
+        title: schedule.title,
         clientId: schedule.id,
         origin: "schedule",
       });

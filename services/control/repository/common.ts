@@ -92,6 +92,7 @@ export async function recordEvent(
 }
 export async function createBackgroundTask(sql: Query, input: {
   readonly workspace: string; readonly conversation: string; readonly objective: string;
+  readonly title?: string | null;
   readonly origin: 'schedule' | 'responsibility'; readonly clientId: string;
 }) {
   await conversation(sql,input.workspace,input.conversation);
@@ -103,7 +104,7 @@ export async function createBackgroundTask(sql: Query, input: {
     const task=Task.parse((await sql`SELECT * FROM assistant.tasks WHERE id=${message.task_id??null} AND lane='background'`)[0]);
     return {message,task};
   }
-  const task=Task.parse((await sql`INSERT INTO assistant.tasks(workspace_id,conversation_id,objective,origin,lane) VALUES(${input.workspace},${input.conversation},${input.objective},${input.origin},'background') RETURNING *`)[0]);
+  const task=Task.parse((await sql`INSERT INTO assistant.tasks(workspace_id,conversation_id,objective,title,origin,lane) VALUES(${input.workspace},${input.conversation},${input.objective},${input.title?.trim().slice(0,60) || null},${input.origin},'background') RETURNING *`)[0]);
   const message=Message.parse((await sql`INSERT INTO assistant.messages(workspace_id,conversation_id,task_id,role,content,client_message_id,origin,hidden) VALUES(${input.workspace},${input.conversation},${task.id},'system',${input.objective},${input.clientId},${input.origin},true) RETURNING *`)[0]);
   await recordEvent(sql,{workspace:input.workspace,kind:'message.created',payload:JSON.stringify({message,task})});
   return {message,task};

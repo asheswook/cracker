@@ -30,7 +30,7 @@ export async function applyMutation(
           throw new DomainError("invalid_timezone", "Invalid timezone", 400);
         throw error;
       }
-      await tx`UPDATE assistant.schedules SET objective=${config.objective},due_at=${config.due_at},timezone=${config.timezone},management_revision=management_revision+1 WHERE id=${current.id}`;
+      await tx`UPDATE assistant.schedules SET title=${config.title},objective=${config.objective},due_at=${config.due_at},timezone=${config.timezone},management_revision=management_revision+1 WHERE id=${current.id}`;
     } else {
       const config = work.configuration;
       const previous = current.kind === "responsibility" ? current.configuration.trigger : null;
@@ -63,7 +63,7 @@ export async function applyMutation(
           }
         }
       }
-      await tx`UPDATE assistant.responsibilities SET objective=${config.objective},trigger=${JSON.stringify(config.trigger)}::text::jsonb,notification_mode=${config.notification_mode},quiet_hours=${config.quiet_hours ? JSON.stringify(config.quiet_hours) : null}::text::jsonb,next_review_at=${due},management_revision=management_revision+1,failure_count=0,last_error=NULL WHERE id=${current.id}`;
+      await tx`UPDATE assistant.responsibilities SET title=${config.title},objective=${config.objective},trigger=${JSON.stringify(config.trigger)}::text::jsonb,notification_mode=${config.notification_mode},quiet_hours=${config.quiet_hours ? JSON.stringify(config.quiet_hours) : null}::text::jsonb,next_review_at=${due},management_revision=management_revision+1,failure_count=0,last_error=NULL WHERE id=${current.id}`;
     }
   }
   let dispatched: { task_id: string }[] = [];

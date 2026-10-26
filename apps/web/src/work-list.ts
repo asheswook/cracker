@@ -6,7 +6,10 @@ export const activeStates = new Set(['queued', 'running', 'waiting', 'pausing', 
 
 /** Runs the assistant starts on its own (watches, drafts, sends, checks, briefs, long routine instructions). */
 const routinePrefix = /^\s*(?:예약된 작업 실행:\s*)?(?:(?:Gmail|Slack) observation|Prepare a reply draft|Send (?:exactly )?one approved|Check whether|Morning brief)/;
-export const isRoutine = (task: Pick<Task, 'objective'>) => {
+type TaskSummary = Pick<Task, 'objective' | 'title' | 'lane' | 'origin'>;
+export const isRoutine = (task: TaskSummary): boolean => {
+  if (task.lane !== undefined || task.origin !== undefined)
+    return task.lane === 'background' || (task.origin !== undefined && task.origin !== 'user');
   const text = task.objective.trim();
   return routinePrefix.test(text) || /^\s*'[^']+'\s*스킬을/.test(text) || (text.length > 400 && /\n/.test(text));
 };
@@ -14,7 +17,8 @@ export const isRoutine = (task: Pick<Task, 'objective'>) => {
 const firstLine = (s: string) => s.split(/\r?\n/).map(l => l.trim()).find(Boolean) ?? '';
 const clip = (s: string, max = 60) => (s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s);
 /** One readable line: routine runs by what they are, long instructions by their first sentence. */
-export function taskTitle(task: Pick<Task, 'objective'>): string {
+export function taskTitle(task: TaskSummary): string {
+  if (task.title?.trim()) return clip(task.title.trim());
   const line = firstLine(task.objective).replace(/^예약된 작업 실행:\s*/, '');
   if (isRoutine(task)) {
     const skill = /^\s*'([^']{1,50})'\s*스킬을/.exec(line)?.[1];
@@ -25,7 +29,8 @@ export function taskTitle(task: Pick<Task, 'objective'>): string {
     return clip(sentence.trim() || '자동 작업');
   }
   // "<quoted answer> => <question>": the user's own words are after the arrow.
-  const own = task.objective.includes('=>') ? firstLine(task.objective.slice(task.objective.lastIndexOf('=>') + 2)) : '';
+  const arrow = task.objective.lastIndexOf('=>');
+  const own = arrow >= 40 ? firstLine(task.objective.slice(arrow + 2)) : '';
   return clip(own || line || '내용 없는 요청');
 }
 

@@ -57,6 +57,9 @@ export const Message = z.object({
 });
 export type Message = z.infer<typeof Message>;
 export const Task = z.object({
+  lane: z.enum(['foreground', 'background']).optional(),
+  title: z.string().nullable().optional(),
+  origin: z.enum(['user', 'schedule', 'responsibility']).optional(),
   id: Id,
   conversation_id: Id,
   objective: z.string(),

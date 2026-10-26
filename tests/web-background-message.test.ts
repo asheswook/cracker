@@ -3,6 +3,10 @@ import { Message } from '../apps/web/src/types';
 import { Message as ProtocolMessage } from '../packages/protocol';
 import { feedItems, isBackgroundMessage, readableTitle } from '../apps/web/src/background-message';
 import { systemMessageContent } from '../apps/web/src/system-message';
+import { Task } from '../apps/web/src/types';
+import { Task as ProtocolTask } from '../packages/protocol';
+import { isRoutine, taskTitle } from '../apps/web/src/work-list';
+import { lastRunLabel } from '../apps/web/src/schedule-labels';
 
 const message = Message.parse({ id: crypto.randomUUID(), conversation_id: crypto.randomUUID(), task_id: crypto.randomUUID(), role: 'assistant', origin: 'schedule', notify: false, content: 'Review deployment\nMore detail', sequence: 1, created_at: new Date().toISOString(), client_message_id: null });
 test('background origin and explicit notification survive both wire schemas', () => {
@@ -52,4 +56,30 @@ test('reply objectives with a user instruction prefix show the thread subject, n
   expect(readableTitle('Gmail observation for me@example.com (inbox)')).toBe('Gmail 확인 · me@example.com');
   expect(readableTitle('Send one approved reply. Thread: Review, id abc')).toBe('승인한 답장 보내기 · Review');
   expect(readableTitle('Check whether an approved reply went out')).toBe('보낸 답장 확인');
+});
+
+test('task classification prefers explicit lane and origin over legacy text heuristics', () => {
+  expect(isRoutine({ objective: '짧은 예약', lane: 'background' })).toBe(true);
+  expect(isRoutine({ objective: '짧은 예약', origin: 'schedule' })).toBe(true);
+  expect(isRoutine({ objective: '짧은 예약', lane: 'foreground', origin: 'responsibility' })).toBe(true);
+  expect(isRoutine({ objective: 'Morning brief', lane: 'foreground' })).toBe(false);
+  expect(isRoutine({ objective: 'Morning brief', origin: 'user' })).toBe(false);
+  expect(isRoutine({ objective: 'Morning brief' })).toBe(true);
+  expect(isRoutine({ objective: '직접 요청' })).toBe(false);
+});
+
+test('task titles preserve explicit names, short arrows, and first-line fallbacks', () => {
+  expect(taskTitle({ objective: "'메일' 스킬을 로드해 확인해요.", title: '내가 정한 제목', origin: 'schedule' })).toBe('내가 정한 제목');
+  expect(taskTitle({ objective: "'메일' 스킬을 로드해 확인해요." })).toBe('메일');
+  expect(taskTitle({ objective: 'A => B', origin: 'user' })).toBe('A => B');
+  expect(taskTitle({ objective: `${'인'.repeat(39)}=> 질문` })).toBe(`${'인'.repeat(39)}=> 질문`);
+  expect(taskTitle({ objective: `${'인'.repeat(40)}=> 질문\n상세` })).toBe('질문');
+  expect(taskTitle({ objective: `${'인'.repeat(40)}=>   ` })).toBe(`${'인'.repeat(40)}=>`);
+  expect(taskTitle({ objective: `${'인'.repeat(40)}=> 중간 => 마지막` })).toBe('마지막');
+});
+
+test('task display metadata survives both wire schemas and unknown runs are not labeled failures', () => {
+  const task = { id: crypto.randomUUID(), conversation_id: crypto.randomUUID(), objective: '확인', title: '메일 확인', origin: 'responsibility', lane: 'background', state: 'succeeded', reason: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+  expect(Task.parse(ProtocolTask.parse(task))).toMatchObject({ title: '메일 확인', origin: 'responsibility', lane: 'background' });
+  expect(lastRunLabel({ state: 'unknown', reason: null }, null)?.text).toBe('지난번 결과 확인 못 함');
 });

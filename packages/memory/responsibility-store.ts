@@ -28,7 +28,8 @@ export async function createResponsibility(sql: Database, principal: Principal, 
     const prior = await tx`SELECT * FROM assistant.responsibilities WHERE workspace_id=${principal.workspace_id} AND client_responsibility_id=${input.client_responsibility_id}`;
     if (prior[0]) {
       const existing = ResponsibilityRow.parse(prior[0]);
-      if (JSON.stringify(ResponsibilityInput.parse(existing)) !== JSON.stringify(ResponsibilityInput.parse(input))) throw new DomainError("idempotency_conflict", "Responsibility key reused", 409);
+      const identity = ResponsibilityInput.omit({ title: true });
+      if (JSON.stringify(identity.parse(existing)) !== JSON.stringify(identity.parse(input))) throw new DomainError("idempotency_conflict", "Responsibility key reused", 409);
       return existing;
     }
     const due = input.trigger.kind === "deadline" ? input.trigger.due_at : input.trigger.kind === "daily" ? await nextDailyAt(tx,input.trigger,new Date().toISOString()) : new Date().toISOString();
