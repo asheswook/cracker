@@ -94,6 +94,14 @@ Cracker's memory is a tree, because that's how people take notes and think: a to
 
 [Read the design → docs/MEMORY.md](docs/MEMORY.md)
 
+## Is it production?
+
+No. And also yes.
+
+I use Cracker every day, and I fix and improve it as I go. Mail watching, the morning brief, routines and the memory tree all run in my own daily work, so most of what you see here is in real use. It is still a personal project, though, not a product: some parts are experimental, and things change quickly.
+
+Treat it as a reference you can read, borrow from and run. Running your own copy will take some work: a PostgreSQL database, a Cloudflare account, an Ubuntu VM for the assistant's computer, your own model provider, and, for the apps, your own Apple and Firebase setup. See [current status and limitations](docs/STATUS.md) and the [setup guide](docs/DEPLOYMENT.md) before you start.
+
 ## Quick start
 
 Checked toolchain: Bun 1.2.10, pnpm 10.33.2 and Node.js 24.7.0. Use PostgreSQL 16+. Desktop execution requires a separate Ubuntu 24.04 VM; the control API and web interface can run locally without starting the daemon.
@@ -157,14 +165,6 @@ Deployment names and identifiers are examples. Supply your own database, Cloudfl
 | `packages` | Tools, MCP/skills, artifacts, memory, notifications and provider adapters |
 | `infra` | PostgreSQL migrations, Cloudflare configuration and Linux services |
 | `tests` | Unit, database, protocol and opt-in browser/live scenarios |
-
-## Is it production?
-
-No. And also yes.
-
-I use Cracker every day, and I fix and improve it as I go. Mail watching, the morning brief, routines and the memory tree all run in my own daily work, so most of what you see here is in real use. It is still a personal project, though, not a product: some parts are experimental, and things change quickly.
-
-Treat it as a reference you can read, borrow from and run. Running your own copy will take some work: a PostgreSQL database, a Cloudflare account, an Ubuntu VM for the assistant's computer, your own model provider, and, for the apps, your own Apple and Firebase setup. See [current status and limitations](docs/STATUS.md) and the [setup guide](docs/DEPLOYMENT.md) before you start.
 
 ## Acknowledgements
 
