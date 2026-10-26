@@ -1,6 +1,5 @@
 import type { Task } from './types';
 import { readableTitle } from './background-message';
-import { taskReason } from './task-reason';
 
 export const activeStates = new Set(['queued', 'running', 'waiting', 'pausing', 'paused', 'cancelling', 'unknown']);
 
@@ -45,33 +44,15 @@ export function dayLabel(day: number, now: Date): string {
   const d = new Date(day);
   return (d.getFullYear() === now.getFullYear() ? dayName : dayNameYear).format(d);
 }
-const elapsed = (from: string, now: Date) => {
-  const minutes = Math.max(0, Math.floor((now.getTime() - Date.parse(from)) / 60_000));
-  if (minutes < 1) return '방금 시작';
-  if (minutes < 60) return `${minutes}분째`;
-  const hours = Math.floor(minutes / 60);
-  return hours < 24 ? `${hours}시간째` : `${Math.floor(hours / 24)}일째`;
-};
-/** The live line of a running task. */
-export function liveStatus(task: Task, now: Date): { text: string; tone: 'live' | 'wait' | 'attention' } {
-  switch (task.state) {
-    case 'running': return { text: `진행 중 · ${elapsed(task.created_at, now)}`, tone: 'live' };
-    case 'queued': return { text: '차례를 기다려요', tone: 'wait' };
-    case 'waiting': return { text: '응답을 기다려요', tone: 'wait' };
-    case 'pausing': return { text: '멈추는 중', tone: 'wait' };
-    case 'paused': return { text: '잠시 멈춤', tone: 'wait' };
-    case 'cancelling': return { text: '취소하는 중', tone: 'wait' };
-    default: return { text: taskReason(task.reason)?.text ? `확인 필요 · ${taskReason(task.reason)!.text}` : '확인 필요', tone: 'attention' };
-  }
+/** The line of something still going on: it is being done, or it stopped. Nothing about queues or runs. */
+export function liveStatus(task: Task): { text: string; tone: 'live' | 'attention' } {
+  return task.state === 'unknown' ? { text: '멈췄어요', tone: 'attention' } : { text: '하고 있어요', tone: 'live' };
 }
-/** The muted line of a finished task. */
+/** The muted line of a finished request: when, and only if it did not work out, that it did not. */
 export function finishedStatus(task: Task): { text: string; failed: boolean } {
   const at = clock.format(new Date(task.updated_at));
-  if (task.state === 'succeeded') return { text: `완료 · ${at}`, failed: false };
-  const reason = taskReason(task.reason)?.text;
-  if (task.state === 'unknown') return { text: `결과 확인 못 함 · ${at}`, failed: true };
-  if (task.state === 'cancelled') return { text: `취소 · ${at}${reason ? ` · ${reason}` : ''}`, failed: false };
-  return { text: `실패 · ${at}${reason ? ` · ${reason}` : ''}`, failed: true };
+  if (task.state === 'succeeded' || task.state === 'cancelled') return { text: at, failed: false };
+  return { text: `못 했어요 · ${at}`, failed: true };
 }
 const byNewest = (key: 'created_at' | 'updated_at') => (a: Task, b: Task) => Date.parse(b[key]) - Date.parse(a[key]);
 
@@ -96,6 +77,6 @@ export function finishedByDay(tasks: readonly Task[], limit: number): { days: Fi
   }
   return { days, more };
 }
-/** Still going on: an automatic run whose outcome went unknown a day ago is history, not current work. */
-const isActive = (t: Task) => activeStates.has(t.state) && !(t.state === 'unknown' && isRoutine(t) && Date.now() - Date.parse(t.updated_at) > 86_400_000);
+/** Still going on, among what the user asked for (the assistant's own runs report through messages). */
+const isActive = (t: Task) => activeStates.has(t.state) && !isRoutine(t);
 export const activeTasks = (tasks: readonly Task[]) => tasks.filter(isActive).sort(byNewest('created_at'));

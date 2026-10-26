@@ -83,27 +83,5 @@
   .work-row[data-tone='live'] .work-pulse { animation: none; }
 }
 
-/* 멈추기 on 하고 있는 일: a quiet trailing control; the second tap is a small inline question. */
-.work-row[data-live] { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
-.work-row[data-live] > .work-error { grid-column: 1 / -1; }
-.work-row[data-live] .work-main { grid-template-columns: 28px minmax(0, 1fr); }
-.work-row[data-live] .work-chevron { display: none; }
-.work-stop, .work-stop-ask button {
-  display: inline-flex; align-items: center; gap: 5px; min-height: 36px; padding: 0 12px; border: 0; border-radius: var(--r-full, 999px);
-  background: none; color: var(--muted); font: inherit; font-size: var(--t-footnote); font-weight: 500; cursor: pointer; white-space: nowrap;
-  -webkit-tap-highlight-color: transparent;
-}
-@media (hover: hover) { .work-stop:hover, .work-stop-cancel:hover { background: var(--wash); color: var(--ink); } }
-.work-stop:focus-visible, .work-stop-ask button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.work-stop-ask { display: inline-flex; align-items: center; gap: 2px; padding-left: 4px; }
-.work-stop-question { margin-right: 4px; font-size: var(--t-footnote); color: var(--ink); white-space: nowrap; }
-.work-stop-ask .work-stop-confirm { background: var(--ink); color: var(--surface); font-weight: 600; }
-.work-stop-ask button:disabled { opacity: 0.6; cursor: default; }
-/* Narrow: the question takes its own line under the row. */
-@container (max-width: 380px) {
-  .work-row[data-asking] { grid-template-columns: minmax(0, 1fr); }
-  .work-row[data-asking] .work-stop-ask { justify-self: end; padding: 0 4px 8px; }
-  .work-stop > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-  .work-stop { padding: 0; width: 40px; justify-content: center; }
-}
-@media (pointer: coarse) { .work-stop, .work-stop-ask button { min-height: 44px; } }
+
+.work-empty { margin: 24px 4px; color: var(--muted); font-size: var(--t-subhead, 14px); }

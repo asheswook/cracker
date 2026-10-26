@@ -6,14 +6,6 @@
 .schedule-list .resource-item h3 { overflow-wrap: anywhere; }
 .schedule-list .schedule-next { margin-top: 12px; font-size: var(--t-footnote); }
 .schedule-list .schedule-error { color: var(--danger); }
-.schedule-history { margin-top: var(--s4); padding-top: var(--s3); border-top: 1px solid var(--line); }
-.schedule-history-heading, .schedule-history-meta { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--s2); }
-.schedule-history-heading h3 { margin: 0; font-size: var(--t-footnote); font-weight: 600; }
-.schedule-history-list { list-style: none; padding: 0; margin: var(--s2) 0; }
-.schedule-history-list > li { padding-block: var(--s3); }
-.schedule-history-meta { color: var(--muted); font-size: var(--t-footnote); line-height: 1.6; margin-bottom: var(--s1); }
-.schedule-history-meta time { min-width: 0; overflow-wrap: anywhere; }
-.schedule-history .button { min-height: 44px; }
 .schedules-panel > .work-filters { margin: 20px 0; }
 .schedule-objective-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; white-space: pre-wrap; line-height: 1.65; }
 .schedule-objective summary { list-style: none; cursor: pointer; border-radius: var(--s1); font-size: var(--t-subhead); font-weight: 500; }
@@ -86,3 +78,7 @@
   .schedule-detail { padding-left: 8px; }
 }
 @media (prefers-reduced-motion: reduce) { .schedule-main, .schedule-past summary, .schedule-chevron { transition: none; } }
+
+/* Quiet empty lines (no illustration, no instructions). */
+.schedule-empty { margin: 24px 4px; color: var(--muted); font-size: var(--t-subhead, 14px); }
+.schedules-v2 .schedule-detail { padding-top: 0; }

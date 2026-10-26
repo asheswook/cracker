@@ -18,7 +18,6 @@ import './message-time-reveal.css';
 import { feedItems } from './background-message';
 import type { BackgroundRun } from './background-message';
 import { BackgroundRunDialog } from './BackgroundRunDialog';
-import { OriginalAskLink } from './OriginalAsk';
 import { useConversationTopics } from './topics/useConversationTopics';
 import { TopicSheet } from './topics/TopicSheet';
 import './topics/topics.css';
@@ -174,7 +173,6 @@ export const MessageList = memo(function MessageList({
                     {item.preview && <span className="background-run-preview">{item.preview}</span>}
                     {item.at && <time dateTime={item.at}>{timeOf(item.at)}</time>}
                   </button>
-                  <OriginalAskLink className="run-ask" task={item.messages.find(message => message.task_id)?.task_id} />
                 </Motion.article>,
               ];
             }
@@ -212,10 +210,6 @@ export const MessageList = memo(function MessageList({
                   <MessageBubble role={m.role} content={m.content} />
                 )}
                 <Attachments items={m.attachments} />
-                {/* A delivered reminder or routine report: one tap back to what the user asked for. */}
-                {m.role === 'assistant' && m.task_id && (m.origin === 'schedule' || m.origin === 'responsibility') && (
-                  <OriginalAskLink className="message-ask" task={m.task_id} />
-                )}
                 <time className="message-time" dateTime={m.created_at}>
                   {timeOf(m.created_at)}
                 </time>
