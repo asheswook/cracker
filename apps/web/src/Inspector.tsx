@@ -66,7 +66,11 @@ export function Inspector({
             )}
             {panel === 'schedules' && <SchedulesPanel state={state} onSource={onSource} />}
             {panel === 'memory' && <MemoryPanel />}
-            {panel === 'attention' && <AttentionPanel onOpen={(conversation, message) => { if (message) void onSource(Id.parse(conversation), Id.parse(message)); }} />}
+            {panel === 'attention' && <AttentionPanel onOpen={(conversation, message, task) => {
+              // A task row opens through its navigation (a run that failed before writing anything opens at its ask).
+              if (task) void onTask({ id: Id.parse(task), conversation_id: Id.parse(conversation) } as Task, undefined, 'reply');
+              else if (message) void onSource(Id.parse(conversation), Id.parse(message));
+            }} />}
           </Motion.div>
         </AnimatePresence>
       </div>

@@ -95,8 +95,9 @@ export const updateFeedItemTool: Tool = {
   type: "function",
   name: "update_feed_item",
   description:
-    "Change one watched mail/Slack item from the user's 피드 when the user says so: due_at moves its date (ISO with offset), blocked records why it is stuck (null clears it), " +
-    "done=true closes it as handled by the user, dismiss=true closes it as not needed. Find the item with read_attention (needs_you items with id 'mail:<uuid>'; pass the uuid). " +
+    "Change one watched mail/Slack item from the user's 피드 when the user says so. due_at: the new date (ISO with offset), or null to keep it. blocked: why it is stuck, or null to keep it. " +
+    "clear_blocked=true says it is no longer stuck. done=true closes it as handled by the user; dismiss=true closes it as not needed. Unused booleans are false. " +
+    "item_id: the item's id from read_attention, as given ('mail:<uuid>' or the uuid). A refused call changed nothing; fix it and call again. " +
     "Use only for what the user just said; quote their words in source_quote. Set only the fields they asked to change (others null). If more than one item could be meant, ask which.",
   strict: true,
   parameters: { type: "object", properties: {

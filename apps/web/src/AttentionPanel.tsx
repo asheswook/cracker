@@ -121,7 +121,7 @@ function Avatar({ item }: { readonly item: Item }) {
  * business, and anything worth saying arrives as a message. A mail row opens its thread with the reply bar and one
  * action; an unconfirmed reply opens its two answers; anything else returns to that point in the conversation.
  */
-export function AttentionPanel({ onOpen }: { readonly onOpen: (conversation: string, message: string | null) => void }) {
+export function AttentionPanel({ onOpen }: { readonly onOpen: (conversation: string, message: string | null, task?: string) => void }) {
   const { data, error } = useAttention();
   const [expanded, setExpanded] = useState<string | null>(null);
   const [allPinned, setAllPinned] = useState(false);
@@ -162,7 +162,7 @@ export function AttentionPanel({ onOpen }: { readonly onOpen: (conversation: str
   if (!brief && !needs.length && !timeline.length) return <p className="feed-empty">아직 소식이 없어요.</p>;
 
   const expandable = (item: Item) => item.kind === 'mail' || (item.kind === 'send' && item.state === 'needs_user' && !!item.send_task_id) || (item.kind === 'watch' && item.state === 'needs_user');
-  const tap = (item: Item) => expandable(item) ? setExpanded(e => e === item.id ? null : item.id) : onOpen(item.conversation_id, item.message_id);
+  const tap = (item: Item) => expandable(item) ? setExpanded(e => e === item.id ? null : item.id) : onOpen(item.conversation_id, item.message_id, item.kind === 'task' ? item.id.slice(5) : undefined);
 
   const row = (item: Item, tone: 'needs' | 'flow') => {
     const headId = `feed-h-${item.id}`;

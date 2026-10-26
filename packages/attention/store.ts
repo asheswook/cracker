@@ -70,7 +70,7 @@ export async function attention(sql: Query, workspace: string, options: { readon
               OR (c.state IN ('resolved','failed') AND c.updated_at>${since}))
         AND coalesce(t.objective,'') !~* '^\s*QA' AND NOT EXISTS(SELECT 1 FROM assistant.attention_source_drafts d WHERE d.card_message_id=m.id) ORDER BY m.created_at DESC LIMIT 100`,
     sql`SELECT t.id,t.conversation_id,t.objective,t.title AS task_title,t.state,t.reason,t.lane,t.origin,t.updated_at,
-        EXISTS(SELECT 1 FROM assistant.attention_source_runs x WHERE x.task_id=t.id UNION ALL SELECT 1 FROM assistant.attention_source_drafts x WHERE x.task_id=t.id UNION ALL SELECT 1 FROM assistant.attention_source_sends x WHERE x.task_id=t.id) AS internal,
+        EXISTS(SELECT 1 FROM assistant.attention_source_sends x WHERE x.task_id=t.id UNION ALL SELECT 1 FROM assistant.attention_source_check_tasks x WHERE x.task_id=t.id) AS internal,
         (SELECT m.id FROM assistant.messages m WHERE m.task_id=t.id AND m.workspace_id=t.workspace_id AND NOT m.hidden ORDER BY m.sequence LIMIT 1) AS first_message,
         COALESCE(
           (SELECT n.title FROM assistant.messages u JOIN assistant.knowledge_node_members k ON k.workspace_id=u.workspace_id AND k.user_message_id=u.id AND k.role='owner'
