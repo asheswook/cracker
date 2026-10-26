@@ -133,7 +133,7 @@ function SheetBody({ artifact, kind }: { artifact: Artifact; kind: ArtifactKind 
   const blobType = kind === 'pdf' ? 'application/pdf' : artifact.media_type;
   const blob = useArtifactBlobUrl(artifact, blobType, kind === 'image' || kind === 'pdf');
   const state = isText ? text.status : blob.status;
-  if (state === 'error') return <SheetMessage artifact={artifact}>{PREVIEW_ERROR}</SheetMessage>;
+  if (state === 'error') return <SheetMessage>{PREVIEW_ERROR}</SheetMessage>;
   if (isText && text.status === 'ready') {
     const { text: body, complete } = text.value;
     if (kind === 'csv') {
@@ -165,15 +165,9 @@ function SheetBody({ artifact, kind }: { artifact: Artifact; kind: ArtifactKind 
   return <div className="artifact-sheet-loading" role="status">불러오는 중…</div>;
 }
 
-function SheetMessage({ artifact, children }: { artifact: Artifact; children: ReactNode }) {
-  return (
-    <div className="artifact-sheet-message" role="status">
-      <p>{children}</p>
-      <a className="artifact-action" href={contentPath(artifact)} download={artifact.name}>
-        <Download size={15} aria-hidden /> 다운로드
-      </a>
-    </div>
-  );
+/** The viewer's own message (the header keeps the one download). */
+function SheetMessage({ children }: { children: ReactNode }) {
+  return <div className="artifact-sheet-message" role="status"><p>{children}</p></div>;
 }
 
 function ArtifactSheet({ artifact, kind, onClose }: { artifact: Artifact; kind: ArtifactKind; onClose: () => void }) {

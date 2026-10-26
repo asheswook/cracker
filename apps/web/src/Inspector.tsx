@@ -1,13 +1,10 @@
-import { useLayoutEffect, useState } from 'react';
 import { AnimatePresence, m as Motion } from 'motion/react';
 import type { Panel } from './AssistantNav';
 import { useClient } from './store';
-import { ErrorNotice } from './primitives';
 import { InspectorHeader } from './InspectorHeader';
 import { SchedulesPanel } from './SchedulesPanel';
 import { Computer } from './Computer';
 import { Settings } from './settings/Settings';
-import { errorMessage } from './api';
 import { Id } from './types';
 import type { Task } from './types';
 import { WorkPanel } from './WorkPanel';
@@ -37,10 +34,6 @@ export function Inspector({
   onArchive: (id: Id) => void;
   embedded?: boolean;
 }) {
-  const [error, setError] = useState('');
-  useLayoutEffect(() => {
-    setError('');
-  }, [panel]);
   return (
     <>
       {!embedded && <InspectorHeader panel={panel} onClose={onClose} />}
@@ -53,7 +46,6 @@ export function Inspector({
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15, ease: [0.23, 1, 0.32, 1] }}
           >
-            {error && <ErrorNotice>{error}</ErrorNotice>}
             {panel === 'settings' && <Settings vms={state.vms} connected={state.connected} onComputer={onComputer} />}
             {panel === 'computer' && <Computer vms={state.vms} connected={state.connected} />}{' '}
             {panel === 'tasks' && (
@@ -72,7 +64,7 @@ export function Inspector({
                 onOpen={onArchive}
               />
             )}
-            {panel === 'schedules' && <SchedulesPanel state={state} onTask={task => { void onTask(task).catch(error => setError(errorMessage(error))); }} onSource={onSource} />}
+            {panel === 'schedules' && <SchedulesPanel state={state} onSource={onSource} />}
             {panel === 'memory' && <MemoryPanel />}
             {panel === 'attention' && <AttentionPanel onOpen={(conversation, message) => { if (message) void onSource(Id.parse(conversation), Id.parse(message)); }} />}
           </Motion.div>

@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { z } from 'zod';
-import { CalendarClock, ChevronDown, Repeat2 } from 'lucide-react';
+import { CalendarClock, Repeat2 } from 'lucide-react';
 import { errorMessage, read } from './api';
-import { client, useClient } from './store';
-import { Button, ErrorNotice } from './primitives';
+import type { useClient } from './store';
+import { ErrorNotice } from './primitives';
+import { WorkNavigationError } from './WorkOpenAction';
 import { Id, Task } from './types';
 import { scheduleTitle, spokenTime, whenLabel } from './schedule-labels';
-import { OriginalAskLink } from './OriginalAsk';
 import './schedules.css';
 import { LoadingSkeleton } from './LoadingSkeleton';
 
@@ -40,23 +40,57 @@ function triggerLabel(trigger: z.infer<typeof Responsibility>['trigger']) {
     case 'periodic': return trigger.interval_minutes % 1440 === 0 ? `${trigger.interval_minutes / 1440}일마다` : trigger.interval_minutes % 60 === 0 ? `${trigger.interval_minutes / 60}시간마다` : `${trigger.interval_minutes}분마다`;
   }
 }
+/** Where the list was scrolled when the user left for a conversation, so coming back to 예약 lands in the same place. */
+const memory = { scrollTop: 0 };
+
 /**
- * What was open, and where the list was scrolled, when the user left for a conversation ("원래 부탁 보기"), so coming back to 예약 lands in the same place. Lives for the page session, like work navigation.
+ * One row: what it is and when it happens. Tapping it goes back to where the user asked for it (if that message is
+ * known). Changing or stopping it is said to the assistant in words, not done with buttons here.
  */
-const memory = { open: null as string | null, scrollTop: 0 };
+function ScheduleRow({ icon: Icon, title, when, note, conversation, message, onSource }: {
+  readonly icon: typeof Repeat2;
+  readonly title: string;
+  readonly when: React.ReactNode;
+  readonly note: string | null;
+  readonly conversation: string | null | undefined;
+  readonly message: string | null | undefined;
+  readonly onSource: ((conversation: Id, message: Id) => Promise<void> | void) | undefined;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const target = onSource && conversation && message ? { conversation: Id.parse(conversation), message: Id.parse(message) } : null;
+  const go = async () => {
+    if (!target || !onSource) return;
+    setBusy(true); setError('');
+    try { await onSource(target.conversation, target.message); }
+    catch (e) { if (mounted.current) setError(e instanceof WorkNavigationError ? e.message : errorMessage(e)); }
+    finally { if (mounted.current) setBusy(false); }
+  };
+  const content = <>
+    <span className="schedule-mark" aria-hidden="true"><Icon size={16} strokeWidth={1.9} /></span>
+    <span className="schedule-text">
+      <span className="schedule-title">{title}</span>
+      <span className="schedule-when">{when}</span>
+      {note && <span className="schedule-failed">{note}</span>}
+    </span>
+  </>;
+  return <li className="schedule-row">
+    {target
+      ? <button type="button" className="schedule-main" onClick={() => void go()} aria-busy={busy || undefined} aria-description="원래 부탁 보기">{content}</button>
+      : <div className="schedule-main" data-static="">{content}</div>}
+    {error && <p className="schedule-error" role="alert">{error}</p>}
+  </li>;
+}
 
 export function SchedulesPanel({ state, onSource }: {
-  state: ReturnType<typeof useClient>; onTask: (task: Task) => void;
+  state: ReturnType<typeof useClient>;
   onSource?: ((conversation: Id, message: Id) => Promise<void> | void) | undefined;
 }) {
   const [items, setItems] = useState<z.infer<typeof Responsibility>[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState('');
-  const [actionError, setActionError] = useState('');
-  const [refresh, setRefresh] = useState(0);
-  const [open, setOpenState] = useState<string | null>(memory.open);
-  const [busy, setBusy] = useState<string | null>(null);
-  const setOpen = (next: (value: string | null) => string | null) => setOpenState(value => (memory.open = next(value)));
   const section = useRef<HTMLElement>(null);
   // Scroll is restored once the list is there (the first load is async), then followed while reading.
   const restored = useRef(false);
@@ -82,15 +116,7 @@ export function SchedulesPanel({ state, onSource }: {
     };
     void load();
     return () => { active = false; clearTimeout(timer); };
-  }, [refresh]);
-  const cancel = async (id: string, resource: 'responsibilities' | 'schedules') => {
-    setBusy(id); setActionError('');
-    try {
-      await client.action(`/v1/${resource}/${id}`, {}, 'delete');
-      setRefresh(value => value + 1);
-    } catch (error) { setActionError(errorMessage(error)); }
-    finally { setBusy(null); }
-  };
+  }, []);
   useLayoutEffect(() => {
     const owner = section.current?.closest('.inspector-body');
     if (!loaded || restored.current || !(owner instanceof HTMLElement)) return;
@@ -99,52 +125,23 @@ export function SchedulesPanel({ state, onSource }: {
     const frame = requestAnimationFrame(() => { owner.scrollTop = memory.scrollTop; });
     return () => cancelAnimationFrame(frame);
   }, [loaded]);
-  type Routine = z.infer<typeof Responsibility>;
   // Only what is still ahead. Finished and cancelled ones are gone; their results live in the conversation.
   const routines = items.filter(item => item.state === 'active');
   const upcoming = state.schedules.filter(item => item.status === 'pending').sort((a, b) => Date.parse(a.due_at) - Date.parse(b.due_at));
-  const toggle = (id: string) => setOpen(value => (value === id ? null : id));
-
-  // A row says what it is and when it happens next. Opened, it offers the one thing worth doing: stop it
-  // (and a way back to where it was asked for).
-  const row = (id: string, icon: typeof Repeat2, title: string, when: React.ReactNode, note: string | null, actions: React.ReactNode) => {
-    const Icon = icon;
-    const expanded = open === id;
-    return <li className="schedule-row" key={id} data-open={expanded || undefined}>
-      <button type="button" className="schedule-main" aria-expanded={expanded} onClick={() => toggle(id)}>
-        <span className="schedule-mark" aria-hidden="true"><Icon size={16} strokeWidth={1.9} /></span>
-        <span className="schedule-text">
-          <span className="schedule-title">{title}</span>
-          <span className="schedule-when">{when}</span>
-          {note && <span className="schedule-failed">{note}</span>}
-        </span>
-        <ChevronDown size={16} aria-hidden="true" className="schedule-chevron" />
-      </button>
-      {expanded && <div className="schedule-detail"><div className="schedule-actions">{actions}</div></div>}
-    </li>;
-  };
-  const routineRow = (item: Routine) => {
-    const trigger = item.trigger;
-    const failed = item.last_action?.task?.state === 'failed';
-    return row(item.id, Repeat2, scheduleTitle(item),
-      // The rule says when ("매일 낮 12:00", "기한 내일 18:00까지"); the next run is never a mystery worth a line.
-      <>{triggerLabel(trigger)}</>,
-      failed ? '지난번엔 못 했어요' : null,
-      <>
-        <OriginalAskLink conversation={item.conversation_id} message={item.source_message_id} onOpen={onSource} />
-        <Button className="schedule-stop" busy={busy === item.id} onClick={() => void cancel(item.id, 'responsibilities')}>그만하기</Button>
-      </>);
-  };
-  const onceRow = (item: (typeof state.schedules)[number]) => row(item.id, CalendarClock, scheduleTitle(item),
-    <><time dateTime={item.due_at}>{whenLabel(item.due_at, item.timezone)}</time>{zoneSuffix(item.timezone)}</>, null,
-    <>
-      <OriginalAskLink conversation={item.conversation_id} message={item.source_message_id} onOpen={onSource} />
-      <Button className="schedule-stop" busy={busy === item.id} onClick={() => void cancel(item.id, 'schedules')}>취소하기</Button>
-    </>);
+  const routineRow = (item: z.infer<typeof Responsibility>) => (
+    // The rule says when ("매일 낮 12:00", "기한 내일 18:00까지"); the next run is never a mystery worth a line.
+    <ScheduleRow key={item.id} icon={Repeat2} title={scheduleTitle(item)} when={triggerLabel(item.trigger)}
+      note={item.last_action?.task?.state === 'failed' ? '지난번엔 못 했어요' : null}
+      conversation={item.conversation_id} message={item.source_message_id} onSource={onSource} />
+  );
+  const onceRow = (item: (typeof state.schedules)[number]) => (
+    <ScheduleRow key={item.id} icon={CalendarClock} title={scheduleTitle(item)}
+      when={<><time dateTime={item.due_at}>{whenLabel(item.due_at, item.timezone)}</time>{zoneSuffix(item.timezone)}</>} note={null}
+      conversation={item.conversation_id} message={item.source_message_id} onSource={onSource} />
+  );
 
   return (
     <section className="schedules-panel schedules-v2" aria-label="예약된 일" ref={section}>
-      {actionError && <ErrorNotice>{actionError}</ErrorNotice>}
       {loadError && <ErrorNotice>{loadError}</ErrorNotice>}
       {!loaded && !loadError && <LoadingSkeleton layout="cards" label="불러오는 중…" />}
       {loaded && !routines.length && !upcoming.length && <p className="schedule-empty">예약된 일이 없어요.</p>}
