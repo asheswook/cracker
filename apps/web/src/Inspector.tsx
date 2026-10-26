@@ -72,7 +72,7 @@ export function Inspector({
                 onOpen={onArchive}
               />
             )}
-            {panel === 'schedules' && <SchedulesPanel state={state} onTask={task => { void onTask(task).catch(error => setError(errorMessage(error))); }} />}
+            {panel === 'schedules' && <SchedulesPanel state={state} onTask={task => { void onTask(task).catch(error => setError(errorMessage(error))); }} onSource={onSource} />}
             {panel === 'memory' && <MemoryPanel />}
             {panel === 'attention' && <AttentionPanel onOpen={(conversation, message) => { if (message) void onSource(Id.parse(conversation), Id.parse(message)); }} />}
           </Motion.div>

@@ -1,69 +1,18 @@
 import { DraftAttachmentsView } from './DraftAttachmentsView';
 import type { DraftAttachmentView } from './DraftAttachmentsView';
-import { useEffect, useRef, useState, type RefObject } from 'react';
-import { Download, File, Plus } from 'lucide-react';
-import { http } from './api';
+import { useRef, type RefObject } from 'react';
+import { Plus } from 'lucide-react';
+import { ArtifactCard } from './ArtifactCard';
 import { client } from './store';
 import type { Artifact } from './types';
 import { addFiles, removeDrafts, uploadDraft } from './attachmentDrafts';
 import type { UploadDraft } from './attachmentDrafts';
 import { IconButton } from './primitives';
-const raster = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
-function Attachment({ artifact }: { artifact: Artifact }) {
-  const [source, setSource] = useState('');
-  const [error, setError] = useState('');
-  useEffect(() => {
-    if (artifact.state !== 'ready' || !raster.has(artifact.media_type)) return;
-    const abort = new AbortController();
-    let url = '';
-    void http
-      .get(`/v1/artifacts/${artifact.id}/content`, { signal: abort.signal })
-      .blob()
-      .then((blob) => {
-        if (abort.signal.aborted) return;
-        url = URL.createObjectURL(new Blob([blob], { type: artifact.media_type }));
-        setSource(url);
-      })
-      .catch(() => {
-        if (!abort.signal.aborted) setError('미리보기를 불러오지 못했어요.');
-      });
-    return () => {
-      abort.abort();
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [artifact.id, artifact.media_type, artifact.state]);
-  if (artifact.state === 'deleted')
-    return <span className="attachment-deleted">삭제된 파일 · {artifact.name}</span>;
-  return (
-    <div className="attachment-card">
-      {source && (
-        <img
-          className="attachment-preview"
-          src={source}
-          alt={artifact.name}
-          onError={() => {
-            setSource('');
-            setError('이미지를 표시할 수 없어요.');
-          }}
-        />
-      )}
-      <a href={`/v1/artifacts/${artifact.id}/content`} download={artifact.name}>
-        <File size={16} />
-        <span>
-          {artifact.name}
-          <small>{Math.ceil(artifact.bytes / 1024)} KB</small>
-        </span>
-        <Download size={15} />
-      </a>
-      {error && <small role="status">{error}</small>}
-    </div>
-  );
-}
 export function Attachments({ items }: { items: Artifact[] | undefined }) {
   return items?.length ? (
     <div className="attachments">
       {items.map((item) => (
-        <Attachment key={item.id} artifact={item} />
+        <ArtifactCard key={item.id} artifact={item} />
       ))}
     </div>
   ) : null;

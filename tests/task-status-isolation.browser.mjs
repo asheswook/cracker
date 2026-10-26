@@ -70,10 +70,17 @@ try {
     }
     assert.equal((await(await fetch(origin+'/fixture/state')).json()).actionRequests,0);
   });
-  await scenario('work-panel-has-no-stop-controls', async () => {
+  await scenario('work-panel-stop-needs-two-taps', async () => {
     // One row per task, each row is its one open action: at the answer when it succeeded, else at the request.
     assert.equal(await page.locator('#work .work-row').count(),6);
     assert.equal((await state()).workStops,0);
+    // 멈추기 only on work still going on (running, queued, waiting, unknown); the first tap only asks.
+    assert.equal(await page.locator('#work .work-stop').count(),4);
+    await page.locator('#work .work-stop').first().click();
+    assert.equal(await page.locator('#work .work-stop-ask').count(),1,'First tap asks 멈출까요?');
+    assert.equal((await(await fetch(origin+'/fixture/state')).json()).actionRequests,0,'Nothing is stopped on the first tap');
+    await page.locator('#work .work-stop-cancel').click();
+    assert.equal(await page.locator('#work .work-stop-ask').count(),0);
     assert.equal(await page.locator('#work .work-row .work-main').count(),6,'Every task stays openable');
     const labels = await page.locator('#work .work-row .work-main').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('aria-label')));
     assert.equal(labels.filter(label=>label.endsWith('답변 열기')).length,1,'Only the succeeded task opens its answer');

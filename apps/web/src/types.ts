@@ -82,6 +82,8 @@ export const Schedule = z.object({
   conversation_id: Id,
   objective: z.string(),
   title: z.string().nullable().optional(),
+  /** The user's message that asked for this reminder ("원래 부탁 보기"). */
+  source_message_id: Id.nullable().optional(),
   due_at: z.string(),
   timezone: z.string(),
   status: z.string(),

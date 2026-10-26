@@ -124,7 +124,11 @@ export function clientRoutes(sql: Database) {
     const rows = await sql`
       SELECT t.id AS task_id,t.conversation_id,
         (SELECT m.id FROM assistant.messages m WHERE m.workspace_id=t.workspace_id AND m.conversation_id=t.conversation_id AND m.task_id=t.id AND m.role IN ('user','system') ORDER BY m.sequence LIMIT 1) AS request_message_id,
-        (SELECT m.id FROM assistant.messages m WHERE m.workspace_id=t.workspace_id AND m.conversation_id=t.conversation_id AND m.task_id=t.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1) AS reply_message_id
+        (SELECT m.id FROM assistant.messages m WHERE m.workspace_id=t.workspace_id AND m.conversation_id=t.conversation_id AND m.task_id=t.id AND m.role='assistant' ORDER BY m.sequence DESC LIMIT 1) AS reply_message_id,
+        -- The original ask behind a scheduled or routine run (a reminder's or a routine's source message).
+        (SELECT jsonb_build_object('conversation_id',u.conversation_id,'message_id',u.id) FROM assistant.messages u WHERE u.workspace_id=t.workspace_id AND u.id=coalesce(
+          (SELECT s.source_message_id FROM assistant.messages w JOIN assistant.schedules s ON s.workspace_id=w.workspace_id AND s.id::text=w.client_message_id::text WHERE w.workspace_id=t.workspace_id AND w.task_id=t.id LIMIT 1),
+          (SELECT r.source_message_id FROM assistant.responsibility_actions a JOIN assistant.responsibilities r ON r.id=a.responsibility_id WHERE a.task_id=t.id LIMIT 1))) AS source
       FROM assistant.tasks t WHERE t.workspace_id=${workspace} AND t.id=${id}`;
     if (!rows[0]) throw new DomainError("not_found", "Task not found", 404);
     c.header("Cache-Control", "no-store");

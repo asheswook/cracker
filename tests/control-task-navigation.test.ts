@@ -28,7 +28,7 @@ for (const role of ["user", "system"] as const) {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(TaskNavigation.parse(await response.json())).toEqual({
       task_id: initial.task.id, conversation_id: initial.task.conversation_id,
-      request_message_id: initial.message.id, reply_message_id: reply,
+      request_message_id: initial.message.id, reply_message_id: reply, source: null,
     });
   });
 }
@@ -47,7 +47,7 @@ test("navigation resolves exact source identities over real HTTP", async () => {
     expect(response.status).toBe(200);
     expect(navigation).toEqual({
       task_id: initial.task.id, conversation_id: initial.task.conversation_id,
-      request_message_id: initial.message.id, reply_message_id: null,
+      request_message_id: initial.message.id, reply_message_id: null, source: null,
     });
     console.log(JSON.stringify({ scenario: "task_navigation_http", status: response.status, navigation }));
   } finally {
@@ -65,7 +65,7 @@ test("navigation returns null targets when task has no messages", async () => {
   // Then neither target falls back to another task.
   expect(response.status).toBe(200);
   expect(TaskNavigation.parse(await response.json())).toEqual({
-    task_id: task, conversation_id: conversation.id, request_message_id: null, reply_message_id: null,
+    task_id: task, conversation_id: conversation.id, request_message_id: null, reply_message_id: null, source: null,
   });
 });
 
@@ -78,8 +78,21 @@ test("navigation preserves request-only tasks without inventing a reply", async 
   expect(response.status).toBe(200);
   expect(TaskNavigation.parse(await response.json())).toEqual({
     task_id: initial.task.id, conversation_id: initial.task.conversation_id,
-    request_message_id: initial.message.id, reply_message_id: null,
+    request_message_id: initial.message.id, reply_message_id: null, source: null,
   });
+});
+
+test("a scheduled run leads back to the message that asked for it, not at its own wake message", async () => {
+  // Given a reminder asked for earlier and delivered later as its own run.
+  const asked = await newTask(), there = { id: asked.task.conversation_id }, schedule = crypto.randomUUID(), task = crypto.randomUUID();
+  await sql`INSERT INTO assistant.schedules(id,workspace_id,conversation_id,objective,due_at,timezone,client_schedule_id,source_message_id,source_quote,status,title)
+    VALUES(${schedule},${workspace},${there.id},'약국 가기',now(),'Asia/Seoul',${crypto.randomUUID()},${asked.message.id},'약국 가야된다고 알려줘','delivered','약국 가기 알림')`;
+  await sql`INSERT INTO assistant.tasks(id,workspace_id,conversation_id,objective,origin,lane) VALUES(${task},${workspace},${there.id},'약국 가기','schedule','background')`;
+  await sql`INSERT INTO assistant.messages(workspace_id,conversation_id,task_id,role,content,client_message_id,origin,hidden) VALUES(${workspace},${there.id},${task},'system','약국 가기',${schedule},'schedule',true)`;
+  // When its navigation is read.
+  const response = await request(`/v1/tasks/${task}/navigation`);
+  // Then the original ask is named exactly.
+  expect(TaskNavigation.parse(await response.json()).source).toEqual({ conversation_id: asked.task.conversation_id, message_id: asked.message.id });
 });
 
 test("navigation includes attachment-only assistant replies", async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import { ArrowUpRight, CalendarClock, CalendarDays, ChevronDown, ChevronRight, History, Plus, Repeat2 } from 'lucide-react';
 import { errorMessage, read } from './api';
@@ -9,11 +9,13 @@ import { ScheduleObjective } from './ScheduleObjective';
 import { ScheduleHistory } from './ScheduleHistory';
 import { Id, Task } from './types';
 import { lastRunLabel, scheduleTitle, spokenTime, whenLabel } from './schedule-labels';
+import { OriginalAskLink, SourceNavigation } from './OriginalAsk';
 import './schedules.css';
 import { LoadingSkeleton } from './LoadingSkeleton';
 
 const Responsibility = z.object({
-  id: Id, objective: z.string(), title: z.string().nullable().optional(), state: z.enum(['active', 'complete', 'cancelled']),
+  id: Id, objective: z.string(), title: z.string().nullable().optional(),
+  conversation_id: Id.optional(), source_message_id: Id.nullable().optional(), state: z.enum(['active', 'complete', 'cancelled']),
   trigger: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('daily'), hour: z.number(), minute: z.number(), timezone: z.string() }),
     z.object({ kind: z.literal('periodic'), interval_minutes: z.number() }),
@@ -46,8 +48,15 @@ function triggerLabel(trigger: z.infer<typeof Responsibility>['trigger']) {
     case 'periodic': return trigger.interval_minutes % 1440 === 0 ? `${trigger.interval_minutes / 1440}일마다` : trigger.interval_minutes % 60 === 0 ? `${trigger.interval_minutes / 60}시간마다` : `${trigger.interval_minutes}분마다`;
   }
 }
-export function SchedulesPanel({ state, onTask }: {
+/**
+ * What was open, and where the list was scrolled, when the user left for a conversation ("원래 부탁 보기",
+ * "최근 실행 보기"), so coming back to 예약 lands in the same place. Lives for the page session, like work navigation.
+ */
+const memory = { open: null as string | null, history: null as string | null, scrollTop: 0 };
+
+export function SchedulesPanel({ state, onTask, onSource }: {
   state: ReturnType<typeof useClient>; onTask: (task: Task) => void;
+  onSource?: ((conversation: Id, message: Id) => Promise<void> | void) | undefined;
 }) {
   const [items, setItems] = useState<z.infer<typeof Responsibility>[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -55,9 +64,21 @@ export function SchedulesPanel({ state, onTask }: {
   const [actionError, setActionError] = useState('');
   const [refresh, setRefresh] = useState(0);
   const [scheduling, setScheduling] = useState(false);
-  const [open, setOpen] = useState<string | null>(null);
+  const [open, setOpenState] = useState<string | null>(memory.open);
   const [busy, setBusy] = useState<string | null>(null);
-  const [history, setHistory] = useState<string | null>(null);
+  const [history, setHistoryState] = useState<string | null>(memory.history);
+  const setOpen = (next: (value: string | null) => string | null) => setOpenState(value => (memory.open = next(value)));
+  const setHistory = (next: (value: string | null) => string | null) => setHistoryState(value => (memory.history = next(value)));
+  const section = useRef<HTMLElement>(null);
+  // Scroll is restored once the list is there (the first load is async), then followed while reading.
+  const restored = useRef(false);
+  useLayoutEffect(() => {
+    const owner = section.current?.closest('.inspector-body');
+    if (!(owner instanceof HTMLElement)) return;
+    const save = () => { if (restored.current) memory.scrollTop = owner.scrollTop; };
+    owner.addEventListener('scroll', save, { passive: true });
+    return () => owner.removeEventListener('scroll', save);
+  }, []);
   useEffect(() => {
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
@@ -82,6 +103,15 @@ export function SchedulesPanel({ state, onTask }: {
     } catch (error) { setActionError(errorMessage(error)); }
     finally { setBusy(null); }
   };
+  useLayoutEffect(() => {
+    const owner = section.current?.closest('.inspector-body');
+    if (!loaded || restored.current || !(owner instanceof HTMLElement)) return;
+    restored.current = true;
+    owner.scrollTop = memory.scrollTop;
+    const frame = requestAnimationFrame(() => { owner.scrollTop = memory.scrollTop; });
+    return () => cancelAnimationFrame(frame);
+  }, [loaded]);
+  const openSource = onSource ? async (conversation: Id, message: Id) => { await onSource(conversation, message); } : null;
   type Routine = z.infer<typeof Responsibility>;
   const routines = items.filter(item => item.state === 'active');
   const upcoming = state.schedules.filter(item => item.status === 'pending').sort((a, b) => Date.parse(a.due_at) - Date.parse(b.due_at));
@@ -119,6 +149,7 @@ export function SchedulesPanel({ state, onTask }: {
         {skillNote(item)}
         <div className="schedule-actions">
           {task && <button type="button" onClick={() => onTask(task)}><ArrowUpRight size={14} aria-hidden="true" />최근 실행 보기</button>}
+          <OriginalAskLink conversation={item.conversation_id} message={item.source_message_id} />
           <button type="button" aria-expanded={history === item.id} aria-controls={`schedule-history-${item.id}`} onClick={() => setHistory(value => value === item.id ? null : item.id)}><History size={14} aria-hidden="true" />{history === item.id ? '실행 기록 접기' : '실행 기록'}</button>
           {item.state === 'active' && <Button className="schedule-stop" busy={busy === item.id} onClick={() => void cancel(item.id, 'responsibilities')}>그만하기</Button>}
         </div>
@@ -145,6 +176,7 @@ export function SchedulesPanel({ state, onTask }: {
         {skillNote(item)}
         <div className="schedule-actions">
           {item.task && <button type="button" onClick={() => { if (item.task) onTask(item.task); }}><ArrowUpRight size={14} aria-hidden="true" />실행 보기</button>}
+          <OriginalAskLink conversation={item.conversation_id} message={item.source_message_id} />
           {item.status === 'pending' && <Button className="schedule-stop" busy={busy === item.id} onClick={() => void cancel(item.id, 'schedules')}>예약 취소</Button>}
         </div>
       </div>}
@@ -152,7 +184,8 @@ export function SchedulesPanel({ state, onTask }: {
   };
 
   return (
-    <section className="schedules-panel schedules-v2" aria-label="예약된 일">
+    <SourceNavigation.Provider value={openSource}>
+    <section className="schedules-panel schedules-v2" aria-label="예약된 일" ref={section}>
       <div className="schedule-toolbar">
         <IconButton label="예약 추가" aria-expanded={scheduling} onClick={() => setScheduling(value => !value)}><Plus size={18} /></IconButton>
       </div>
@@ -182,5 +215,6 @@ export function SchedulesPanel({ state, onTask }: {
         </details>}
       </>}
     </section>
+    </SourceNavigation.Provider>
   );
 }

@@ -6,6 +6,7 @@ import { Attachments } from './Attachments';
 import { MessageBubble } from './MessageBubble';
 import { systemMessageContent } from './system-message';
 import { IconButton } from './primitives';
+import { OriginalAskLink } from './OriginalAsk';
 import './background-run.css';
 
 const stamp = new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'short', hour: 'numeric', minute: '2-digit' });
@@ -63,6 +64,7 @@ export function BackgroundRunDialog({ run, onClose }: { readonly run: Background
           );
         })}
         {!run.messages.some(message => message.role !== 'system') && <p className="background-run-note">아직 결과가 없어요.</p>}
+        <OriginalAskLink className="dialog-ask" task={run.messages.find(message => message.task_id)?.task_id} onOpened={onClose} />
       </div>
     </dialog>
   );

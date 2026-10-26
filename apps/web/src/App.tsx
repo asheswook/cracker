@@ -35,6 +35,7 @@ import { useWorkNavigation } from './useWorkNavigation';
 import { assistantActivity, useAssistantWorking } from './useAssistantWorking';
 import { nativeShellConfiguration, listenNativeShell, publishNativeShell, openInNativeBody, requestNativePanel } from './native-bridge';
 import { taskTarget } from './useWorkNavigation';
+import { SourceNavigation } from './OriginalAsk';
 import './assistant.css';
 import './messenger.css';
 import './inspector-motion.css';
@@ -284,6 +285,7 @@ export function App() {
   );
 
   return (
+    <SourceNavigation.Provider value={openSource}>
     <HeaderTimeContext.Provider value={independentHeader.registerTime}>
     <ScreenSessionProvider workspace={state.workspace} vmId={state.vms[0]?.id} connected={state.connected}
       visible={panel === 'computer' && !menu} controlAllowed={state.vms[0]?.control_state === 'user' && !state.control[state.vms[0].id]}>
@@ -337,6 +339,7 @@ export function App() {
           background={state.background}
           onOpenTasks={() => selectPanel('tasks')}
           tasks={state.tasks}
+          working={!archive && assistantWorking}
         />
       </main>
       {pages && (panel || more) && (
@@ -400,5 +403,6 @@ export function App() {
     </div>
     </ScreenSessionProvider>
     </HeaderTimeContext.Provider>
+    </SourceNavigation.Provider>
   );
 }

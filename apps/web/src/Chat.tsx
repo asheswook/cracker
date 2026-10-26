@@ -9,7 +9,9 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { useReducedMotion } from './useReducedMotion';
 import { newTailMessageKeys } from './messageArrivals';
 import type { MessageArrivalSnapshot } from './messageArrivals';
-import { ArrowUp } from 'lucide-react';
+import { ArrowUp, Square } from 'lucide-react';
+import { stoppable, useStopConfirm } from './task-stop';
+import './composer-stop.css';
 import { LatestButton } from './LatestButton';
 import { useComposerPaste } from './useComposerPaste';
 import { AttachmentPicker, DraftAttachments, draftAttachmentViews } from './Attachments';
@@ -48,6 +50,7 @@ export const Chat = memo(function Chat({
   timeControlRoot = null,
   background,
   onOpenTasks,
+  working = false,
 }: {
   messages: Message[];
   syncedCursor: number | null;
@@ -68,6 +71,8 @@ export const Chat = memo(function Chat({
   background?: ComponentProps<typeof BackgroundWork>['background'];
   onOpenTasks?: () => void;
   tasks?: readonly Task[];
+  /** The assistant is working on a request in this conversation: an empty composer offers 멈추기 instead of 보내기. */
+  working?: boolean;
 }) {
   const workspace = client.snapshot().workspace;
   const objectives = useMemo(() => new Map((tasks ?? []).map(item => [item.id, item.objective])), [tasks]);
@@ -93,6 +98,9 @@ export const Chat = memo(function Chat({
   const { paste, drop, dragging } = useComposerPaste(savedDraft.scope, !readOnly && Boolean(selected), addingFiles, setAddingFiles);
   const [sending, setSending] = useState<ReadonlySet<string>>(() => new Set());
   const busy = sending.has(savedDraft.scope);
+  // The running request of this conversation, if there is one to stop (foreground work, not the assistant's own runs).
+  const stopTarget = working && task && task.conversation_id === selected && task.lane !== 'background' && stoppable(task) ? task : null;
+  const stop = useStopConfirm(stopTarget?.id ?? null);
   const sendingNow = useRef(new Set<string>());
   const attachmentInput = useRef<HTMLInputElement>(null);
   const [sendErrors, setSendErrors] = useState<Readonly<Record<string, string>>>({});
@@ -620,16 +628,40 @@ export const Chat = memo(function Chat({
                     composing.current = false;
                   }}
                 />
-                <IconButton
-                  type="submit"
-                  label="메시지 보내기"
-                  className="send-button"
-                  disabled={!selected || busy || !filesReady || draft.length > COMPOSER_TEXT_LIMIT || (!draft.trim() && !files.drafts.length)}
-                >
-                  <ArrowUp size={20} />
-                </IconButton>
+                {stopTarget && !draft.trim() && !files.drafts.length && !stop.stopping ? (
+                  // Empty composer while working: the send button becomes 멈추기 (tap once to ask, again to stop).
+                  <IconButton
+                    type="button"
+                    label={stop.asking ? '정말 멈추기' : '멈추기'}
+                    className="send-button stop-button"
+                    data-asking={stop.asking || undefined}
+                    aria-describedby={stop.asking ? 'composer-stop-ask' : undefined}
+                    disabled={stop.busy}
+                    onClick={() => { if (stop.asking) void stop.confirm(); else stop.ask(); }}
+                  >
+                    <Square size={14} fill="currentColor" aria-hidden="true" />
+                  </IconButton>
+                ) : (
+                  <IconButton
+                    type="submit"
+                    label="메시지 보내기"
+                    className="send-button"
+                    disabled={!selected || busy || !filesReady || draft.length > COMPOSER_TEXT_LIMIT || (!draft.trim() && !files.drafts.length)}
+                  >
+                    <ArrowUp size={20} />
+                  </IconButton>
+                )}
               </div>
             </form>
+            {stopTarget && (
+              <p className="composer-working-note" role={stop.asking || stop.error ? 'status' : undefined} id={stop.asking ? 'composer-stop-ask' : undefined}>
+                {stop.error ? stop.error
+                  : stop.stopping || stopTarget.state === 'cancelling' ? '멈추는 중이에요.'
+                  : stop.asking ? <>멈출까요? 한 번 더 누르면 멈춰요. <button type="button" className="composer-stop-cancel" onClick={stop.cancel}>취소</button></>
+                  : draft.trim() || files.drafts.length ? '지금 보내면 하던 일에 덧붙여요.'
+                  : '지금 보내면 하던 일에 덧붙여요. 멈추려면 ■ 버튼을 누르세요.'}
+              </p>
+            )}
           </div>
         )}
       </div>

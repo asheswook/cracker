@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Bot, ChevronRight, CircleAlert, CircleCheck, CircleSlash, ListChecks, Search } from 'lucide-react';
+import { Bot, ChevronRight, CircleAlert, CircleCheck, CircleSlash, ListChecks, Search, Square } from 'lucide-react';
 import type { Id, Task } from './types';
 import { Empty } from './primitives';
 import { WorkSearch } from './WorkSearch';
@@ -8,6 +8,7 @@ import { WorkNavigationError } from './WorkOpenAction';
 import { createWorkSession } from './work-session';
 import type { WorkSession } from './work-session';
 import type { TaskDestination } from './useWorkNavigation';
+import { stoppable, useStopConfirm } from './task-stop';
 import { activeTasks, dayLabel, finishedByDay, finishedStatus, liveStatus, taskTitle } from './work-list';
 import './schedules.css';
 import './work-search.css';
@@ -16,14 +17,35 @@ import './work.css';
 const PAGE = 20;
 
 /** A whole row is the link; while it opens it says so, and a failure stays next to it. */
-function TaskRow({ task, line, tone, destination, onOpen, quiet = false }: {
+/** 멈추기 on a running row: tap once to ask, tap again to stop. The answer replaces the row's status until it settles. */
+function StopControl({ task, stop }: { readonly task: Task; readonly stop: ReturnType<typeof useStopConfirm> }) {
+  if (!stoppable(task) || stop.stopping) return null;
+  if (stop.asking) return (
+    <span className="work-stop-ask" role="group" aria-label="멈출까요?">
+      <span className="work-stop-question" aria-hidden="true">멈출까요?</span>
+      <button type="button" className="work-stop-confirm" onClick={() => void stop.confirm()} disabled={stop.busy} autoFocus>{stop.busy ? '멈추는 중…' : '멈추기'}</button>
+      <button type="button" className="work-stop-cancel" onClick={stop.cancel} disabled={stop.busy}>취소</button>
+    </span>
+  );
+  return (
+    <button type="button" className="work-stop" onClick={stop.ask} aria-label={`멈추기: ${taskTitle(task)}`}>
+      <Square size={12} fill="currentColor" aria-hidden="true" /><span>멈추기</span>
+    </button>
+  );
+}
+
+function TaskRow({ task, line, tone, destination, onOpen, quiet = false, live = false }: {
   readonly task: Task;
   readonly line: string;
   readonly tone: 'live' | 'wait' | 'attention' | 'done' | 'failed' | 'cancelled';
   readonly destination: TaskDestination;
   readonly onOpen: (task: Task, sourceMessageId?: Id, destination?: TaskDestination) => Promise<void> | void;
   readonly quiet?: boolean;
+  /** A row of 하고 있는 일: it carries a 멈추기 control. */
+  readonly live?: boolean;
 }) {
+  const stop = useStopConfirm(live ? task.id : null);
+  const status = stop.stopping || task.state === 'cancelling' ? '멈추는 중' : line;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const mounted = useRef(true);
@@ -37,19 +59,20 @@ function TaskRow({ task, line, tone, destination, onOpen, quiet = false }: {
   const Icon = tone === 'failed' || tone === 'attention' ? CircleAlert : tone === 'cancelled' ? CircleSlash : tone === 'done' ? CircleCheck : null;
   const title = taskTitle(task);
   return (
-    <li className="work-row" data-tone={tone} data-quiet={quiet || undefined} data-task-id={task.id}>
+    <li className="work-row" data-tone={stop.stopping ? 'wait' : tone} data-quiet={quiet || undefined} data-task-id={task.id} data-live={live || undefined} data-asking={stop.asking || undefined}>
       <button type="button" className="work-main" onClick={() => void open()} aria-busy={busy || undefined}
-        aria-label={`${title}, ${line}. ${destination === 'reply' ? '답변 열기' : '요청 열기'}`}>
+        aria-label={`${title}, ${status}. ${destination === 'reply' ? '답변 열기' : '요청 열기'}`}>
         <span className="work-mark" aria-hidden="true">
           {Icon ? <Icon size={quiet ? 14 : 16} strokeWidth={1.9} /> : <span className="work-pulse" />}
         </span>
         <span className="work-text">
           <span className="work-title">{title}</span>
-          <span className="work-line">{busy ? '여는 중…' : line}</span>
+          <span className="work-line">{busy ? '여는 중…' : status}</span>
         </span>
         <ChevronRight size={16} aria-hidden="true" className="work-chevron" />
       </button>
-      {error && <p className="work-error" role="alert">{error}</p>}
+      {live && <StopControl task={task} stop={stop} />}
+      {(error || stop.error) && <p className="work-error" role="alert">{error || stop.error}</p>}
     </li>
   );
 }
@@ -122,7 +145,7 @@ export function WorkPanel({
             <h2 id="work-active" className="work-label">하고 있는 일{active.length > 0 && <span className="work-count">{active.length}</span>}</h2>
             {active.length ? (
               <ul className="work-list">
-                {active.map(task => { const s = liveStatus(task, now); return <TaskRow key={task.id} task={task} line={s.text} tone={s.tone} destination="request" onOpen={onOpen} />; })}
+                {active.map(task => { const s = liveStatus(task, now); return <TaskRow key={task.id} task={task} line={s.text} tone={s.tone} destination="request" onOpen={onOpen} live />; })}
               </ul>
             ) : <p className="work-calm">지금 하고 있는 일은 없어요.</p>}
           </section>
