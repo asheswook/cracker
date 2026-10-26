@@ -1,4 +1,4 @@
-import { sourceRunPolicy } from "../../../packages/attention/sources";
+import { executionPolicy } from "./execution-policy";
 import { z } from "zod";
 import { taskSkill } from "../../../packages/extensions/versions.ts";
 import { retrieveMemory } from "../../../packages/memory/persist";
@@ -48,7 +48,7 @@ export async function context(sql: Query, principal: Principal, id: string, afte
   return Assignment.parse({
     model_binding: await runModelBinding(sql, principal, run.id),
     skill_binding: await taskSkill(sql, principal.workspace_id, task.id),
-    ...await (async () => { const policy = await sourceRunPolicy(sql, principal.workspace_id, task.id); return policy ? { run_policy: policy } : {}; })(),
+    ...await executionPolicy(sql, principal.workspace_id, task.id),
     task,
     lane: task.lane ?? 'foreground',
     run_id: run.id,

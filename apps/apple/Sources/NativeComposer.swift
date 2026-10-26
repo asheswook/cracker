@@ -82,7 +82,7 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor(named: "Canvas")
+        view.backgroundColor = UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 14/255, green: 14/255, blue: 14/255, alpha: 1) : UIColor(red: 242/255, green: 243/255, blue: 245/255, alpha: 1) }
         [webView, tray].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; view.addSubview($0) }
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.scrollView.keyboardDismissMode = .interactive
@@ -342,9 +342,11 @@ final class NativeComposerController: UIViewController, UITextViewDelegate, UITe
     }
 
     private func applyTheme(_ theme: NativeComposerState.Theme) {
-        view.backgroundColor = .systemBackground
-        webView.backgroundColor = .systemBackground
-        webView.scrollView.backgroundColor = .systemBackground
+        // The page canvas (#f2f3f5 / #0e0e0e), so nothing white shows around or below the page.
+        let canvas = UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 14/255, green: 14/255, blue: 14/255, alpha: 1) : UIColor(red: 242/255, green: 243/255, blue: 245/255, alpha: 1) }
+        view.backgroundColor = canvas
+        webView.backgroundColor = canvas
+        webView.scrollView.backgroundColor = canvas
         tray.backgroundColor = .clear
         tray.layer.borderColor = UIColor.separator.cgColor
         editor.textColor = .label

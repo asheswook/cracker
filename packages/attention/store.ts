@@ -1,5 +1,5 @@
 /**
- * "챙길 것": what needs the user, what is in progress, what just finished. Read-only over existing tables.
+ * "피드": what needs the user, what is in progress, what just finished. Read-only over existing tables.
  * - needs_you: decisions only — draft/choice cards that are pending or whose snooze has ended (no date window).
  * - in_progress: approved cards being carried out, running/queued tasks, foreground requests that stopped, standing
  *   responsibilities and pending schedules.
@@ -22,9 +22,20 @@ export const AttentionItem = z.object({
   url: z.string().nullable().default(null),
   /** For an unconfirmed reply: the send operation the actions apply to. */
   send_task_id: z.uuid().nullable().default(null),
+  /** For mail: what the user has to do (reply, review, act), so the headline says it. */
+  action: z.string().nullable().default(null),
+  /** For a reply the user is waiting for: since when (the feed says "3일째"). */
+  waiting_since: z.string().nullable().default(null),
+  /** Why the user said it is stuck, if they did. */
+  blocked: z.string().nullable().default(null),
+  /** Where it happened (Gmail, Slack, the channel of a result) and who it is about, for a feed headline. */
+  source: z.string().nullable().default(null),
+  who: z.string().nullable().default(null),
 });
 export type AttentionItem = z.input<typeof AttentionItem> & Pick<z.infer<typeof AttentionItem>, 'id' | 'kind' | 'title' | 'detail' | 'at' | 'conversation_id' | 'message_id' | 'state'>;
-export const Attention = z.object({ needs_you: z.array(AttentionItem), in_progress: z.array(AttentionItem), done: z.array(AttentionItem), dismissed_offers: z.array(z.string()).default([]) });
+/** Today's delivered morning brief (shown at the top of the feed), if any. */
+const Brief = z.object({ body: z.string(), at: z.string(), conversation_id: z.uuid().nullable(), message_id: z.uuid().nullable() });
+export const Attention = z.object({ needs_you: z.array(AttentionItem), in_progress: z.array(AttentionItem), done: z.array(AttentionItem), dismissed_offers: z.array(z.string()).default([]), brief: Brief.nullable().default(null) });
 export type Attention = z.infer<typeof Attention>;
 
 // One line per thread: the reply draft's state is part of the mail item, not a second item.
@@ -77,8 +88,9 @@ export async function attention(sql: Query, workspace: string, options: { readon
         WHERE r.workspace_id=${workspace} AND r.state='active' ORDER BY r.created_at`,
     sql`SELECT s.id,s.conversation_id,s.objective,s.due_at,s.source_message_id FROM assistant.schedules s WHERE s.workspace_id=${workspace} AND s.status='pending' ORDER BY s.due_at LIMIT 20`,
     sql`SELECT m.id,m.conversation_id,m.blocks,m.content,m.created_at FROM assistant.messages m LEFT JOIN assistant.tasks t ON t.id=m.task_id
-        WHERE m.workspace_id=${workspace} AND m.role='assistant' AND NOT m.hidden AND m.blocks @> '[{"kind":"result"}]' AND m.created_at>${since}
-        AND coalesce(t.objective,'') !~* '^\s*QA' ORDER BY m.created_at DESC LIMIT 30`,
+        -- What the assistant did: two weeks for the feed's 한 일 view (a brief asks only since it last reported).
+        WHERE m.workspace_id=${workspace} AND m.role='assistant' AND NOT m.hidden AND m.blocks @> '[{"kind":"result"}]' AND m.created_at>${options.doneSince ?? new Date(Date.now() - 14 * 86_400_000)}
+        AND coalesce(t.objective,'') !~* '^\s*QA' ORDER BY m.created_at DESC LIMIT 200`,
   ]);
   const needs: AttentionItem[] = [], progress: AttentionItem[] = [], done: AttentionItem[] = [];
   const cardTasks = new Set<string>();
@@ -115,30 +127,44 @@ export async function attention(sql: Query, workspace: string, options: { readon
   for (const s of schedules) progress.push({ id: `schedule:${s['id']}`, kind: 'schedule', title: firstLine(String(s['objective'])), detail: null,
     at: iso(s['due_at']), conversation_id: String(s['conversation_id']), message_id: s['source_message_id'] ? String(s['source_message_id']) : null, state: 'pending', topic: null });
   for (const row of results) for (const b of MessageBlocks.catch([]).parse(row['blocks'])) if (b.kind === 'result')
-    done.push({ id: `result:${row['id']}`, kind: 'result', title: `${b.channel}${b.title ? ` · ${b.title}` : ''}`, detail: b.target, at: iso(row['created_at']),
+    // The headline names the channel already: the line under it is what it was about.
+    done.push({ id: `result:${row['id']}`, kind: 'result', title: b.title ?? b.channel, detail: b.target, at: iso(row['created_at']), source: b.channel.replace(/\s*\(.*$/, ''), who: b.target ? b.target.replace(/\s*[<(].*$/, '').trim() : null,
       conversation_id: String(row['conversation_id']), message_id: String(row['id']), state: b.action, topic: null });
   // Watched sources: open threads that need the user, and each watch with its freshness; a broken watch needs the user only when it cannot recover on its own.
   const watched = await sourceView(sql, workspace);
   // Mail the user must act on waits for them; waiting-for-others and plain notices are watched, not their job.
   // A reply already sent or put off is no longer waiting for the user.
-  for (const i of watched.items) (i['action'] === 'none' || i['category'] === 'waiting' || ['resolved', 'accepted', 'snoozed', 'checking'].includes(String(draftState(i))) ? progress : needs).push({ id: `mail:${i['id']}`, kind: 'mail', title: String(i['subject']), detail: [i['counterpart'], i['reason'], draftNote(draftState(i), i['preparing'])].filter(Boolean).join(' · '),
-    at: iso(i['due_at'] ?? i['last_seen_at']), conversation_id: String(i['conversation_id']), message_id: i['draft_message_id'] ? String(i['draft_message_id']) : null, state: String(i['category']), topic: null, version: String(i['version']), url: i['url'] ? String(i['url']) : null });
+  const person = (v: unknown) => v ? String(v).replace(/\s*[<(].*$/, '').replace(/^"|"$/g, '').trim() || null : null;
+  // An open promise is the user's until they say it is done, whatever happened to a reply about it. A reply the user is
+  // waiting for from someone else becomes theirs to chase once it is late (past its date, or three days without one).
+  // Late: past the date they were asked to answer by, or three days since the user asked (the asking message's time;
+  // without it, since the wait was first seen). Not while a follow-up was just sent, put off, or being sent/checked.
+  const late = (i: Record<string, unknown>) => {
+    if (i['category'] !== 'waiting') return false;
+    if (i['next_chase_at'] && new Date(String(i['next_chase_at'])) > new Date()) return false;
+    if (['snoozed', 'accepted', 'checking'].includes(String(draftState(i))) || i['send_task'] === 'running' || i['send_task'] === 'checking' || i['send_task'] === 'needs_user' || i['pending_send']) return false;
+    const since = new Date(String(i['waiting_since'] ?? i['first_seen_at'])).getTime();
+    return i['due_at'] ? new Date(String(i['due_at'])) < new Date() : Date.now() - since > 3 * 86_400_000;
+  };
+  for (const i of watched.items) (i['category'] !== 'promise' && !late(i) && (i['action'] === 'none' || i['category'] === 'waiting' || ['resolved', 'accepted', 'snoozed', 'checking'].includes(String(draftState(i)))) ? progress : needs).push({ id: `mail:${i['id']}`, kind: 'mail', title: String(i['subject']), detail: [i['counterpart'], i['reason'], draftNote(draftState(i), i['preparing'])].filter(Boolean).join(' · '),
+    at: iso(i['due_at'] ?? i['last_seen_at']), conversation_id: String(i['conversation_id']), message_id: i['draft_message_id'] ? String(i['draft_message_id']) : null, state: late(i) ? 'chase' : String(i['category']), action: String(i['action']), waiting_since: i['category'] === 'waiting' ? iso(i['waiting_since'] ?? i['first_seen_at']) : null, blocked: i['blocked_reason'] ? String(i['blocked_reason']) : null, topic: null, version: String(i['version']), source: i['kind'] === 'slack' ? 'Slack' : 'Gmail', who: person(i['counterpart']), url: i['url'] ? String(i['url']) : null });
   // Unconfirmed replies, from the send operation itself (independent of the thread's current version or the watch):
   // checking runs on its own; needs_user offers 다시 확인 / 보낸 게 맞아요 / 안 나갔어요 for that operation.
   for (const u of watched.unconfirmed) (u['state'] === 'needs_user' ? needs : progress).push({ id: `send:${u['send_task_id']}`, kind: 'send', title: String(u['subject']),
     detail: u['state'] === 'needs_user' ? `${u['recipient'] ? `${String(u['recipient'])}에게 보낸 ` : ''}답장이 나갔는지 확인하지 못했어요 · Gmail 보낸편지함을 봐 주세요` : '답장이 나갔는지 확인 중',
     at: iso(u['created_at']), conversation_id: String(u['conversation_id']), message_id: String(u['card_message_id']), state: String(u['state']), topic: null, version: null,
-    url: u['url'] ? String(u['url']) : null, send_task_id: String(u['send_task_id']) });
+    url: u['url'] ? String(u['url']) : null, send_task_id: String(u['send_task_id']), source: 'Gmail', who: person(u['recipient']) });
   // Threads handled (by the user in Gmail/Slack, or by a reply sent from here): shown as done, with how and the evidence.
   for (const r of watched.resolved) done.push({ id: `mail:${r['id']}`, kind: 'mail', title: String(r['subject']),
     detail: [r['resolution_basis'] === 'observed_reply' && r['resolution'] === 'replied' ? `${r['kind'] === 'slack' ? 'Slack' : 'Gmail'}에서 답장함` : null, { replied: '답장 확인됨', done: '처리 완료 확인됨', withdrawn: '요청 취소됨', user_marked: '처리함으로 표시', not_needed: '답할 필요 없음' }[String(r['resolution'])] ?? '처리됨', r['resolution_note'] ? firstLine(String(r['resolution_note']), 100) : null].filter(Boolean).join(' · '),
-    at: iso(r['resolved_at']), conversation_id: String(r['conversation_id']), message_id: null, state: 'handled', topic: null, version: null, url: r['url'] ? String(r['url']) : null, send_task_id: null });
+    at: iso(r['resolved_at']), conversation_id: String(r['conversation_id']), message_id: null, state: 'handled', topic: null, version: null, url: r['url'] ? String(r['url']) : null, send_task_id: null,
+    source: r['kind'] === 'slack' ? 'Slack' : 'Gmail', who: person(r['counterpart']) });
   for (const s of watched.sources) {
     const item: AttentionItem = { id: `watch:${s['id']}`, kind: 'watch', title: `${s['kind'] === 'gmail' ? 'Gmail' : s['kind'] === 'slack' ? 'Slack' : String(s['kind'])} 지켜보는 중 · ${String(s['account'])}`,
       // Honest freshness: a full check, else the last partial look, else nothing yet.
       detail: s['health'] === 'degraded' ? `degraded:${s['last_success_at'] ? iso(s['last_success_at']) : ''}` : s['last_success_at'] && (!s['last_partial_at'] || new Date(String(s['last_success_at'])) >= new Date(String(s['last_partial_at']))) ? `checked:${iso(s['last_success_at'])}`
         : s['last_partial_at'] ? `partial:${iso(s['last_partial_at'])}` : 'checked:never', at: iso(s['next_check_at']), conversation_id: String(s['conversation_id']), message_id: null,
-      state: String(s['health']), topic: null, version: null, url: null };
+      state: String(s['health']), topic: null, version: null, url: null, source: s['kind'] === 'slack' ? 'Slack' : 'Gmail' };
     // Only a step the user must take (login, account choice) needs them; repeated outages are shown as degraded work.
     if (s['health'] === 'needs_user') { const name = s['kind'] === 'slack' ? 'Slack' : 'Gmail'; needs.push({ ...item, title: `${name} 로그인이 필요해요`, detail: `login:VM 화면에서 ${name}에 로그인해 주세요${s['enabled'] ? '. 다음 확인부터 이어서 봐요' : '. 로그인한 뒤 다시 봐 달라고 하시면 돼요'}` }); }
     else progress.push(item);
@@ -148,5 +174,22 @@ export async function attention(sql: Query, workspace: string, options: { readon
   const dismissed = await sql`SELECT objective AS text FROM assistant.responsibilities WHERE workspace_id=${workspace} AND state='cancelled' AND created_at>now()-interval '60 days'
     UNION ALL SELECT m.content FROM assistant.card_states c JOIN assistant.messages m ON m.workspace_id=c.workspace_id AND m.id=c.message_id
     WHERE c.workspace_id=${workspace} AND c.state='dismissed' AND c.updated_at>now()-interval '60 days' LIMIT 20`;
-  return Attention.parse({ needs_you: needs.sort(byNewest), in_progress: progress, done: done.sort(byNewest).slice(0, 30), dismissed_offers: dismissed.map(r => firstLine(String(r['text']), 100)) });
+  // Today's brief: the last one delivered within 18 hours (a brief from yesterday morning is old news).
+  const briefRow = (await sql`SELECT m.id,m.conversation_id,m.content,m.created_at FROM assistant.attention_briefs b JOIN assistant.messages m ON m.id=b.message_id
+    WHERE b.workspace_id=${workspace} AND b.state='delivered' AND m.created_at>now()-interval '18 hours' ORDER BY m.created_at DESC LIMIT 1`)[0];
+  const brief = briefRow ? { body: String(briefRow['content']), at: iso(briefRow['created_at']), conversation_id: String(briefRow['conversation_id']), message_id: String(briefRow['id']) } : null;
+  // What needs the user, most urgent first: past due, then someone waiting for an answer (newest first), then the
+  // nearest due date, then the rest. A far-off due date does not push a fresh request off the top.
+  const now = Date.now();
+  const rank = (i: AttentionItem) => {
+    const t = Date.parse(i.at);
+    if (i.state === 'overdue' || (i.kind === 'mail' && (i.state === 'deadline' || i.state === 'promise') && t < now)) return 0;
+    if (i.kind === 'card' || i.kind === 'send' || (i.kind === 'mail' && (i.state === 'request' || i.state === 'waiting' || i.state === 'chase'))) return 1;
+    if (i.kind === 'mail' && t > now && t - now < 2 * 86_400_000) return 2;
+    return 3;
+  };
+  // Within a rank: dates ahead nearest first, everything else newest first.
+  const ahead = (i: AttentionItem) => Date.parse(i.at) > now;
+  const urgent = (a: AttentionItem, b: AttentionItem) => rank(a) - rank(b) || (ahead(a) && ahead(b) ? a.at.localeCompare(b.at) : b.at.localeCompare(a.at));
+  return Attention.parse({ brief, needs_you: needs.sort(urgent), in_progress: progress, done: done.sort(byNewest).slice(0, 120), dismissed_offers: dismissed.map(r => firstLine(String(r['text']), 100)) });
 }

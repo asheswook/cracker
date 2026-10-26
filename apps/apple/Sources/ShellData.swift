@@ -39,7 +39,7 @@ enum ShellPanel: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .attention: return "챙길 것"
+        case .attention: return "피드"
         case .tasks: return "맡긴 일"
         case .schedules: return "예약"
         case .memory: return "기억"
@@ -50,7 +50,7 @@ enum ShellPanel: String, CaseIterable, Identifiable {
     }
     var symbol: String {
         switch self {
-        case .attention: return "tray"
+        case .attention: return "dot.radiowaves.up.forward"
         case .tasks: return "checklist"
         case .schedules: return "calendar"
         case .memory: return "brain"
@@ -69,6 +69,9 @@ enum ShellPanel: String, CaseIterable, Identifiable {
         case "memory": self = .memory
         case "computer": self = .computer
         case "settings": self = .settings
+        #if os(iOS)
+        case "notifications": self = .notifications
+        #endif
         default: return nil
         }
     }

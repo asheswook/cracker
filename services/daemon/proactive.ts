@@ -2,7 +2,7 @@ import { HTTPError, type KyInstance } from "ky";
 import { z } from "zod";
 import type { Tool } from "../../packages/provider/index.ts";
 import { Trigger } from "../../packages/memory/responsibility-schema.ts";
-const Source = z.object({ source_message_id: z.uuid(), source_quote: z.string().min(1).max(10000), objective: z.string().min(1).max(4000) });
+const Source = z.object({ source_message_id: z.uuid(), source_quote: z.string().min(1).max(10000), objective: z.string().min(1).max(4000), title: z.string().trim().min(1).max(60).nullable().default(null).describe("A short name the user would recognise in a list, in their language (e.g. \"보안 공지 Slack 공유\", \"병원 가기 알림\"); not the instructions.") });
 const ScheduleInput = Source.extend({ due_at: z.iso.datetime({ offset: true }), timezone: z.string().min(1) });
 const NotifyUserInput = z.object({ message: z.string().trim().min(1).max(2000) });
 export const notifyUserTool: Tool = { type: "function", name: "notify_user", description: "Post a user-facing message and request a push notification. Background work does not notify by default; use only when the objective asks to tell the user or the result needs the user's attention.", strict: true, parameters: z.toJSONSchema(NotifyUserInput) };

@@ -10,6 +10,7 @@ export const ScheduleRequest = z.object({
   run_id: Id,
   client_schedule_id: Id,
   objective: z.string().trim().min(1).max(100000),
+  title: z.string().trim().max(60).nullable().default(null),
   due_at: z.iso.datetime({ offset: true }),
   timezone: z.string().min(1).max(100),
   source_message_id: Id,
@@ -17,6 +18,7 @@ export const ScheduleRequest = z.object({
   skill_id:Id.nullable().default(null),skill_revision:z.number().int().positive().nullable().default(null),
 });
 export const Schedule = z.object({
+  title: z.string().nullable().default(null),
   id: Id,
   conversation_id: Id,
   objective: z.string(),
@@ -80,7 +82,7 @@ export async function enrollSchedule(
     }
     const saved = Schedule.parse(
       (
-        await tx`INSERT INTO assistant.schedules(workspace_id,conversation_id,objective,due_at,timezone,client_schedule_id,source_message_id,source_quote,skill_id,skill_revision) VALUES(${workspace},${task.conversation_id},${body.objective},${body.due_at},${body.timezone},${body.client_schedule_id},${body.source_message_id},${body.source_quote},${body.skill_id},${body.skill_revision}) RETURNING *`
+        await tx`INSERT INTO assistant.schedules(title,workspace_id,conversation_id,objective,due_at,timezone,client_schedule_id,source_message_id,source_quote,skill_id,skill_revision) VALUES(${body.title || null},${workspace},${task.conversation_id},${body.objective},${body.due_at},${body.timezone},${body.client_schedule_id},${body.source_message_id},${body.source_quote},${body.skill_id},${body.skill_revision}) RETURNING *`
       )[0],
     );
     await recordEvent(tx, {

@@ -7,6 +7,7 @@ struct NativePanelView: View {
     var assistant: String? = nil
     let openConversation: (String, String?) -> Void
     let close: () -> Void
+    var isModal = true
     var body: some View {
         Group {
             switch panel {
@@ -19,20 +20,24 @@ struct NativePanelView: View {
         }
         .navigationTitle(panel.title)
         #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(isModal ? .inline : .large)
         .toolbar {
-            ToolbarItem(placement: .confirmationAction) { Button("닫기", action: close) }
+            if isModal {
+                ToolbarItem(placement: .confirmationAction) { Button("닫기", action: close) }
+            }
         }
         #else
         .safeAreaInset(edge: .top, spacing: 0) {
-            HStack {
-                Text(panel.title).font(.title3.weight(.semibold))
-                Spacer()
-                Button(action: close) { Image(systemName: "xmark").font(.body.weight(.semibold)) }
-                    .buttonStyle(.borderless).foregroundStyle(.secondary)
-                    .keyboardShortcut(.cancelAction).help("닫기").accessibilityLabel("닫기")
+            if isModal {
+                HStack {
+                    Text(panel.title).font(.title3.weight(.semibold))
+                    Spacer()
+                    Button(action: close) { Image(systemName: "xmark").font(.body.weight(.semibold)) }
+                        .buttonStyle(.borderless).foregroundStyle(.secondary)
+                        .keyboardShortcut(.cancelAction).help("닫기").accessibilityLabel("닫기")
+                }
+                .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 4)
             }
-            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 4)
         }
         #endif
     }
@@ -94,6 +99,10 @@ enum WebPanelCache {
         return shell
     }
     static func warm(_ panels: [String]) { for panel in panels { _ = shell(panel) } }
+    static func clear() {
+        for shell in shells.values { shell.webView.stopLoading() }
+        shells.removeAll()
+    }
 }
 
 struct WebPanelView: View {

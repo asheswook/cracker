@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { Message } from '../apps/web/src/types';
 import { Message as ProtocolMessage } from '../packages/protocol';
-import { feedItems, isBackgroundMessage } from '../apps/web/src/background-message';
+import { feedItems, isBackgroundMessage, readableTitle } from '../apps/web/src/background-message';
 import { systemMessageContent } from '../apps/web/src/system-message';
 
 const message = Message.parse({ id: crypto.randomUUID(), conversation_id: crypto.randomUUID(), task_id: crypto.randomUUID(), role: 'assistant', origin: 'schedule', notify: false, content: 'Review deployment\nMore detail', sequence: 1, created_at: new Date().toISOString(), client_message_id: null });
@@ -43,4 +43,13 @@ test('a run without its wake notice in view is titled from the task objective', 
 test('the run preview keeps literal tildes and underscores while dropping emphasis markers', () => {
   const reply = { ...message, content: '**새 공지** 5건(202600264~268)을 `#d05_보안_공지`에 올렸습니다.' };
   expect(feedItems([reply])[0]).toMatchObject({ preview: '새 공지 5건(202600264~268)을 #d05_보안_공지에 올렸습니다.' });
+});
+test('reply objectives with a user instruction prefix show the thread subject, not the instruction', () => {
+  const prefix = 'The user asked for this reply and said what it should say: "Please say yes." ';
+  expect(readableTitle(`${prefix}Prepare a reply draft in Gmail. Thread: Budget review (from Talbot, id abc).`)).toBe('답장 초안 쓰기 · Budget review');
+  expect(readableTitle(`${prefix}Prepare a reply draft in Slack. Thread: Release plan, id abc.`)).toBe('답장 초안 쓰기 · Release plan');
+  expect(readableTitle('Prepare a reply draft for "Old subject".')).toBe('답장 초안 쓰기 · Old subject');
+  expect(readableTitle('Gmail observation for me@example.com (inbox)')).toBe('Gmail 확인 · me@example.com');
+  expect(readableTitle('Send one approved reply. Thread: Review, id abc')).toBe('승인한 답장 보내기 · Review');
+  expect(readableTitle('Check whether an approved reply went out')).toBe('보낸 답장 확인');
 });

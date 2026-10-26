@@ -1,0 +1,117 @@
+/* Web navigation (never in the native shell): a labelled sidebar on wide screens, a bottom tab bar on phones.
+   Destinations are full pages in the main area; the conversation stays mounted underneath. */
+.assistant-shell.has-pages { --tabbar-height: 52px; position: relative; }
+
+/* ── Full-page destination ── */
+.page-surface {
+  grid-row: 1; grid-column: 2;
+  min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--message-canvas, var(--surface)); color: var(--ink);
+  border-radius: var(--r5); box-shadow: var(--shadow-shell);
+}
+.assistant-shell.has-pages > .main-surface { grid-row: 1; grid-column: 2; }
+.assistant-shell.page-open > .main-surface { visibility: hidden; }
+.page-header { flex: none; padding: var(--s8) var(--s8) var(--s3); }
+.page-header h1 { margin: 0; font-size: 28px; line-height: 1.2; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
+.page-header h1:focus { outline: none; }
+.page-header h1:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+.page-back {
+  display: inline-flex; align-items: center; gap: 2px; min-height: 44px; margin: 0 0 2px -8px; padding: 0 8px 0 2px;
+  border: 0; border-radius: 10px; background: none; color: var(--accent); font: inherit; font-size: var(--t-body); cursor: pointer;
+}
+.page-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.page-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.page-body > .inspector-body { flex: 1; min-height: 0; overflow: auto; padding: 0 var(--s8) var(--s10); }
+.page-body > .inspector-body > div { max-width: 760px; margin-inline: auto; }
+.page-surface[data-panel='computer'] .page-body > .inspector-body > div { max-width: none; }
+.page-surface[data-panel='attention'] .page-header { max-width: 880px; width: 100%; margin-inline: auto; box-sizing: content-box; padding-inline: var(--s8); }
+@media (min-width: 768px) {
+  .page-surface[data-panel='attention'] .page-header { padding-inline: calc(var(--s8) + 4px); }
+}
+
+/* ── 더보기 list ── */
+.more-list { display: grid; gap: var(--s6); max-width: 760px; margin: 0 auto; padding: var(--s2) var(--s8) var(--s10); }
+.more-list ul { margin: 0; padding: 0; list-style: none; border-radius: 14px; background: var(--surface); box-shadow: inset 0 0 0 0.5px var(--line); overflow: hidden; }
+.more-list li + li { border-top: 0.5px solid var(--line); }
+.more-list button {
+  display: flex; align-items: center; gap: var(--s3); width: 100%; min-height: 52px; padding: 0 var(--s4);
+  border: 0; background: none; color: var(--ink); font: inherit; font-size: var(--t-body); text-align: start; cursor: pointer;
+}
+.more-list button > span:nth-child(2) { flex: 1; }
+.more-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: var(--wash); color: var(--ink); }
+.more-chevron { color: var(--muted); opacity: 0.6; }
+.more-danger { color: var(--danger) !important; }
+.more-danger .more-icon { color: var(--danger); }
+@media (hover: hover) { .more-list button:hover { background: var(--wash); } }
+.more-list button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ── Sidebar: labelled on wide screens, badge on 피드 ── */
+.assistant-rail .utility-nav button { position: relative; }
+.assistant-rail .utility-nav button[aria-current='page'] { background: var(--wash); color: var(--ink); }
+.nav-badge {
+  position: absolute; top: 4px; left: 30px; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box;
+  border-radius: 8px; background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.rail-name { display: none; }
+@media (min-width: 1024px) {
+  .assistant-shell.app-shell.has-pages,
+  .assistant-shell.app-shell.has-pages.has-inspector,
+  .assistant-shell.app-shell.has-pages.has-inspector.computer-open { grid-template-columns: 216px minmax(0, 1fr); }
+  .has-pages .assistant-rail.sidebar { padding: var(--s5) var(--s3) var(--s3) var(--s4); }
+  .has-pages .assistant-rail .brand-row { justify-content: flex-start; gap: var(--s3); padding: 0 var(--s2) var(--s5); }
+  .has-pages .rail-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-subhead, 14px); font-weight: 600; color: var(--ink); }
+  .has-pages .assistant-rail .utility-nav { gap: 2px; }
+  .has-pages .assistant-rail .utility-nav button { justify-content: flex-start; padding: 0 var(--s3); font-size: var(--t-subhead, 14px); }
+  .has-pages .assistant-rail .utility-nav button > .nav-label { display: inline; flex: 1; }
+  .has-pages .nav-badge { position: static; margin-left: auto; }
+  .has-pages .assistant-rail .rail-footer { justify-content: flex-start; }
+}
+
+/* ── Bottom tab bar (phones) ── */
+.tabbar { display: none; }
+@media (max-width: 767px) {
+  .assistant-shell.has-pages .mobile-menu { display: none; }
+  .tabbar {
+    position: fixed; z-index: 20; inset: auto 0 0 0;
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+    height: calc(var(--tabbar-height) + env(safe-area-inset-bottom, 0px));
+    padding: 0 max(4px, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(4px, env(safe-area-inset-left, 0px));
+    background: color-mix(in srgb, var(--message-canvas, var(--surface)) 82%, transparent);
+    -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+    border-top: 0.5px solid var(--line);
+    transition: transform 200ms ease, opacity 200ms ease;
+  }
+  .tabbar[data-hidden] { transform: translateY(100%); opacity: 0; pointer-events: none; }
+  .tabbar-item {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 0; padding: 4px 0 0;
+    border: 0; background: none; color: var(--muted); font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .tabbar-item[aria-current='page'] { color: var(--accent); }
+  .tabbar-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; border-radius: 12px; }
+  .tabbar-icon { position: relative; display: grid; place-items: center; height: 26px; }
+  .tabbar-label { font-size: 10px; font-weight: 500; line-height: 12px; letter-spacing: 0.01em; white-space: nowrap; }
+  .tabbar-badge {
+    position: absolute; top: -3px; left: calc(100% - 7px); min-width: 17px; height: 17px; padding: 0 5px; box-sizing: border-box;
+    border-radius: 9px; background: var(--accent); color: #fff; box-shadow: 0 0 0 2px var(--message-canvas, var(--surface));
+    font-size: 11px; font-weight: 600; line-height: 17px; text-align: center; font-variant-numeric: tabular-nums;
+  }
+
+  /* Content clears the bar; when the bar steps aside for the keyboard, so does the clearance. */
+  .assistant-shell.has-pages:not(:has(.tabbar[data-hidden])) > .main-surface { padding-bottom: var(--tabbar-height); }
+  .assistant-shell.has-pages:not(:has(.tabbar[data-hidden])) .composer-region { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--s2)); }
+  .assistant-shell.has-pages:not(:has(.tabbar[data-hidden])) .archive-banner { bottom: calc(var(--tabbar-height) + max(var(--s4), env(safe-area-inset-bottom, 0px))); }
+  .page-surface {
+    position: absolute; inset: 0; z-index: 5; border-radius: 0; box-shadow: none;
+    padding-bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom, 0px));
+  }
+  .assistant-shell.has-pages:has(.tabbar[data-hidden]) .page-surface { padding-bottom: 0; }
+  .page-header { padding: calc(env(safe-area-inset-top, 0px) + var(--s4)) var(--s5) var(--s2); }
+  .page-header h1 { font-size: 30px; }
+  .page-surface[data-panel='attention'] .page-header { padding-inline: var(--s5); }
+  .page-body > .inspector-body { padding: 0 var(--s4) var(--s8); }
+  .more-list { padding: var(--s2) var(--s4) var(--s8); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tabbar { transition: none; }
+}

@@ -28,8 +28,11 @@ struct ConversationSurface: View {
             if shell.failure == nil {
                 #if os(iOS)
                 NativeComposerHost(controller: shell.nativeComposer)
-                    .ignoresSafeArea(.container, edges: .bottom)
+                    // Respect the TabView's bottom safe area; the UIKit keyboard guide
+                    // keeps the composer above either the tab bar or the keyboard.
                     .ignoresSafeArea(.keyboard, edges: .bottom)
+                    // Signed out there is no tab bar: the login page runs to the bottom edge.
+                    .ignoresSafeArea(.container, edges: shell.authenticated ? [] : .bottom)
                 #else
                 NativeWebView(webView: shell.webView)
                     .overlay(alignment: .top) {

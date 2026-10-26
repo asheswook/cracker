@@ -17,7 +17,9 @@ import { Chat } from './Chat';
 import { AssistantNav } from './AssistantNav';
 import type { Panel } from './AssistantNav';
 import { InspectorHost } from './InspectorHost';
-import { InspectorHeader } from './InspectorHeader';
+import { InspectorHeader, panels as panelInfo } from './InspectorHeader';
+import { BottomTabs, DestinationPage, MoreList, morePanels } from './BottomTabs';
+import { useNeedsCount } from './attention-feed';
 import { PanelErrorBoundary } from './PanelErrorBoundary';
 import { ErrorNotice, type Presence } from './primitives';
 import { AssistantCharacter } from './appearance/AssistantCharacter';
@@ -59,6 +61,11 @@ export function App() {
   const assistantWorking = useAssistantWorking(state);
   const workingActivity = assistantActivity(state, assistantWorking);
   const [panel, setPanel] = useState<Panel | null>(null);
+  // On the web every destination is a full page in the main area (sidebar on wide screens, tab bar on phones);
+  // inside the native shell, iOS owns navigation and panels, so the inspector path below stays as it was.
+  const pages = !nativeShell;
+  const [more, setMore] = useState(false);
+  const needsCount = useNeedsCount(pages && state.phase === 'ready' && state.connected);
   const [reserved, setReserved] = useState(false);
   const [wideInspector, setWideInspector] = useState(false);
   const [menu, setMenu] = useState(false);
@@ -178,8 +185,16 @@ export function App() {
     if (transition) void transition.request('chat', () => setPanel(null));
     else setPanel(null);
   };
+  const showPage = (value: Panel | 'more' | null) => {
+    navigation.current++;
+    setMenu(false);
+    setMore(value === 'more');
+    setPanel(value === 'more' ? null : value);
+    requestAnimationFrame(() => document.getElementById('page-title')?.focus({ preventScroll: true }));
+  };
   const selectPanel = (value: Panel) => {
     if (nativeShell?.role === 'body') { requestNativePanel(value); return; }
+    if (pages) { showPage(value); return; }
     const commit = () => {
     navigation.current++;
     setReserved(true);
@@ -192,19 +207,24 @@ export function App() {
     else if (transition && panel === value) void transition.request('chat', commit);
     else commit();
   };
+  const goHome = () => {
+    navigation.current++;
+    replaceResultAddress();
+    run(() => client.create());
+    setMenu(false);
+    setPanel(null);
+    setMore(false);
+    setFocusTask(null);
+    setFocusMessage(null);
+  };
+  // 대화 from another page returns to the conversation as it was; tapping it while there starts from the assistant.
+  const goChat = () => { if (panel || more) { navigation.current++; setPanel(null); setMore(false); setMenu(false); } else goHome(); };
   const side = (
     <AssistantNav
       name={state.persona.name}
       panel={panel}
-      onHome={() => {
-        navigation.current++;
-        replaceResultAddress();
-        run(() => client.create());
-        setMenu(false);
-        setPanel(null);
-        setFocusTask(null);
-        setFocusMessage(null);
-      }}
+      badge={needsCount}
+      onHome={pages ? goChat : goHome}
       onPanel={selectPanel}
       onClose={closeMenu}
       onLogout={() => run(() => client.logout())}
@@ -218,6 +238,7 @@ export function App() {
       setFocusTask(null);
       setFocusMessage(message);
       setPanel(null);
+      setMore(false);
     },
   });
   const returnToAssistant = () => {
@@ -229,7 +250,7 @@ export function App() {
   const presence: Presence = !state.connected ? 'offline' : state.vms.length && !state.vms.some(vm => vm.online) ? 'computer-offline' : 'online';
   const independentHeader = useIndependentHeader({
     scope: `${state.workspace ?? 'none'}:${state.selected ?? 'none'}`,
-    visible: !nativeShell && state.phase === 'ready' && !menu && !panel && !reserved,
+    visible: !nativeShell && state.phase === 'ready' && !menu && !panel && !more && !reserved,
     props: { name: state.persona.name, appearance: state.appearance, connected: state.connected, presence,
       working: assistantWorking, activity: workingActivity, computerOpen: panel === 'computer',
       archiveTitle: state.selected && state.selected !== state.assistantId ? archiveLabel : null },
@@ -267,7 +288,7 @@ export function App() {
     <ScreenSessionProvider workspace={state.workspace} vmId={state.vms[0]?.id} connected={state.connected}
       visible={panel === 'computer' && !menu} controlAllowed={state.vms[0]?.control_state === 'user' && !state.control[state.vms[0].id]}>
     <div
-      className={`app-shell assistant-shell ${independentHeader.active ? 'independent-header-active' : ''} ${reserved ? 'has-inspector' : ''} ${panel ? 'inspector-visible' : ''} ${reserved && wideInspector ? 'computer-open' : ''}`}
+      className={`app-shell assistant-shell ${independentHeader.active ? 'independent-header-active' : ''} ${reserved ? 'has-inspector' : ''} ${panel && !pages ? 'inspector-visible' : ''} ${reserved && wideInspector ? 'computer-open' : ''} ${pages ? 'has-pages' : ''} ${pages && (panel || more) ? 'page-open' : ''}`}
       style={nativeShell ? { display: 'block', height: '100%', minHeight: 0, padding: 0 } : undefined}
     >
       {!nativeShell && <div className="desktop-sidebar">{side}</div>}
@@ -309,7 +330,7 @@ export function App() {
           connected={state.connected}
           assistantName={state.persona.name}
           readOnly={archive}
-          composerObscured={menu || Boolean(panel) || reserved}
+          composerObscured={menu || Boolean(panel) || more || reserved}
           focusTask={focusTask}
           focusMessage={focusMessage}
           timeControlRoot={timeControlRoot}
@@ -318,8 +339,30 @@ export function App() {
           tasks={state.tasks}
         />
       </main>
+      {pages && (panel || more) && (
+        <DestinationPage key={panel ?? 'more'} panel={panel ?? 'more'} title={panel ? panelInfo[panel].title : '더보기'}
+          onBack={panel && (morePanels as readonly string[]).includes(panel) ? () => showPage('more') : undefined}>
+          {panel ? (
+            <PanelErrorBoundary onClose={goChat}>
+              <Suspense fallback={<LoadingSkeleton layout={panel === 'settings' ? 'persona' : panel === 'history' ? 'list' : 'cards'} label="불러오는 중…" />}>
+                <Inspector embedded panel={panel} state={state} onClose={goChat} onComputer={() => showPage('computer')}
+                  workSession={workSession} onTask={openTask} onSource={openSource}
+                  onArchive={(id) => {
+                    navigation.current++;
+                    replaceResultAddress(id);
+                    setFocusTask(null);
+                    setFocusMessage(null);
+                    run(() => client.select(id));
+                    setPanel(null);
+                  }} />
+              </Suspense>
+            </PanelErrorBoundary>
+          ) : <MoreList onView={showPage} onLogout={() => run(() => client.logout())} />}
+        </DestinationPage>
+      )}
+      {pages && <BottomTabs view={more ? 'more' : panel} badge={needsCount} onChat={goChat} onView={showPage} />}
       <AnimatePresence onExitComplete={() => setReserved(false)}>
-        {panel && (
+        {panel && !pages && (
           <InspectorHost computer={panel === 'computer'} key="inspector" onClose={closePanel} onPresented={() => panelTransition()?.complete('panel')}>
             <PanelErrorBoundary onClose={closePanel}>
             <Suspense

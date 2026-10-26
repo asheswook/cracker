@@ -1,6 +1,6 @@
 import { answerCard, CardAnswerRequest, settleCardsForTask } from "../repository/card-answer";
 import { settleBriefForTask } from "../../../packages/attention/coordinator";
-import { settleObservationTask, settleSendTask } from "../../../packages/attention/sources";
+import { redraftUnverified, settleObservationTask, settleSendTask } from "../../../packages/attention/sources";
 import { Hono } from "hono";
 import { z } from "zod";
 import { Command, Conversation, DomainError, Id, ReadReceipt, Task } from "../../../packages/protocol";
@@ -79,7 +79,14 @@ export function clientRoutes(sql: Database) {
   app.post("/conversations/:id/messages/:message/answer", async (c) => {
     const body = CardAnswerRequest.parse(await c.req.json());
     const workspace = c.get("principal").workspace_id;
-    return c.json(await sql.begin((tx) => answerCard(tx, { workspace, conversation: Id.parse(c.req.param("id")), message: Id.parse(c.req.param("message")), ...body })));
+    try {
+      return c.json(await sql.begin((tx) => answerCard(tx, { workspace, conversation: Id.parse(c.req.param("id")), message: Id.parse(c.req.param("message")), ...body })));
+    } catch (error) {
+      // A draft that cannot be checked against its thread: the approval is refused, and a fresh draft is started for it.
+      const { redraft, redraft_body } = (error ?? {}) as { redraft?: unknown; redraft_body?: unknown };
+      if (typeof redraft === "string") await sql.begin(tx => redraftUnverified(tx, workspace, redraft, typeof redraft_body === "string" ? redraft_body : null));
+      throw error;
+    }
   });
   app.post("/conversations/:id/messages", async (c) => {
     const body = z

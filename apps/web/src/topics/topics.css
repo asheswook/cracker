@@ -119,7 +119,7 @@ button.topic-work-row:focus-visible { outline: 2px solid var(--accent); outline-
   grid-area: time; color: var(--message-secondary, var(--muted)); font-size: 10px; line-height: 18px;
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
-/* 나를 기다림 leads: card surface, accent edge and label, like the needs tone in 챙길 것. */
+/* 나를 기다림 leads: card surface, accent edge and label, like the needs tone in the feed. */
 .topic-work-group[data-tone='needs'] h3 { color: var(--message-ink, var(--ink)); }
 .topic-work-group[data-tone='needs'] h3::before {
   content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent);

@@ -8,5 +8,5 @@
     "allowImportingTsExtensions": true
   },
   "include": ["packages/**/*.ts", "services/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
-  "exclude": ["services/control/worker.ts", "services/control/room.ts", "services/control/screen-room.ts"]
+  "exclude": ["tests/web-attention-feed.test.ts", "services/control/worker.ts", "services/control/room.ts", "services/control/screen-room.ts"]
 }

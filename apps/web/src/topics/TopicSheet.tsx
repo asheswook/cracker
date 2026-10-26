@@ -8,7 +8,7 @@ import './topics.css';
 
 const stamp = new Intl.DateTimeFormat('ko-KR', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
-/** Same wording as 챙길 것, so a line reads the same wherever it shows up. */
+/** Same wording as the 피드, so a line reads the same wherever it shows up. */
 const workLabel = (item: BranchWorkItem): string => {
   if (item.kind === 'card') return ({ draft: '보낼지 확인', choice: '선택', accepted: '승인함 · 처리 중', accepted_stalled: '승인함 · 멈춰서 확인 중', resolved: '처리 끝', failed: '처리 못 함', dismissed: '필요 없음' } as Record<string, string>)[item.state] ?? '확인';
   if (item.kind === 'task') return item.state === 'stopped' ? '멈춤' : item.state === 'queued' ? '대기' : '진행 중';

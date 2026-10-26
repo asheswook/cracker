@@ -12,6 +12,7 @@ import { Instructions } from './settings/types';
 import { disableNotifications } from './notification-client';
 import { clearNativeCredential, hasNativeCredentialBridge, loadNativeCredential, saveNativeCredential } from './native-bridge';
 import { clearStartupCache, readStartupCache, writeStartupCache } from './startup-cache';
+import { resetAttentionFeed } from './attention-feed';
 type Snapshot = Readonly<{
   phase: 'loading' | 'login' | 'ready';
   workspace: Id | null;
@@ -161,6 +162,7 @@ export class ClientStore {
     else if (this.value.phase === 'ready') void this.refresh();
   }
   private async establish(session: z.infer<typeof Session>) {
+    resetAttentionFeed(true);
     this.cancelControls();
     if (this.timer) clearInterval(this.timer);
     if (this.messageTimer) clearInterval(this.messageTimer);
@@ -227,6 +229,7 @@ export class ClientStore {
     void this.renewFromStoredCredential().then(renewed => { if (!renewed) this.clearSession(); });
   }
   private clearSession() {
+    resetAttentionFeed();
     this.cancelControls();
     if (this.cacheTimer) clearTimeout(this.cacheTimer);
     this.cacheTimer = null;

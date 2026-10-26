@@ -1,10 +1,10 @@
-import { CalendarDays, History, Inbox, Layers3, ListChecks, Monitor, SlidersHorizontal, X } from 'lucide-react';
+import { CalendarDays, History, Layers3, ListChecks, Monitor, Rss, SlidersHorizontal, X } from 'lucide-react';
 import type { Panel } from './AssistantNav';
 import { IconButton } from './primitives';
 
-const panels = {
+export const panels = {
   computer: { title: '컴퓨터', icon: Monitor },
-  attention: { title: '챙길 것', icon: Inbox },
+  attention: { title: '피드', icon: Rss },
   tasks: { title: '맡긴 일', icon: ListChecks },
   schedules: { title: '예약', icon: CalendarDays },
   memory: { title: '기억', icon: Layers3 },

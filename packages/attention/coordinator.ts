@@ -13,6 +13,7 @@ import type { Database, Query } from '../../services/control/db';
 import { createBackgroundTask } from '../../services/control/repository/common';
 import { attention, type Attention } from './store';
 import { markSourceItemsBriefed } from './sources';
+import { enqueueMessageNotification } from '../notifications/store.ts';
 
 const Settings = z.object({
   workspace_id: z.uuid(), timezone: z.string(), brief_enabled: z.boolean(), brief_at_minute: z.number().int().nullable(),
@@ -22,6 +23,8 @@ type Settings = z.infer<typeof Settings>;
 
 export const BRIEF_OBJECTIVE = [
   'Morning brief (assistant-owned). Call read_attention first; since_last_brief lists what is new.',
+  'Report only from read_attention (and today\'s calendar if you have it); do not open mail, Slack or the browser yourself — watched sources are read by their own looks.',
+  'If today has meetings on the calendar, add a short "오늘 회의" part: each meeting as one line with its time, who is in it, and — only from read_attention items or prior work about the same people or subject — one thing worth knowing or asking before it. Skip meetings you know nothing useful about beyond the title; never invent context.',
   'If nothing needs the user and nothing in since_last_brief is worth telling, reply exactly NO_REPORT.',
   'Otherwise reply with the brief as your final report. Its first line is a one-line count summary like "확인할 것 2개, 진행 중 3개" (real numbers; name the most important item in a few words if it fits); that line becomes the notification.',
   'Then one line per item, needs-the-user first, by topic. Refer to existing cards by what they ask; do not create a new card for a decision that already has one. Do not call notify_user.',
@@ -192,13 +195,102 @@ async function tickWorkspace(sql: Database, workspace: string, now: Date) {
 }
 
 /** Plan today's brief if not planned yet, and dispatch it when due. Each workspace is isolated: one failure does not stop the others. */
+/**
+ * "It can't wait for the next brief": a watched item that needs the user and is due before the next brief (or just
+ * went past due) gets one short alert in its conversation, once per item, request and stage. Code decides and writes
+ * the line from the item; nothing is sent in quiet hours, for a stopped watch, or for something already handled.
+ */
+export async function alertDueItems(sql: Query, workspace: string, now = new Date()) {
+  await withdrawStaleAlerts(sql, workspace, now);
+  const next = await upcomingBrief(sql, workspace, now);
+  const quiet = (await sql`SELECT quiet_start_minute AS qs,quiet_end_minute AS qe,timezone FROM assistant.attention_settings WHERE workspace_id=${workspace}`)[0];
+  if (quiet) {
+    const minute = localMinute(now, String(quiet['timezone'])), qs = Number(quiet['qs']), qe = Number(quiet['qe']);
+    if (qs !== qe && (qs > qe ? minute >= qs || minute < qe : minute >= qs && minute < qe)) return 0;
+  }
+  // A brief being written right now will carry what is due; it speaks for those items unless it fails.
+  if (next.inFlight) return 0;
+  const candidates = await sql`SELECT i.id FROM assistant.attention_source_items i JOIN assistant.attention_sources s ON s.id=i.source_id
+    WHERE i.workspace_id=${workspace} AND i.state='open' AND i.action<>'none' AND i.category<>'waiting' AND i.due_at IS NOT NULL
+      AND (s.enabled OR i.once_until>${now}) AND i.due_at<${next.at} AND i.due_at>${now}::timestamptz-interval '1 day'`;
+  let sent = 0;
+  for (const c of candidates) {
+    // Re-read under the item's lock: handled, rescheduled or stopped since the scan means no alert.
+    const i = (await sql`SELECT i.id,i.subject,i.counterpart,i.category,i.reason,i.due_at,coalesce(i.conversation_id,s.conversation_id) AS conversation_id
+      FROM assistant.attention_source_items i JOIN assistant.attention_sources s ON s.id=i.source_id
+      WHERE i.id=${String(c['id'])} AND i.state='open' AND i.action<>'none' AND i.category<>'waiting' AND i.due_at IS NOT NULL AND (s.enabled OR i.once_until>${now})
+        AND i.due_at<${next.at} AND i.due_at>${now}::timestamptz-interval '1 day'
+        -- Blocked (the user said why it cannot move): only once it is actually past due.
+        AND (i.blocked_reason IS NULL OR i.due_at<=${now})
+        -- Not while a reply is being sent or its result is unknown, and not while the user put the draft off.
+        AND NOT EXISTS(SELECT 1 FROM assistant.attention_source_sends e WHERE e.item_id=i.id AND e.state IN ('dispatched','executing','unknown','checking','needs_user'))
+        AND NOT EXISTS(SELECT 1 FROM assistant.attention_source_drafts d JOIN assistant.card_states k ON k.message_id=d.card_message_id
+          WHERE d.item_id=i.id AND k.state='snoozed' AND (k.snooze_next_brief OR k.snoozed_until>${now}))
+      FOR UPDATE OF i`)[0];
+    if (!i) continue;
+    const stage = new Date(String(i['due_at'])) <= now ? 'overdue' : 'before_brief';
+    // One alert per obligation (its kind), due date and stage.
+    const claimed = await sql`INSERT INTO assistant.attention_due_alerts(workspace_id,item_id,anchor,obligation,due_at,stage) VALUES(${workspace},${String(i['id'])},'',${String(i['category'])},${String(i['due_at'])},${stage}) ON CONFLICT DO NOTHING RETURNING item_id`;
+    if (!claimed.length) {
+      // Already alerted for this. If that alert was withdrawn before it reached the user (blocked, then unblocked), it
+      // counts again: its message notifies again and its push is queued again; one that was delivered stays done.
+      const back = await sql`UPDATE assistant.messages m SET notify=true FROM assistant.attention_due_alerts a
+        WHERE a.item_id=${String(i['id'])} AND a.obligation=${String(i['category'])} AND a.due_at=${String(i['due_at'])} AND a.stage=${stage} AND m.id=a.message_id AND NOT m.notify
+          AND NOT EXISTS(SELECT 1 FROM assistant.notification_deliveries d WHERE d.intent_id=m.id AND d.state='accepted') RETURNING m.id`;
+      for (const b of back) {
+        await sql`UPDATE assistant.notification_deliveries SET state='pending',next_attempt_at=now(),last_error=NULL WHERE intent_id=${b['id']} AND state='suppressed' AND last_error='withdrawn'`;
+        sent++;
+      }
+      continue;
+    }
+    const due = new Intl.DateTimeFormat('ko-KR', { timeZone: quiet ? String(quiet['timezone']) : 'Asia/Seoul', month: 'numeric', day: 'numeric', weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date(String(i['due_at'])));
+    const who = i['counterpart'] ? String(i['counterpart']).replace(/\s*[<(].*$/, '').trim() : null;
+    const what = i['category'] === 'promise' ? `${who ? `${who}님께 ` : ''}약속한 일` : `${who ? `${who}님 ` : ''}메일`;
+    const line = stage === 'overdue' ? `${what}의 기한(${due})이 지났어요: ${String(i['subject']).slice(0, 60)}. ${String(i['reason']).slice(0, 80)}`
+      : `${what}이 ${due}까지예요. 다음 브리핑 전이라 먼저 알려 드려요: ${String(i['subject']).slice(0, 60)}`;
+    const msg = (await sql`INSERT INTO assistant.messages(workspace_id,conversation_id,role,content,origin,notify)
+      VALUES(${workspace},${String(i['conversation_id'])},'assistant',${line},'responsibility',true) RETURNING id`)[0]!;
+    await sql`UPDATE assistant.attention_due_alerts SET message_id=${msg['id']} WHERE item_id=${String(i['id'])} AND obligation=${String(i['category'])} AND due_at=${String(i['due_at'])} AND stage=${stage}`;
+    await sql`WITH e AS (INSERT INTO assistant.events(workspace_id,kind,payload) VALUES(${workspace},'message.created',${JSON.stringify({ message: { id: msg['id'] } })}::text::jsonb) RETURNING id) INSERT INTO assistant.outbox(workspace_id,event_id) SELECT ${workspace},id FROM e`;
+    await enqueueMessageNotification(sql, workspace, { id: String(msg['id']) });
+    sent++;
+  }
+  return sent;
+}
+/**
+ * Alerts whose item was handled, rescheduled, blocked, re-labelled or whose watch stopped: their message stops
+ * notifying, which also drops a push still waiting in the queue. Called when such a change happens and on every tick.
+ */
+export async function withdrawStaleAlerts(sql: Query, workspace: string, now = new Date(), item: string | null = null) {
+  await sql`UPDATE assistant.messages m SET notify=false FROM assistant.attention_due_alerts a
+    JOIN assistant.attention_source_items i ON i.id=a.item_id JOIN assistant.attention_sources s ON s.id=i.source_id
+    WHERE a.workspace_id=${workspace} AND (${item}::uuid IS NULL OR a.item_id=${item}::uuid) AND m.id=a.message_id AND m.notify AND a.created_at>${now}::timestamptz-interval '1 day'
+      AND (i.state<>'open' OR i.due_at IS DISTINCT FROM a.due_at OR i.category<>a.obligation OR (i.blocked_reason IS NOT NULL AND i.due_at>${now}) OR (s.enabled OR i.once_until>${now}) IS NOT TRUE)`;
+}
+/**
+ * When the next brief will speak, for due alerts: a brief being written now (in flight), today's planned one while still
+ * ahead, else tomorrow's. With briefs off there is none (alerts cover the next 24 hours).
+ */
+async function upcomingBrief(sql: Query, workspace: string, now: Date): Promise<{ at: Date; inFlight: boolean }> {
+  const s = (await sql`SELECT brief_enabled FROM assistant.attention_settings WHERE workspace_id=${workspace}`)[0];
+  if (s && s['brief_enabled'] === false) return { at: new Date(now.getTime() + 86_400_000), inFlight: false };
+  const flight = (await sql`SELECT 1 FROM assistant.attention_briefs WHERE workspace_id=${workspace} AND state='dispatched' AND expires_at>${now}`)[0];
+  return { at: await nextBriefAt(sql, workspace, now), inFlight: !!flight };
+}
 export async function tickAttention(sql: Database, now = new Date()): Promise<Record<string, number>> {
   await sql`INSERT INTO assistant.attention_settings(workspace_id) SELECT id FROM assistant.workspaces WHERE default_conversation_id IS NOT NULL ON CONFLICT DO NOTHING`;
   const workspaces = (await sql`SELECT workspace_id FROM assistant.attention_settings`).map(r => String(r['workspace_id']));
   const counts: Record<string, number> = {};
   for (const workspace of workspaces) {
     let outcome: string;
-    try { outcome = await tickWorkspace(sql, workspace, now); }
+    try {
+      outcome = await tickWorkspace(sql, workspace, now);
+      // Only workspaces with an open item that has a due date (most have none).
+      const dueSoon = (await sql`SELECT 1 FROM assistant.attention_source_items WHERE workspace_id=${workspace} AND state='open' AND due_at IS NOT NULL LIMIT 1`).length > 0
+        || (await sql`SELECT 1 FROM assistant.attention_due_alerts WHERE workspace_id=${workspace} AND created_at>now()-interval '1 day' LIMIT 1`).length > 0;
+      const alerted = dueSoon ? await sql.begin(tx => alertDueItems(tx, workspace, now)) : 0;
+      if (alerted) counts['due_alerts'] = (counts['due_alerts'] ?? 0) + alerted;
+    }
     catch (error) {
       if (!(error instanceof Error)) throw error;
       console.error(JSON.stringify({ event: 'attention.workspace_failed', workspace, type: error.name, message: error.message.slice(0, 200) }));
@@ -269,7 +361,12 @@ export async function nextBriefAt(sql: Query, workspace: string, now = new Date(
   const last = (await sql`SELECT planned_minute FROM assistant.attention_briefs WHERE workspace_id=${workspace} ORDER BY local_date DESC LIMIT 1`)[0];
   const minute = s?.['brief_at_minute'] != null ? Number(s['brief_at_minute']) : last ? Number(last['planned_minute']) : 9 * 60;
   const today = localDate(now, timezone);
-  return z.object({ at: z.coerce.date() }).parse((await sql`SELECT (((${today}::date + 1) + make_interval(mins=>${minute})) AT TIME ZONE ${timezone}) AS at`)[0]).at;
+  // Today's time if it is still ahead and today's brief has not gone out; otherwise tomorrow's.
+  const done = (await sql`SELECT 1 FROM assistant.attention_briefs WHERE workspace_id=${workspace} AND local_date=${today}::date AND state<>'planned'`)[0];
+  const at = (day: number) => sql`SELECT (((${today}::date + ${day}::int) + make_interval(mins=>${minute})) AT TIME ZONE ${timezone}) AS at`;
+  const todayAt = z.object({ at: z.coerce.date() }).parse((await at(0))[0]).at;
+  if (!done && todayAt > now) return todayAt;
+  return z.object({ at: z.coerce.date() }).parse((await at(1))[0]).at;
 }
 
 /** Deterministic wake id per workspace and day, so a retried tick reuses the same background task. */

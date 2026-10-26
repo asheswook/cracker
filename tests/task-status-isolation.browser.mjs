@@ -1,7 +1,7 @@
 import { accessSync, constants, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
@@ -13,7 +13,6 @@ if (reasonQa) {
   await import('./task-error-card.browser.mjs');
 }
 const evidence = join(repo, '.omo/evidence/task-status-isolation', `run-${Date.now()}`);
-const skill = process.env.OMO_BROWSER_SKILL_ROOT || join(homedir(), '.codex/plugins/cache/sisyphuslabs/omo/5.1.7/skills/browser');
 const chrome = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 let build, profile, server, browser, page, origin, omowright;
 const results = [];
@@ -41,8 +40,8 @@ async function scenario(name, run) {
 try {
   mkdirSync(evidence, { recursive: true });
   accessSync(chrome, constants.X_OK);
-  const { loadOmowright } = await import(join(skill, 'scripts/omowright.mjs'));
-  ({ omowright } = await loadOmowright());
+  const { loadDriver } = await import('./support/browser-driver.mjs');
+  omowright = await loadDriver();
   build = mkdtempSync(join(tmpdir(), 'task-status-build-'));
   const sourceFiles = ['apps/web/src/TaskStatus.tsx','apps/web/src/TaskStatus.css','apps/web/src/WorkPanel.tsx','apps/web/src/styles.css','tests/task-status-isolation.browser.mjs','tests/fixtures/task-status/harness.tsx','tests/fixtures/task-status/server.ts'];
   writeFileSync(join(evidence, 'source-hashes.json'), JSON.stringify(Object.fromEntries(sourceFiles.map(path => [path,createHash('sha256').update(readFileSync(join(repo,path))).digest('hex')])),null,2));
@@ -72,9 +71,13 @@ try {
     assert.equal((await(await fetch(origin+'/fixture/state')).json()).actionRequests,0);
   });
   await scenario('work-panel-has-no-stop-controls', async () => {
-    assert.equal(await page.locator('#work article').count(),6);
+    // One row per task, each row is its one open action: at the answer when it succeeded, else at the request.
+    assert.equal(await page.locator('#work .work-row').count(),6);
     assert.equal((await state()).workStops,0);
-    assert.equal(await page.locator('#work .work-actions button').count(),7,'Request navigation remains; succeeded also has reply navigation');
+    assert.equal(await page.locator('#work .work-row .work-main').count(),6,'Every task stays openable');
+    const labels = await page.locator('#work .work-row .work-main').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('aria-label')));
+    assert.equal(labels.filter(label=>label.endsWith('답변 열기')).length,1,'Only the succeeded task opens its answer');
+    assert.equal(labels.filter(label=>label.endsWith('요청 열기')).length,5,'Every other task opens its request');
     assert.equal((await(await fetch(origin+'/fixture/state')).json()).actionRequests,0);
   });
 } finally {

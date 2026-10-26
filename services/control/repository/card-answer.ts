@@ -2,15 +2,15 @@ import { z } from "zod";
 import { DomainError, MessageBlocks } from "../../../packages/protocol";
 import type { Query } from "../db";
 import { appendMessage } from "./common";
-import { nextBriefAt } from "../../../packages/attention/coordinator";
-import { draftSendContext, draftStillValid, startSend } from "../../../packages/attention/sources";
+import { nextBriefAt, withdrawStaleAlerts } from "../../../packages/attention/coordinator";
+import { draftSendContext, draftStillValid, requestReply, startSend } from "../../../packages/attention/sources";
 
 /**
  * A button pressed on a draft or choice card.
  * - send / edit / a choice option: appended as an ordinary user message that replies to the card (text for the model,
  *   an `answer` block for the client), so it reaches the active task or starts one; the card becomes `accepted` and is
  *   linked to that task until the task finishes (`resolved` / `failed`, see settleCardsForTask).
- * - later: a snooze. No message, no work; the card returns to 챙길 것 and the next brief at snoozed_until.
+ * - later: a snooze. No message, no work; the card returns to 피드 and the next brief at snoozed_until.
  * - dismiss: the user does not want it; it is not shown again.
  * A card takes one decisive answer; snoozing can be followed by an answer. The same client id returns the first result.
  */
@@ -45,7 +45,10 @@ export async function answerCard(sql: Query, input: { readonly workspace: string
     // 나중에 = until the next brief, where it comes back with everything else (or an explicit number of hours).
     const until = input.snooze_hours ? new Date(Date.now() + input.snooze_hours * 3_600_000) : await nextBriefAt(sql, input.workspace);
     if (input.option === "later") await sql`UPDATE assistant.card_states SET state='snoozed',option='later',snoozed_until=${until},snooze_next_brief=${!input.snooze_hours},updated_at=now() WHERE workspace_id=${input.workspace} AND message_id=${input.message} AND block_id=${input.block_id}`;
-    else await sql`UPDATE assistant.attention_source_items i SET state='dismissed',updated_at=now() FROM assistant.attention_source_drafts d WHERE d.card_message_id=${input.message} AND d.item_id=i.id AND i.state='open'`;
+    else {
+      await sql`UPDATE assistant.attention_source_items i SET state='dismissed',updated_at=now() FROM assistant.attention_source_drafts d WHERE d.card_message_id=${input.message} AND d.item_id=i.id AND i.state='open'`;
+      await withdrawStaleAlerts(sql, input.workspace);
+    }
     if (input.option === "dismiss") await sql`UPDATE assistant.card_states SET state='dismissed',option='dismiss',snoozed_until=NULL,snooze_next_brief=false,updated_at=now() WHERE workspace_id=${input.workspace} AND message_id=${input.message} AND block_id=${input.block_id}`;
     // Remember the press so a retry with the same id is a no-op.
     await sql`INSERT INTO assistant.messages(workspace_id,conversation_id,role,content,client_message_id,origin,hidden,reply_to_message_id,blocks)
@@ -58,7 +61,23 @@ export async function answerCard(sql: Query, input: { readonly workspace: string
   const retry = state.state === "failed" && (await sql`SELECT retry_ok FROM assistant.card_states WHERE workspace_id=${input.workspace} AND message_id=${input.message} AND block_id=${input.block_id}`)[0]?.["retry_ok"] === true;
   if (!["pending", "snoozed"].includes(state.state) && !retry) throw new DomainError("already_answered", "This card was already answered", 409);
   // A reply draft for a watched thread is sendable only while that thread is open at the version it was written for.
-  const linked = block.kind === "draft" && input.option !== "edit" ? await draftStillValid(sql, input.workspace, input.message) : { linked: false as const };
+  // A reply draft for a watched thread: 수정 asks the draft job again with what to change (it stays on that thread and
+  // comes back as a new card for approval); it never becomes a chat task that could send by itself.
+  if (block.kind === "draft" && input.option === "edit") {
+    const item = (await sql`SELECT item_id FROM assistant.attention_source_drafts WHERE workspace_id=${input.workspace} AND card_message_id=${input.message}`)[0];
+    if (item) {
+      const change = (input.body ?? "").trim();
+      // Too long to pass on whole: say so rather than dropping the end of what the user asked.
+      if (change.length > 1500) throw new DomainError("edit_too_long", "수정할 내용이 너무 길어요. 1,500자 안으로 줄여 주세요.", 400);
+      const request = await requestReply(sql, input.workspace, String(item["item_id"]), change ? `Rewrite the draft like this: ${change}` : null);
+      if (!request) throw new DomainError("send_pending", "이 스레드는 끝났거나 답장을 보내는 중이라 다시 쓸 수 없어요", 409);
+      await sql`INSERT INTO assistant.messages(workspace_id,conversation_id,role,content,client_message_id,origin,hidden,reply_to_message_id,blocks)
+        VALUES(${input.workspace},${input.conversation},'user','수정 요청',${input.client_message_id},'user',true,${input.message},
+        ${JSON.stringify([{ kind: "answer", message_id: input.message, block_id: input.block_id, option: "edit", label: "수정 요청", body: input.body ?? null }])}::text::jsonb)`;
+      return { card: { state: "replaced", snoozed_until: null, reason: "고쳐서 다시 쓰고 있어요. 새 초안이 피드에 나와요" }, message: null, task: null };
+    }
+  }
+  const linked = block.kind === "draft" ? await draftStillValid(sql, input.workspace, input.message) : { linked: false as const };
   if (linked.linked && !linked.ok) {
     await sql`UPDATE assistant.card_states SET state='replaced',updated_at=now() WHERE workspace_id=${input.workspace} AND message_id=${input.message} AND block_id=${input.block_id}`;
     // Not an error to retry: the card is closed and says why (the state change must be kept, so no throw).
@@ -82,10 +101,12 @@ export async function answerCard(sql: Query, input: { readonly workspace: string
       : `${block.channel}${block.target ? ` ${block.target}` : ""}에 이 내용으로 보내 줘(승인, 카드 ${input.message}:${input.block_id}):\n${body}${sendContext ? `\n\n${sendContext}` : ""}`;
   }
   const answer = { kind: "answer" as const, message_id: input.message, block_id: input.block_id, option: input.option, label, body };
-  // An approved reply to a watched thread goes to the dedicated sender (fixed body, account, thread), not to a chat task.
+  // An approved reply to a watched thread goes to the dedicated sender (fixed body, account, thread), never to a chat
+  // task: if the sender cannot take it, the approval is refused rather than handed to a model with a browser.
+  if (linked.linked && input.option === "send" && body === null) throw new DomainError("send_pending", "보낼 내용이 없어요", 409);
   if (linked.linked && input.option === "send" && body !== null) {
     const send = await startSend(sql, { workspace: input.workspace, card: input.message, block: input.block_id, body, recipient: block.kind === "draft" ? block.target : null });
-    if (send && "blocked" in send) throw new DomainError("send_pending", send.blocked ?? "", 409);
+    if (send && "blocked" in send) throw Object.assign(new DomainError("send_pending", send.blocked ?? "", 409), "redraft" in send && send.redraft ? { redraft: send.redraft, redraft_body: "body" in send ? send.body : null } : {});
     if (send) {
       const note = await sql`INSERT INTO assistant.messages(workspace_id,conversation_id,role,content,client_message_id,origin,hidden,reply_to_message_id,blocks)
         VALUES(${input.workspace},${input.conversation},'user',${label},${input.client_message_id},'user',true,${input.message},${JSON.stringify([answer])}::text::jsonb) RETURNING *`;
@@ -93,6 +114,7 @@ export async function answerCard(sql: Query, input: { readonly workspace: string
         WHERE workspace_id=${input.workspace} AND message_id=${input.message} AND block_id=${input.block_id}`;
       return { card: { state: "accepted", snoozed_until: null }, message: null, task: send.task };
     }
+    throw new DomainError("send_pending", "이 초안은 여기서 보낼 수 없어요. 원문에서 직접 보내 주세요", 409);
   }
   const result = await appendMessage(sql, {
     workspace: input.workspace, conversation: input.conversation, content: text, clientId: input.client_message_id,

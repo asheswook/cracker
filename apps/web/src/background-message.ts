@@ -30,11 +30,21 @@ function firstLine(content: string): string {
   return '';
 }
 
+/** Assistant-owned source jobs carry English model instructions as their objective; show what they are, in Korean. */
+export function readableTitle(line: string): string {
+  const account = line.match(/for ([\w.+-]+@[\w.-]+|[\w-]+) \(/)?.[1] ?? line.match(/\(([\w.+-]+@[\w.-]+)/)?.[1];
+  const subject = line.match(/Thread: (.+?)(?: \(from\b|, id\b)/)?.[1] ?? line.match(/"([^"]+)"\)?\.?$/)?.[1];
+  if (/^(Gmail|Slack) observation for/.test(line)) return `${line.startsWith('Slack') ? 'Slack' : 'Gmail'} 확인${account ? ` · ${account}` : ''}`;
+  if (/Prepare a reply draft/.test(line)) return `답장 초안 쓰기${subject ? ` · ${subject}` : ''}`;
+  if (/^Send (exactly )?one approved/.test(line)) return `승인한 답장 보내기${subject ? ` · ${subject}` : ''}`;
+  if (/^Check whether an approved reply went out/.test(line)) return '보낸 답장 확인';
+  return line;
+}
 function run(messages: readonly Message[], objectives: ReadonlyMap<string, string>): BackgroundRun {
   const wake = messages.find(message => message.role === 'system');
   const task = messages.find(message => message.task_id)?.task_id;
   const line = (wake ? wake.content : (task && objectives.get(task)) || '').split(/\r?\n/, 1)[0]?.trim() ?? '';
-  const title = line.startsWith(BACKGROUND_RUN_PREFIX) ? line.slice(BACKGROUND_RUN_PREFIX.length).trim() : line;
+  const title = readableTitle(line.startsWith(BACKGROUND_RUN_PREFIX) ? line.slice(BACKGROUND_RUN_PREFIX.length).trim() : line);
   const reply = [...messages].reverse().find(message => message.role === 'assistant');
   return {
     kind: 'run',

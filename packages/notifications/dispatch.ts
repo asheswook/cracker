@@ -112,6 +112,12 @@ export async function dispatchNotifications(
                   AND (v.session_hash IS NULL OR (b.revoked_at IS NULL AND b.expires_at>clock_timestamp())))
               OR (${job.transport}='web' AND EXISTS(SELECT 1 FROM assistant.notification_viewing v WHERE v.subscription_id=d.subscription_id AND v.expires_at>clock_timestamp()))) RETURNING d.id`;
         if (suppressed.length) return;
+        // A message withdrawn after it was queued (hidden, or no longer meant to notify — e.g. a due alert whose item
+        // was handled, rescheduled or stopped meanwhile) is not sent.
+        const withdrawn = await sql`UPDATE assistant.notification_deliveries d SET state='suppressed',last_error='withdrawn',lease_id=NULL,lease_until=NULL
+            WHERE d.id=${job.id} AND d.state='leased' AND d.lease_id=${job.lease_id}
+              AND EXISTS(SELECT 1 FROM assistant.messages m WHERE m.id=${job.message_id} AND (m.hidden OR (m.origin<>'user' AND NOT m.notify))) RETURNING d.id`;
+        if (withdrawn.length) return;
         stage = "send";
         const expiresAt = Date.parse(job.expires_at);
         if (expiresAt - Date.now() < 1000) throw new PushSendError("notification_expired");

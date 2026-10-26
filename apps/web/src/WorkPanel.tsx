@@ -1,31 +1,64 @@
-import { useLayoutEffect, useRef, useState } from 'react';
-import { ListChecks } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Bot, ChevronRight, CircleAlert, CircleCheck, CircleSlash, ListChecks, Search } from 'lucide-react';
 import type { Id, Task } from './types';
 import { Empty } from './primitives';
 import { WorkSearch } from './WorkSearch';
-import { compareNewestCreated } from './recent-order';
-import { ScheduleObjective } from './ScheduleObjective';
-import { TaskStatus } from './TaskStatus';
-import { taskReason } from './task-reason';
-import { WorkOpenAction } from './WorkOpenAction';
+import { errorMessage } from './api';
+import { WorkNavigationError } from './WorkOpenAction';
 import { createWorkSession } from './work-session';
-import type { WorkFilter, WorkSession } from './work-session';
+import type { WorkSession } from './work-session';
 import type { TaskDestination } from './useWorkNavigation';
+import { activeTasks, dayLabel, finishedByDay, finishedStatus, liveStatus, taskTitle } from './work-list';
 import './schedules.css';
 import './work-search.css';
-const activeStates = new Set(['queued', 'running', 'waiting', 'pausing', 'paused', 'cancelling', 'unknown']);
-const labels: Readonly<Record<string, string>> = {
-  queued: '대기 중',
-  running: '진행 중',
-  waiting: '응답 대기',
-  pausing: '일시 정지 중',
-  paused: '일시 정지',
-  cancelling: '중지 확인 중',
-  cancelled: '취소됨',
-  succeeded: '완료',
-  failed: '실패',
-  unknown: '확인 필요',
-};
+import './work.css';
+
+const PAGE = 20;
+
+/** A whole row is the link; while it opens it says so, and a failure stays next to it. */
+function TaskRow({ task, line, tone, destination, onOpen, quiet = false }: {
+  readonly task: Task;
+  readonly line: string;
+  readonly tone: 'live' | 'wait' | 'attention' | 'done' | 'failed' | 'cancelled';
+  readonly destination: TaskDestination;
+  readonly onOpen: (task: Task, sourceMessageId?: Id, destination?: TaskDestination) => Promise<void> | void;
+  readonly quiet?: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const open = async () => {
+    setBusy(true); setError('');
+    try { await onOpen(task, undefined, destination); }
+    catch (e) { if (mounted.current) setError(e instanceof WorkNavigationError ? e.message : errorMessage(e)); }
+    finally { if (mounted.current) setBusy(false); }
+  };
+  const Icon = tone === 'failed' || tone === 'attention' ? CircleAlert : tone === 'cancelled' ? CircleSlash : tone === 'done' ? CircleCheck : null;
+  const title = taskTitle(task);
+  return (
+    <li className="work-row" data-tone={tone} data-quiet={quiet || undefined} data-task-id={task.id}>
+      <button type="button" className="work-main" onClick={() => void open()} aria-busy={busy || undefined}
+        aria-label={`${title}, ${line}. ${destination === 'reply' ? '답변 열기' : '요청 열기'}`}>
+        <span className="work-mark" aria-hidden="true">
+          {Icon ? <Icon size={quiet ? 14 : 16} strokeWidth={1.9} /> : <span className="work-pulse" />}
+        </span>
+        <span className="work-text">
+          <span className="work-title">{title}</span>
+          <span className="work-line">{busy ? '여는 중…' : line}</span>
+        </span>
+        <ChevronRight size={16} aria-hidden="true" className="work-chevron" />
+      </button>
+      {error && <p className="work-error" role="alert">{error}</p>}
+    </li>
+  );
+}
+
+/**
+ * 맡긴 일: what is still going on first, then what finished, by day.
+ * The assistant's own runs (watches, drafts, sends, briefs) fold into one row per day so they never bury requests.
+ * A row opens the conversation: at the answer when it succeeded, otherwise at the request.
+ */
 export function WorkPanel({
   tasks,
   onOpen,
@@ -40,8 +73,11 @@ export function WorkPanel({
   const localSession = useRef(createWorkSession());
   const session = suppliedSession ?? localSession.current;
   const [query, setQuery] = useState(session.query);
-  const [filter, setFilter] = useState<WorkFilter>(session.filter);
+  const [limit, setLimit] = useState(PAGE);
+  const [, rerender] = useState(0);
   const section = useRef<HTMLElement>(null);
+  // The status filter is gone from this screen; search covers everything.
+  session.filter = 'all';
   useLayoutEffect(() => {
     const owner = section.current?.closest('.inspector-body');
     if (!(owner instanceof HTMLElement)) return;
@@ -60,72 +96,78 @@ export function WorkPanel({
     session.sources.clear();
     section.current?.closest('.inspector-body')?.scrollTo({ top: 0, behavior: 'instant' });
   };
-  const results = tasks.filter(
-    (task) =>
-      (!query.trim() ||
-        `${task.objective} ${task.reason ?? ''}`
-          .toLocaleLowerCase()
-          .includes(query.trim().toLocaleLowerCase())) &&
-      (filter === 'all' ||
-        (filter === 'active' ? activeStates.has(task.state) : !activeStates.has(task.state))),
-  ).sort(compareNewestCreated);
+  const now = new Date();
+  const active = activeTasks(tasks);
+  const { days, more } = finishedByDay(tasks, limit);
+  const searching = query.trim().length > 0;
+
   return (
-    <section className="work-panel" aria-label="맡긴 일 찾기" ref={section}>
-      <div className="work-tools">
+    <section className="work-panel work-v2" aria-label="맡긴 일" ref={section}>
+      <div className="work-search-field">
+        <Search size={16} aria-hidden="true" />
         <input
           type="search"
-          aria-label="작업 검색"
-          placeholder="본문·파일·맡긴 일 검색"
+          aria-label="맡긴 일 검색"
+          placeholder="검색"
           maxLength={200}
           value={query}
           onChange={(event) => { if (event.target.value.trim() !== query.trim()) resetReading(); session.query = event.target.value; setQuery(event.target.value); }}
         />
-        <div className="work-filters" aria-label="작업 상태 필터">
-          {[
-            { id: 'all' as const, label: '전체' },
-            { id: 'active' as const, label: '진행 중' },
-            { id: 'finished' as const, label: '지난 일' },
-          ].map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              aria-pressed={filter === item.id}
-              onClick={() => { if (item.id === filter) return; resetReading(); session.filter = item.id; setFilter(item.id); }}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
       </div>
-      {query.trim() ? <WorkSearch key={`${query.trim()}:${filter}`} query={query} filter={filter} onSource={onSource} session={session}/> : results.length === 0 ? (
-        <Empty
-          icon={<ListChecks size={24} />}
-          title={tasks.length ? '일치하는 일이 없어요' : '아직 맡긴 일이 없어요'}
-        >
-          {tasks.length
-            ? '검색어나 상태 필터를 바꿔 보세요.'
-            : '메시지로 일을 맡기면 진행 상황과 결과를 여기서 찾을 수 있어요.'}
-        </Empty>
+      {searching ? <WorkSearch key={query.trim()} query={query} filter="all" onSource={onSource} session={session} /> : !tasks.length ? (
+        <Empty icon={<ListChecks size={24} />} title="아직 맡긴 일이 없어요">메시지로 일을 맡기면 진행 상황과 결과가 여기 모여요.</Empty>
       ) : (
-        <div className="resource-list">
-          {results.map((task) => (
-            <article className="resource-item" key={task.id} data-task-id={task.id}>
-              <div className="resource-meta">
-                <span className={`task-state ${task.state}`}>{labels[task.state] ?? task.state}</span>
-                <time dateTime={task.created_at}>
-                  {new Date(task.created_at).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' })}
-                </time>
-              </div>
-              <ScheduleObjective objective={task.objective} open={session.disclosures.has(task.id)} onToggle={open => { if (open) session.disclosures.add(task.id); else session.disclosures.delete(task.id); }} />
-              <TaskStatus task={task} />
-              {task.state === 'cancelled' && taskReason(task.reason) && <p className="task-note">{taskReason(task.reason)?.text}</p>}
-              <div className="work-actions">
-                {task.state === 'succeeded' && <WorkOpenAction onOpen={() => onOpen(task, undefined, 'reply')}>답변 보기</WorkOpenAction>}
-                <WorkOpenAction onOpen={() => onOpen(task, undefined, 'request')}>요청 보기</WorkOpenAction>
-              </div>
-            </article>
-          ))}
-        </div>
+        <>
+          <section className="work-section" aria-labelledby="work-active">
+            <h2 id="work-active" className="work-label">하고 있는 일{active.length > 0 && <span className="work-count">{active.length}</span>}</h2>
+            {active.length ? (
+              <ul className="work-list">
+                {active.map(task => { const s = liveStatus(task, now); return <TaskRow key={task.id} task={task} line={s.text} tone={s.tone} destination="request" onOpen={onOpen} />; })}
+              </ul>
+            ) : <p className="work-calm">지금 하고 있는 일은 없어요.</p>}
+          </section>
+          {days.length > 0 && <h2 className="work-label work-label-major">끝난 일</h2>}
+          {days.map(({ day, requests, routine }) => {
+            const key = `routine:${day}`;
+            return (
+              <section key={day} className="work-section" aria-labelledby={`work-day-${day}`}>
+                <h3 id={`work-day-${day}`} className="work-label">{dayLabel(day, now)}</h3>
+                <ul className="work-list">
+                  {requests.map(task => {
+                    const s = finishedStatus(task);
+                    return <TaskRow key={task.id} task={task} line={s.text} tone={task.state === 'succeeded' ? 'done' : task.state === 'cancelled' ? 'cancelled' : 'failed'}
+                      destination={task.state === 'succeeded' ? 'reply' : 'request'} onOpen={onOpen} />;
+                  })}
+                  {routine.length > 0 && (
+                    <li className="work-fold-item">
+                      <details className="work-fold" open={session.disclosures.has(key)}
+                        onToggle={e => { if (e.currentTarget.open) session.disclosures.add(key); else session.disclosures.delete(key); rerender(n => n + 1); }}>
+                        <summary>
+                          <span className="work-mark" aria-hidden="true"><Bot size={16} strokeWidth={1.9} /></span>
+                          <span className="work-text">
+                            <span className="work-title">자동으로 한 일 {routine.length}개</span>
+                            <span className="work-line">메일 확인, 답장 초안 같은 일{routine.some(t => t.state === 'failed') ? ` · 실패 ${routine.filter(t => t.state === 'failed').length}개` : ''}</span>
+                          </span>
+                          <ChevronRight size={16} aria-hidden="true" className="work-chevron work-fold-chevron" />
+                        </summary>
+                        {session.disclosures.has(key) && (
+                          <ul className="work-list">
+                            {routine.map(task => {
+                              const s = finishedStatus(task);
+                              return <TaskRow key={task.id} quiet task={task} line={s.text} tone={task.state === 'succeeded' ? 'done' : task.state === 'cancelled' ? 'cancelled' : 'failed'}
+                                destination={task.state === 'succeeded' ? 'reply' : 'request'} onOpen={onOpen} />;
+                            })}
+                          </ul>
+                        )}
+                      </details>
+                    </li>
+                  )}
+                </ul>
+              </section>
+            );
+          })}
+          {more && <button type="button" className="work-more" onClick={() => setLimit(l => l + PAGE)}>더 보기</button>}
+        </>
       )}
     </section>
   );

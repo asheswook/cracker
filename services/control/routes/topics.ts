@@ -7,7 +7,7 @@ import { conversationTopics, topicBranch } from '../../../packages/topics/store'
 import { branchWork } from '../../../packages/topics/work';
 import { attention } from '../../../packages/attention/store';
 import { briefContext, withdrawBrief } from '../../../packages/attention/coordinator';
-import { answerSourceItem, claimSend, claimSendCheck, confirmSend, noteAdapterCoverage, noteDraftRevision, pinSendRevision, recheckSend, recordObservation, recordSendCheck, recordSendResult, sendJobKind, setWatch, WatchRequest } from '../../../packages/attention/sources';
+import { answerSourceItem, retrySource, updateObligation, itemThread, requestReply, taskSourceAccount, claimSend, claimSendCheck, confirmSend, noteAdapterCoverage, noteDraftRevision, noteThreadSnapshot, pinSendRevision, recheckSend, recordObservation, recordSendCheck, recordSendResult, sendJobKind, setWatch, WatchRequest } from '../../../packages/attention/sources';
 import { authorizeReferenceRun } from '../repository/work-search';
 
 /** Client read routes for topic chips and the branch sheet. Read-only over the knowledge tree. */
@@ -95,10 +95,14 @@ export function topicRoutes(sql: Database) {
     const principal = c.get('principal');
     const run = z.uuid().parse(c.req.param('run'));
     await authorizeReferenceRun(sql, principal, run);
-    const body = z.object({ thread: z.string().max(40), revision: z.string().min(3).max(300) }).parse(await c.req.json());
+    const body = z.object({ account: z.string().max(200).optional(), truncated: z.boolean().optional(), thread: z.string().max(40), revision: z.string().min(3).max(300).nullable(),
+      messages: z.array(z.object({ from: z.string().max(300), from_address: z.string().max(300).nullable(), at: z.string().max(100), to: z.string().max(2000), body: z.string().max(60000) })).max(200).optional() }).parse(await c.req.json());
     return c.json(await sql.begin(async tx => {
       const task = String((await tx`SELECT task_id FROM assistant.runs WHERE id=${run}`)[0]?.['task_id']);
-      await noteDraftRevision(tx, principal.workspace_id, task, body.thread, body.revision);
+      // Only a reading of the watched account counts (another account's thread with the same id is dropped).
+      if (!(await taskSourceAccount(tx, principal.workspace_id, task, body.account ?? null))) return { noted: false, reason: 'account mismatch' };
+      if (body.revision) await noteDraftRevision(tx, principal.workspace_id, task, body.thread, body.revision);
+      if (body.messages) await noteThreadSnapshot(tx, principal.workspace_id, task, body.thread, body.messages, body.truncated === true);
       return { noted: true };
     }));
   });
@@ -115,7 +119,7 @@ export function topicRoutes(sql: Database) {
     const principal = c.get('principal');
     const run = z.uuid().parse(c.req.param('run'));
     await authorizeReferenceRun(sql, principal, run);
-    const body = z.object({ kind: z.enum(['gmail', 'slack_channels', 'slack_history']).default('gmail'), account: z.string().max(200).optional(), after: z.string().regex(/^\d{4}\/\d{2}\/\d{2}$/).optional(), before: z.string().nullable().optional(), channel: z.string().max(40).optional(), oldest: z.number().optional(), complete: z.boolean(), rows: z.number().int().nonnegative() }).strict().parse(await c.req.json());
+    const body = z.object({ kind: z.enum(['gmail', 'slack_channels', 'slack_history']).default('gmail'), account: z.string().max(200).optional(), after: z.string().regex(/^\d{4}\/\d{2}\/\d{2}$/).optional(), before: z.string().nullable().optional(), channel: z.string().max(40).optional(), oldest: z.number().optional(), utc_offset_minutes: z.number().int().min(-900).max(900).optional(), team: z.string().max(40).optional(), cursor: z.string().max(400).optional(), next_cursor: z.string().max(400).optional(), channels: z.array(z.string().max(40)).max(5000).optional(), complete: z.boolean(), rows: z.number().int().nonnegative() }).strict().parse(await c.req.json());
     return c.json(await sql.begin(async tx => {
       const task = String((await tx`SELECT task_id FROM assistant.runs WHERE id=${run}`)[0]?.['task_id']);
       await noteAdapterCoverage(tx, principal.workspace_id, task, body);
@@ -157,11 +161,44 @@ export function topicRoutes(sql: Database) {
         WHERE r.id=${run} AND m.role='user' AND m.origin='user' AND NOT m.synthetic AND position(${body.source_quote} in m.content)>0 ORDER BY m.sequence DESC LIMIT 1`)[0];
       if (!source) throw new DomainError('invalid_source', 'source_quote must be the user\'s own words from this conversation turn', 400);
       const row = await setWatch(tx, { ...body, workspace: principal.workspace_id, conversation: String(source['conversation_id']), source_message: String(source['id']) });
-      return body.mode === 'once' ? { looking_once: true, watch_enabled: row?.['enabled'] ?? false, note: 'results appear in 챙길 것; the standing watch was not changed' }
+      return body.mode === 'once' ? { looking_once: true, watch_enabled: row?.['enabled'] ?? false, note: 'results appear in the 피드 (feed); the standing watch was not changed' }
         : { watching: row?.['enabled'], account: body.account, every_minutes: row?.['interval_minutes'], next_check_at: row?.['next_check_at'] };
     }));
   });
+  // Client: the thread of a feed item (messages as the adapter last read them, and its reply draft).
+  app.get('/attention/mail/:id/thread', async c => {
+    const workspace = client(c.get('principal'));
+    const thread = await sql.begin('isolation level repeatable read read only', tx => itemThread(tx, workspace, z.uuid().parse(c.req.param('id'))));
+    if (!thread) throw new DomainError('not_found', 'Item not found', 404);
+    c.header('Cache-Control', 'no-store');
+    return c.json(thread);
+  });
+  // Client: 답장 — ask for a reply draft on this thread, optionally with what it should say.
+  app.post('/attention/mail/:id/reply', async c => {
+    const workspace = client(c.get('principal'));
+    const body = z.object({ note: z.string().trim().max(1000).nullable().default(null) }).strict().parse(await c.req.json().catch(() => ({})));
+    const request = await sql.begin(tx => requestReply(tx, workspace, z.uuid().parse(c.req.param('id')), body.note || null));
+    if (!request) throw new DomainError('stale', 'This thread is closed or a reply is already being sent', 409);
+    return c.json({ ok: true, reply_request: { id: request, state: 'queued' } });
+  });
   // Client: 필요 없음 (comes back only if the thread changes) or 내가 처리함 on a watched thread.
+  // Client: 다시 확인 on a blocked watch (after logging in): one look now.
+  app.post('/attention/source/:id/retry', async c => {
+    const workspace = client(c.get('principal'));
+    const r = await sql.begin(tx => retrySource(tx, workspace, z.uuid().parse(c.req.param('id'))));
+    if (!r) throw new DomainError('not_found', 'Nothing to retry', 404);
+    return c.json({ ok: true, looking: true });
+  });
+  // Client: move an obligation's due date, or say it is blocked (or not any more).
+  app.post('/attention/mail/:id/obligation', async c => {
+    const workspace = client(c.get('principal'));
+    const body = z.object({ due_at: z.iso.datetime({ offset: true }).nullable().optional(), blocked: z.string().trim().max(300).nullable().optional() }).strict().parse(await c.req.json());
+    const change: { due_at?: string | null; blocked?: string | null } = {};
+    if (body.due_at !== undefined) change.due_at = body.due_at;
+    if (body.blocked !== undefined) change.blocked = body.blocked || null;
+    if (!(await sql.begin(tx => updateObligation(tx, workspace, z.uuid().parse(c.req.param('id')), change)))) throw new DomainError('not_found', 'Item not found', 404);
+    return c.json({ ok: true });
+  });
   app.post('/attention/mail/:id/:how', async c => {
     const workspace = client(c.get('principal'));
     const how = z.enum(['dismiss', 'handled']).parse(c.req.param('how'));

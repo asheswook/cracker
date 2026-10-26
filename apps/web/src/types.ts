@@ -78,6 +78,7 @@ export const Schedule = z.object({
   id: Id,
   conversation_id: Id,
   objective: z.string(),
+  title: z.string().nullable().optional(),
   due_at: z.string(),
   timezone: z.string(),
   status: z.string(),

@@ -136,7 +136,11 @@ export const Assignment = z.object({
   work_context: WorkContext.optional(),
   skill_binding: z.object({skill_id:Id,revision:z.number().int().positive(),content_hash:z.string(),name:z.string()}).optional(),
   /** read_only: an assistant-owned look or draft run; the daemon refuses every tool that could write outside (code, not prompt). */
-  run_policy: z.enum(['read_only', 'send_once']).optional(),
+  run_policy: z.enum(['read_only', 'send_once', 'brief']).optional(),
+  /** For a source job: the one account (Gmail) or workspace (Slack) its readers may read. */
+  source_scope: z.object({ kind: z.enum(['gmail', 'slack']), account: z.string() }).optional(),
+  /** For the brief: the extension servers (ids) whose calendar reads it may use. */
+  calendar_servers: z.array(z.string()).optional(),
   memory: z.array(z.object({ id: Id, text: z.string() })),
 });
 export const DaemonPoll = z.object({

@@ -1,4 +1,4 @@
-import { sourceRunPolicy } from "../../../packages/attention/sources";
+import { executionPolicy } from "./execution-policy";
 import { retentionContext } from "../../../packages/memory/retention-store";
 import { taskSkill } from "../../../packages/extensions/versions.ts";
 import { runModelBinding } from "../../../packages/models/repository.ts";
@@ -102,7 +102,7 @@ export async function workContext(sql: Query, principal: Principal, run: string)
     model_binding: await runModelBinding(sql, principal, run),
     skill_binding: await taskSkill(sql,principal.workspace_id,task.id),
     // Source jobs run under a policy the daemon enforces (looks/drafts read only, a send job sends one reply).
-    ...await (async () => { const policy = await sourceRunPolicy(sql, principal.workspace_id, task.id); return policy ? { run_policy: policy } : {}; })(),
+    ...await executionPolicy(sql, principal.workspace_id, task.id),
     task,
     lane: task.lane ?? 'foreground',
     run_id: run,

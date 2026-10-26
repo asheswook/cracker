@@ -84,7 +84,7 @@ export const readAttentionTool: Tool = {
   type: "function",
   name: "read_attention",
   description:
-    "Read the user's 챙길 것 list: needs_you (unanswered cards, stopped tasks), in_progress (running tasks, standing responsibilities, pending schedules) and done (results of the last 48 hours). " +
+    "Read the user's 피드 list: needs_you (unanswered cards, stopped tasks), in_progress (running tasks, standing responsibilities, pending schedules) and done (results of the last 48 hours). " +
     "Use it to write a morning brief or to answer 'what's going on'. Each item has a topic, title, detail and time. It reads only; it changes nothing.",
   strict: true,
   parameters: { type: "object", properties: {}, required: [], additionalProperties: false },
@@ -121,10 +121,10 @@ export const reportObservationTool: Tool = {
       error_kind: { type: ["string", "null"], enum: ["login_required", "account_choice", "browser_unavailable", "ui_changed", "other", null] },
       error: { type: ["string", "null"] },
       oldest_read: { type: ["string", "null"] },
-      items: { type: "array", items: { type: "object", additionalProperties: false, required: ["thread_key", "url", "subject", "counterpart", "category", "action", "reason", "evidence", "due_at", "version", "request_anchor"], properties: {
+      items: { type: "array", items: { type: "object", additionalProperties: false, required: ["thread_key", "url", "subject", "counterpart", "category", "action", "reason", "evidence", "due_at", "version", "request_anchor", "waiting_since"], properties: {
         thread_key: { type: "string" }, url: { type: ["string", "null"] }, subject: { type: "string" }, counterpart: { type: ["string", "null"] },
-        category: { type: "string", enum: ["request", "deadline", "overdue", "waiting", "alert"] }, action: { type: "string", enum: ["reply", "review", "act", "none"] },
-        reason: { type: "string" }, evidence: { type: ["string", "null"] }, due_at: { type: ["string", "null"] }, version: { type: "string" }, request_anchor: { type: ["string", "null"] } } } },
+        category: { type: "string", enum: ["request", "deadline", "overdue", "waiting", "alert", "promise"] }, action: { type: "string", enum: ["reply", "review", "act", "none"] },
+        reason: { type: "string" }, evidence: { type: ["string", "null"] }, due_at: { type: ["string", "null"] }, version: { type: "string" }, request_anchor: { type: ["string", "null"] }, waiting_since: { type: ["string", "null"] } } } },
       resolved: { type: "array", items: { type: "object", additionalProperties: false, required: ["thread_key", "how", "evidence", "answered_by"], properties: {
         thread_key: { type: "string" }, how: { type: "string", enum: ["replied", "done", "withdrawn"] }, evidence: { type: "string" }, answered_by: { type: ["string", "null"] } } } },
     },
@@ -136,9 +136,9 @@ export const watchSourceTool: Tool = {
   type: "function",
   name: "watch_source",
   description:
-    "Watching the user's Gmail or Slack on their behalf through the VM browser (kind gmail / slack; account = the Gmail address or the Slack workspace, e.g. acme). mode=watch: keep looking every couple of hours outside quiet hours (findings go to 챙길 것 and the morning brief; reply drafts are prepared for mail that needs the user's answer; no periodic reports). " +
+    "Watching the user's Gmail or Slack on their behalf through the VM browser (kind gmail / slack; account = the Gmail address or the Slack workspace, e.g. acme). mode=watch: keep looking every couple of hours outside quiet hours (findings go to 피드 and the morning brief; reply drafts are prepared for mail that needs the user's answer; no periodic reports). " +
     "mode=stop: stop watching. mode=once: look a single time now without turning the watch on. Call it only when the user asks in this turn ('Gmail 챙겨줘', '메일 한 번 봐줘', 'Gmail 그만 봐'); source_quote = the user's exact words. " +
-    "When the user asks you to check, read or go through their Gmail or Slack for things to handle (e.g. '메일 확인해줘', '슬랙 답할 거 있나 봐줘'), use mode=once instead of reading it yourself: the look is tracked in 챙길 것, reply drafts are prepared, and its result is posted in this conversation. Then end your turn with one short sentence; do not also read it in this turn. " +
+    "When the user asks you to check, read or go through their Gmail or Slack for things to handle (e.g. '메일 확인해줘', '슬랙 답할 거 있나 봐줘'), use mode=once instead of reading it yourself: the look is tracked in 피드, reply drafts are prepared, and its result is posted in this conversation. Then end your turn with one short sentence; do not also read it in this turn. " +
     "You may suggest a single look when it clearly helps the conversation, but never turn the standing watch on (or back on after the user stopped it) without the user saying so. account = the Gmail address. interval_minutes = null unless the user said how often.",
   strict: true,
   parameters: { type: "object", additionalProperties: false, required: ["kind", "account", "mode", "source_quote", "interval_minutes"], properties: {

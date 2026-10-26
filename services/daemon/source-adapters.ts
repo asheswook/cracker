@@ -22,7 +22,8 @@ export class AdapterError extends Error { constructor(readonly code: string, mes
 const isHex = (s: string) => /^[0-9a-f]{8,20}$/i.test(s);
 const norm = (s: string) => s.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 const decode = (s: string) => s.replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
-const plain = (html: string) => decode(html.replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/gi, " ").replace(/<br\s*\/?>|<\/(p|div|tr|table)>/gi, "\n").replace(/<[^>]+>/g, " "))
+// <wbr> (Gmail breaks long links with it) and zero-width characters are nothing, not a space.
+const plain = (html: string) => decode(html.replace(/<wbr\s*\/?>/gi, "").replace(/[\u200b\u200c\u200d\ufeff]/g, "").replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/gi, " ").replace(/<br\s*\/?>|<\/(p|div|tr|table)>/gi, "\n").replace(/<[^>]+>/g, " "))
   .replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n").trim();
 
 /** The signed-in address of a Gmail tab, from the account menu label (not the page title). */
@@ -72,23 +73,25 @@ export async function gmailList(page: Page, base: string, window: { after: strin
       return { id: r.querySelector("[data-legacy-thread-id]")?.getAttribute("data-legacy-thread-id") ?? "", from: text(r.querySelector(".yW")), subject: text(r.querySelector(".bog")),
         snippet: text(r.querySelector(".y2")).slice(0, 160), when: r.querySelector(".xW span[title]")?.getAttribute("title") || text(r.querySelector(".xW")), unread: r.classList.contains("zE") };
     }).filter(r => r.id));
-    if (pageRows.length !== rowCount) return { window, query, rows, total, complete: false, reason: "some rows had no thread id" };
+    if (pageRows.length !== rowCount) return { window, query, rows, total, complete: false, reason: "some rows had no thread id", utc_offset_minutes: await zoneOffset(page) };
     for (const r of pageRows) if (!rows.some(x => x.id === r.id)) rows.push(r);
     const range = await page.locator('div[role="main"] span.Dj').first().innerText({ timeout: 3000 }).catch(() => "");
     const m = /([\d,]+)\D+([\d,]+)\D+([\d,]+)/.exec(range.replace(/\s/g, " "));
     if (m) total = Number(m[1]!.replace(/,/g, ""));
     // Last page only when the Next button is found and says disabled; a missing button is not proof.
     const next = page.locator('div[role="button"][aria-label="다음 결과"], div[role="button"][aria-label="Older"]').first();
-    if (!(await next.count())) return { window, query, rows, total, complete: false, reason: "paging control not found" };
+    if (!(await next.count())) return { window, query, rows, total, complete: false, reason: "paging control not found", utc_offset_minutes: await zoneOffset(page) };
     if (await next.getAttribute("aria-disabled", { timeout: 2000 }) === "true") { complete = true; break; }
     const firstId = pageRows[0]?.id;
     await next.click();
     const moved = await page.waitForFunction((id) => { const first = document.querySelector('div[role="main"] tr.zA [data-legacy-thread-id]'); return !!first && first.getAttribute("data-legacy-thread-id") !== id; }, firstId, { timeout: 15000 }).then(() => true, () => false);
-    if (!moved) return { window, query, rows, total, complete: false, reason: "next page did not load" };
+    if (!moved) return { window, query, rows, total, complete: false, reason: "next page did not load", utc_offset_minutes: await zoneOffset(page) };
   }
-  return { window, query, rows, total, complete, reason: complete ? null : "more pages than read" };
+  return { window, query, rows, total, complete, reason: complete ? null : "more pages than read", utc_offset_minutes: await zoneOffset(page) };
 }
 
+/** Gmail's after:/before: days are midnights in the browser's time zone; the offset says which (minutes east of UTC). */
+async function zoneOffset(page: Page): Promise<number> { try { return await page.evaluate(() => -new Date().getTimezoneOffset()); } catch { return 0; } }
 export type GmailMessage = { from: string; from_address: string | null; at: string; to: string; body: string };
 /** One thread, per message, through the print view. revision = count + last sender + last time. */
 export async function gmailThread(page: Page, base: string, threadId: string) {
@@ -160,9 +163,20 @@ async function replyComposer(page: Page): Promise<Locator | null> {
   const n = await composers.count();
   return n === 1 ? composers.first() : null;
 }
-async function composerRecipients(composer: Locator) {
-  // Recipient chips only (To/Cc/Bcc), not the From line: Gmail renders them with an email attribute inside the form.
-  return (await composer.locator('[role="option"][data-hovercard-id], span[email][data-hovercard-id]:not([data-name="from"])').evaluateAll(els => [...new Set(els.map(e => (e.getAttribute("email") || e.getAttribute("data-hovercard-id") || "").toLowerCase()).filter(Boolean))]));
+/**
+ * The reply's From and its To / Cc / Bcc, each read from its own field. Gmail shows a collapsed summary row until it is
+ * opened; the fields hold the recipients (data-hovercard-id) once it is. null = a field could not be read (fail closed).
+ */
+export async function composerRecipients(composer: Locator): Promise<{ from: string | null; to: string[]; cc: string[]; bcc: string[] } | null> {
+  const summary = composer.locator('.aoD.hl').first();
+  if (await summary.count()) { await summary.click({ timeout: 5000 }).catch(() => undefined); await composer.page().waitForTimeout(800); }
+  return composer.evaluate(el => {
+    const field = (n: string) => { const f = el.querySelector(`[name="${n}"]`); return f ? Array.from(f.querySelectorAll('[data-hovercard-id], [email]')).map(e => (e.getAttribute('data-hovercard-id') || e.getAttribute('email') || '').toLowerCase()).filter(Boolean) : null; };
+    const to = field('to'), cc = field('cc'), bcc = field('bcc');
+    if (!to || !cc || !bcc) return null;
+    const from = (el.querySelector('input[name="from"]') as HTMLInputElement | null)?.value?.toLowerCase() || null;
+    return { from, to: [...new Set(to)], cc: [...new Set(cc)], bcc: [...new Set(bcc)] };
+  });
 }
 
 export type SendEnvelope = { account: string; thread_id: string; body: string; recipient_address: string; revision: string };
@@ -203,15 +217,40 @@ async function sendReplyOnce(page: Page, base: string, send: SendEnvelope): Prom
   if (existing.length) return { outcome: "not_sent" as const, attempted: false, evidence: "the reply box already holds text (maybe a saved draft); not touching it" };
   await box.fill(send.body);
   if (norm(await box.innerText()) !== norm(send.body)) return { outcome: "not_sent" as const, attempted: false, evidence: "the reply box does not hold exactly the approved text", composer };
-  const recipients = await composerRecipients(composer);
+  const fields = await composerRecipients(composer);
   const self = send.account.toLowerCase();
-  // The composer shows From (self) and the recipients; the only other address must be exactly the approved one.
-  const others = recipients.filter(r => r !== self);
-  if (others.length !== 1 || others[0] !== send.recipient_address.toLowerCase()) return { outcome: "not_sent" as const, attempted: false, evidence: `recipients ${recipients.join(", ") || "(none found)"} are not exactly ${send.recipient_address}`, composer };
+  if (!fields) return { outcome: "not_sent" as const, attempted: false, evidence: "the recipient fields could not be read", composer };
+  // From is the approved account; To is exactly the approved address; nobody in Cc or Bcc.
+  // From must be read and be the approved account (an unreadable From is a refusal, not a pass).
+  if (fields.from !== self) return { outcome: "not_sent" as const, attempted: false, evidence: fields.from ? `sending as ${fields.from}, approved ${self}` : "the From field could not be read", composer };
+  if (fields.to.length !== 1 || fields.to[0] !== send.recipient_address.toLowerCase() || fields.cc.length || fields.bcc.length)
+    return { outcome: "not_sent" as const, attempted: false, evidence: `to ${fields.to.join(", ") || "(none)"}${fields.cc.length ? `, cc ${fields.cc.join(", ")}` : ""}${fields.bcc.length ? `, bcc ${fields.bcc.join(", ")}` : ""}; approved only ${send.recipient_address}`, composer };
   if (await composer.locator('[aria-label*="첨부"], [aria-label*="ttachment"]').filter({ hasText: /\.\w{2,4}/ }).count()) return { outcome: "not_sent" as const, attempted: false, evidence: "the reply has attachments", composer };
+  // Gmail sometimes lays a notice over the composer ("데스크톱 알림을 사용 설정하세요"). Put it off only when it is a
+  // known notice: one "나중에 하기/Not now" button in an alert/dialog region outside the message list and the composer.
+  // Anything else is left alone (the Send click below then reads back whatever happened).
+  // Outermost alert/dialog regions only (not inside the message list or a composer), carrying that notice's text.
+  const notices = page.locator('[role="alertdialog"], [role="dialog"], [role="alert"]')
+    .filter({ hasNot: page.locator('div[role="textbox"][contenteditable="true"]') })
+    .filter({ hasNot: page.locator('[role="alertdialog"], [role="dialog"], [role="alert"]') })
+    .filter({ hasText: /데스크톱 알림|desktop notifications/i });
+  if (await notices.count() === 1) {
+    const later = notices.first().getByRole('button', { name: /^(나중에 하기|Not now|No thanks)$/ });
+    if (await later.count() === 1) {
+      const closed = await later.click({ timeout: 3000 }).then(() => true, () => false);
+      if (!closed) return { outcome: "not_sent" as const, attempted: false, evidence: "a notice over the reply could not be put off", composer };
+      await page.waitForTimeout(600);
+      // Re-check everything that is about to go: text, From and recipients.
+      const again = await composerRecipients(composer);
+      if (norm(await box.innerText()) !== norm(send.body) || !again || again.from !== self || again.to.length !== 1 || again.to[0] !== send.recipient_address.toLowerCase() || again.cc.length || again.bcc.length)
+        return { outcome: "not_sent" as const, attempted: false, evidence: "the reply changed after closing a notice", composer };
+    }
+  }
   const sendButton = composer.locator('[role="button"][aria-label="보내기"], [role="button"][aria-label="Send"]').first();
+  // A click that times out may still have gone through (something laid over the button): read back either way.
+  let clickNote = "";
   try { await sendButton.click({ timeout: 10000 }); }
-  catch (error) { return { outcome: "unknown" as const, attempted: true, evidence: `send click failed: ${error instanceof Error ? error.message.slice(0, 120) : "?"}` }; }
+  catch (error) { clickNote = ` (the click reported: ${error instanceof Error ? error.message.split("\n")[0]!.slice(0, 100) : "?"})`; }
   for (let i = 0; i < 8; i++) {
     await page.waitForTimeout(2500);
     const after = await gmailThread(page, base, send.thread_id).catch(() => null);
@@ -220,7 +259,7 @@ async function sendReplyOnce(page: Page, base: string, send: SendEnvelope): Prom
     if (fresh.some(m => m.from_address === self && norm(m.body) === norm(send.body)))
       return { outcome: "sent" as const, attempted: true, evidence: `read back: new message ${after.messages.length} from ${self} with the approved text` };
   }
-  return { outcome: "unknown" as const, attempted: true, evidence: "Send was clicked but the new message was not seen in the thread yet" };
+  return { outcome: "unknown" as const, attempted: true, evidence: `Send was clicked but the new message was not seen in the thread yet${clickNote}` };
 }
 
 /** For a check job: is there a message from the account, after the approved revision, with the approved text? */

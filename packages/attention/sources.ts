@@ -23,8 +23,8 @@ export const ObservationItem = z.object({
   url: z.string().url().max(2000).nullable(),
   subject: z.string().trim().min(1).max(300),
   counterpart: z.string().trim().max(200).nullable(),
-  /** request: asked of the user. deadline: a date ahead. overdue: a date passed without it being done. waiting: the user asked and the reply is late. alert: cost/security/expiry. */
-  category: z.enum(['request', 'deadline', 'overdue', 'waiting', 'alert']),
+  /** request: asked of the user. deadline: a date ahead. overdue: a date passed without it being done. waiting: the user asked and the reply is late. alert: cost/security/expiry. promise: the user promised something by a date in their own reply. */
+  category: z.enum(['request', 'deadline', 'overdue', 'waiting', 'alert', 'promise']),
   /** What the user has to do: reply, review (e.g. code review), act (do something elsewhere), none (just know). */
   action: z.enum(['reply', 'review', 'act', 'none']),
   reason: z.string().trim().min(1).max(400),
@@ -34,6 +34,8 @@ export const ObservationItem = z.object({
   version: z.string().trim().min(1).max(120),
   /** The incoming message that asks (sender + time from source_gmail_thread), e.g. "alex@example.com|2026년 1월 5일 오전 7:13". */
   request_anchor: z.string().trim().max(200).nullable().default(null),
+  /** For category=waiting: when the user asked (the asking message's time), ISO. */
+  waiting_since: z.iso.datetime({ offset: true }).nullable().default(null),
 }).strict();
 export const Resolution = z.object({
   thread_key: z.string().trim().min(1).max(200),
@@ -82,9 +84,9 @@ export function observeObjective(source: { kind?: Kind; account: string; window_
     source.backfill_before && source.read_through ? `An earlier partial look already read ${source.backfill_before.toISOString()} – ${source.read_through.toISOString()}; you may skip that span.` : '',
     'First confirm the signed-in account (or workspace) matches; if not, report coverage=failed, error_kind=other.',
     source.recheck.length ? `Re-check these open threads (open each) and report each either again in items (if still needing the user) or in resolved with evidence: ${source.recheck.map(o => `${o.thread_key} (${o.subject.slice(0, 60)})`).join('; ')}.` : '',
-    'For each item set request_anchor = the asking message as "<sender address>|<time>" from source_gmail_thread. Resolved (how=replied) only when a message from the account comes after that request and no newer request from the other side is unanswered; set answered_by = that reply as "<address>|<time>". A thank-you or acknowledgement after a reply is not a new request. A passed deadline is overdue, not resolved. Being read, archived or missing from a search is not evidence.',
-    'Mark action=reply only when someone asked the user directly and expects an answer from them; general notices and announcements are action=none or act.',
-    `thread_key = ${SOURCE[source.kind ?? 'gmail'].thread}; version = ${SOURCE[source.kind ?? 'gmail'].version}. Call report_observation exactly once; if you could not read the whole range set coverage=partial and oldest_read. If login or an account choice is needed, coverage=failed with that error_kind. Never call notify_user or ask_user. Then reply exactly NO_REPORT.`,
+    'For each item set request_anchor = the asking message as "<sender address>|<time>" from source_gmail_thread (for a promise: the user\'s own promising message). A promise is resolved only when the promised thing was sent or done, never by a reply alone. Resolved (how=replied) only when a message from the account comes after that request and no newer request from the other side is unanswered; set answered_by = that reply as "<address>|<time>". A thank-you or acknowledgement after a reply is not a new request. A passed deadline is overdue, not resolved. Being read, archived or missing from a search is not evidence.',
+    'Mark action=reply only when someone asked the user directly and expects an answer from them; general notices and announcements are action=none or act. When the open item is something the user promised in their own reply (e.g. "금요일까지 보내 드리겠습니다"), use category=promise, action=act, due_at = that date, and reason = what was promised. When the user asked someone for something and the answer has not come, use category=waiting, action=none, due_at = the date they were asked to answer by (or null), reason = what is awaited; request_anchor = the user\'s asking message; waiting_since = that message\'s time (ISO).',
+    `thread_key = ${SOURCE[source.kind ?? 'gmail'].thread}; version = ${SOURCE[source.kind ?? 'gmail'].version}. Write reason (and evidence) as one short Korean sentence the user can read at a glance (under 60 characters, no UTC: times in KST like \"10/30(금) 오후 3시\"). Call report_observation exactly once; if you could not read the whole range set coverage=partial and oldest_read. If login or an account choice is needed, coverage=failed with that error_kind. Never call notify_user or ask_user. Then reply exactly NO_REPORT.`,
   ].filter(Boolean).join(' ');
 }
 
@@ -123,7 +125,12 @@ async function startLook(tx: Query, s: Record<string, unknown>, now: Date, once:
 /** Close the unsent draft cards of an item. how: superseded (handled elsewhere) or replaced (the thread changed). */
 async function closeDrafts(tx: Query, workspace: string, item: string, how: 'superseded' | 'replaced') {
   await tx`UPDATE assistant.card_states c SET state=${how},updated_at=now() FROM assistant.attention_source_drafts d
-    WHERE d.item_id=${item} AND d.card_message_id=c.message_id AND c.workspace_id=${workspace} AND c.state IN ('pending','snoozed')`;
+    WHERE d.item_id=${item} AND d.card_message_id=c.message_id AND c.workspace_id=${workspace} AND (c.state IN ('pending','snoozed') OR c.state='failed' AND c.retry_ok)`;
+  await tx`UPDATE assistant.card_states c SET retry_ok=false FROM assistant.attention_source_drafts d
+    WHERE d.item_id=${item} AND d.card_message_id=c.message_id AND c.workspace_id=${workspace} AND c.retry_ok`;
+  // Their draft jobs are done with too, so a new draft can be written when one is needed.
+  await tx`UPDATE assistant.attention_source_drafts d SET state='withdrawn',finished_at=coalesce(d.finished_at,now()) FROM assistant.card_states c
+    WHERE d.item_id=${item} AND d.state='ready' AND c.workspace_id=${workspace} AND c.message_id=d.card_message_id AND c.state IN (${how},'replaced')`;
 }
 async function withdrawDrafts(tx: Query, source: string) {
   const rows = await tx`UPDATE assistant.attention_source_drafts SET state='withdrawn',finished_at=now() WHERE source_id=${source} AND state='dispatched' RETURNING task_id`;
@@ -214,26 +221,36 @@ export async function recordObservation(sql: Query, workspace: string, task: str
   }
   const onceUntil = run['once'] ? new Date(Date.now() + 6 * 3_600_000) : null;
   for (const item of observation.items) {
-    const before = (await sql`SELECT id,version,action FROM assistant.attention_source_items WHERE source_id=${source} AND thread_key=${item.thread_key}`)[0];
+    const before = (await sql`SELECT * FROM assistant.attention_source_items WHERE source_id=${source} AND thread_key=${item.thread_key} FOR UPDATE`)[0];
+    const next = mergeObligation(before ?? null, item);
     // The thread changed (or no longer needs a reply): an unsent draft written for the old version must not go out.
-    if (before && (before['version'] !== item.version || item.action !== 'reply')) await closeDrafts(sql, workspace, String(before['id']), 'replaced');
-    await sql`INSERT INTO assistant.attention_source_items(source_id,workspace_id,thread_key,url,subject,counterpart,category,action,reason,evidence,due_at,version,last_checked_at,request_anchor)
-      VALUES(${source},${workspace},${item.thread_key},${item.url},${item.subject},${item.counterpart},${item.category},${item.action},${item.reason},${item.evidence},${item.due_at},${item.version},now(),${item.request_anchor})
-      ON CONFLICT (source_id,thread_key) DO UPDATE SET url=excluded.url,subject=excluded.subject,counterpart=excluded.counterpart,category=excluded.category,action=excluded.action,
-        reason=excluded.reason,evidence=excluded.evidence,due_at=excluded.due_at,last_seen_at=now(),last_checked_at=now(),
-        -- Reopen only for a new request (a different anchor), or a changed thread when no anchor is known.
-        state=CASE WHEN attention_source_items.state='open' THEN 'open'
-          WHEN excluded.request_anchor IS NOT NULL AND attention_source_items.request_anchor IS NOT DISTINCT FROM excluded.request_anchor THEN attention_source_items.state
-          WHEN excluded.request_anchor IS NULL AND attention_source_items.version=excluded.version THEN attention_source_items.state ELSE 'open' END,
-        resolved_at=CASE WHEN attention_source_items.state<>'open' AND (excluded.request_anchor IS NOT NULL AND attention_source_items.request_anchor IS NOT DISTINCT FROM excluded.request_anchor
-          OR excluded.request_anchor IS NULL AND attention_source_items.version=excluded.version) THEN attention_source_items.resolved_at END,
-        request_anchor=coalesce(excluded.request_anchor,attention_source_items.request_anchor),
-        version=excluded.version,updated_at=now()`;
+    // A follow-up or a delivery for the same obligation stays while the thread is unchanged.
+    if (before && (before['version'] !== item.version || (next.action !== 'reply' && next.category !== 'promise' && next.category !== 'waiting'))) await closeDrafts(sql, workspace, String(before['id']), 'replaced');
+    await sql`INSERT INTO assistant.attention_source_items(source_id,workspace_id,thread_key,url,subject,counterpart,category,action,reason,evidence,due_at,version,last_checked_at,request_anchor,waiting_since)
+      VALUES(${source},${workspace},${item.thread_key},${item.url},${item.subject},${item.counterpart},${next.category},${next.action},${next.reason},${next.evidence},${next.due_at},${item.version},now(),${next.request_anchor},${item.category === 'waiting' ? item.waiting_since : null})
+      ON CONFLICT (source_id,thread_key) DO UPDATE SET url=excluded.url,subject=excluded.subject,counterpart=excluded.counterpart,
+        category=excluded.category,action=excluded.action,reason=excluded.reason,evidence=excluded.evidence,due_at=excluded.due_at,request_anchor=excluded.request_anchor,
+        state=${next.state},resolved_at=${next.keepResolved ? sql`attention_source_items.resolved_at` : sql`NULL`},
+        user_due_at=${next.same ? sql`attention_source_items.user_due_at` : sql`NULL`},
+        blocked_reason=${next.same ? sql`attention_source_items.blocked_reason` : sql`NULL`},blocked_at=${next.same ? sql`attention_source_items.blocked_at` : sql`NULL`},
+        reply_note=${next.same ? sql`attention_source_items.reply_note` : sql`NULL`},reply_request_id=${next.same ? sql`attention_source_items.reply_request_id` : sql`NULL`},
+        reply_keep_body=${next.same ? sql`attention_source_items.reply_keep_body` : sql`NULL`},
+        waiting_since=${next.category === 'waiting' ? (next.same ? sql`coalesce(attention_source_items.waiting_since,${item.waiting_since}::timestamptz)` : sql`${item.waiting_since}::timestamptz`) : sql`NULL`},
+        next_chase_at=${next.same && next.category === 'waiting' ? sql`attention_source_items.next_chase_at` : sql`NULL`},
+        last_seen_at=now(),last_checked_at=now(),version=excluded.version,updated_at=now()`;
     await sql`UPDATE assistant.attention_source_items SET conversation_id=${run['conversation_id'] ? String(run['conversation_id']) : null}::uuid${onceUntil ? sql`,once_until=${onceUntil}` : sql``} WHERE source_id=${source} AND thread_key=${item.thread_key}`;
+    // The thread as the adapter read it during this look (the model's report is never stored as the thread).
+    const snap = (run['thread_snapshots'] as Record<string, unknown> | null)?.[item.thread_key];
+    if (snap) await sql`UPDATE assistant.attention_source_items SET thread_snapshot=${JSON.stringify(snap)}::text::jsonb,thread_read_at=now() WHERE source_id=${source} AND thread_key=${item.thread_key}`;
   }
   for (const r of observation.resolved) {
+    const current = (await sql`SELECT category,waiting_since,request_anchor FROM assistant.attention_source_items WHERE source_id=${source} AND thread_key=${r.thread_key} AND state='open' FOR UPDATE`)[0];
     const rows = await sql`UPDATE assistant.attention_source_items SET state='resolved',resolution=${r.how},resolution_note=${r.evidence},handled_evidence=${r.answered_by},resolution_basis='observed_reply',resolved_at=now(),last_checked_at=now(),updated_at=now()
-      WHERE source_id=${source} AND state='open' AND thread_key=${r.thread_key} RETURNING id`;
+      -- A reply does not do what the user promised: a promise closes only when the promised thing was done (how=done).
+      -- A wait closes only on the other side's answer this look actually read (checked below), never on the user's own mail.
+      WHERE source_id=${source} AND state='open' AND thread_key=${r.thread_key} AND (category<>'promise' OR ${r.how}='done')
+        AND (category<>'waiting' OR ${waitAnswered(run, r, current)}) RETURNING id`;
+    for (const row of rows) await withdrawAlertsFor(sql, workspace, String(row['id']));
     // The reply happened in Gmail: an unsent draft for it must not be sendable any more.
     for (const row of rows) await closeDrafts(sql, workspace, String(row['id']), 'superseded');
   }
@@ -263,7 +280,7 @@ async function answerOnceIn(sql: Query, workspace: string, run: Record<string, u
   const reply = o.items.filter(i => i.action === 'reply').length, act = o.items.filter(i => i.action === 'review' || i.action === 'act').length;
   const unit = SOURCE[(run['kind'] as Kind | undefined) ?? 'gmail'].unit;
   const found = [reply ? `직접 답할 ${unit} ${reply}건(답장 초안을 준비하고 있어요)` : '', act ? `확인·처리할 ${unit} ${act}건` : ''].filter(Boolean).join(', ');
-  // The answer names what was found, by what the user has to do; details and the originals live in 챙길 것.
+  // The answer names what was found, by what the user has to do; details and the originals live in 피드.
   const order = ['reply', 'review', 'act', 'none'] as const, head = { reply: '답장', review: '검토', act: '처리', none: '참고' } as const;
   const lines = order.flatMap(a => o.items.filter(i => i.action === a).slice(0, 6).map(i => `- **${head[a]}** · ${i.subject}${i.counterpart ? ` (${i.counterpart})` : ''}: ${i.reason}`));
   const src = SOURCE[(run['kind'] as Kind | undefined) ?? 'gmail'], what = `${String(run['account'])} ${src.unit}`;
@@ -271,7 +288,7 @@ async function answerOnceIn(sql: Query, workspace: string, run: Record<string, u
   const code = src.unit.charCodeAt(src.unit.length - 1) - 0xac00, obj = code >= 0 && code < 11172 && code % 28 ? '을' : '를';
   const text = o.coverage === 'failed'
     ? (o.error_kind === 'login_required' || o.error_kind === 'account_choice' ? `${what}${obj} 확인하지 못했어요. VM 화면에서 ${src.name} 로그인이 필요해요. 로그인한 뒤 다시 봐 달라고 하시면 이어서 볼게요.` : `${what}${obj} 확인하지 못했어요. 브라우저 연결이 불안정했어요. 다시 해 달라고 하시면 한 번 더 볼게요.`)
-    : `${what}${obj} ${o.coverage === 'partial' ? '일부만' : '한 번'} 확인했어요. ${found ? `${found}이 챙길 것에 있어요.` : `직접 답하거나 처리할 ${src.unit}${src.unit === '메일' ? '은' : '는'} 없었어요.`}${o.coverage === 'partial' ? ` 전체를 다 보지는 못해서, 빠진 ${src.unit}${src.unit === '메일' ? '이' : '가'} 있을 수 있어요.` : ''} 상시 점검은 켜지 않았어요.${lines.length ? `\n\n${lines.join('\n')}` : ''}`;
+    : `${what}${obj} ${o.coverage === 'partial' ? '일부만' : '한 번'} 확인했어요. ${found ? `${found}이 피드에 있어요.` : `직접 답하거나 처리할 ${src.unit}${src.unit === '메일' ? '은' : '는'} 없었어요.`}${o.coverage === 'partial' ? ` 전체를 다 보지는 못해서, 빠진 ${src.unit}${src.unit === '메일' ? '이' : '가'} 있을 수 있어요.` : ''} 상시 점검은 켜지 않았어요.${lines.length ? `\n\n${lines.join('\n')}` : ''}`;
   const task = String(run['task_id']);
   const message = (await sql`INSERT INTO assistant.messages(workspace_id,conversation_id,task_id,role,content,origin,phase,response_to_message_id) VALUES(${workspace},${conversation},${asker ? task : null},'assistant',${text},'responsibility','final_answer',${asker && run['request_message_id'] ? String(run['request_message_id']) : null}) RETURNING id`)[0];
   await sql`WITH e AS (INSERT INTO assistant.events(workspace_id,kind,payload) VALUES(${workspace},'message.created',${JSON.stringify({ message: { id: message?.['id'] } })}::text::jsonb) RETURNING id) INSERT INTO assistant.outbox(workspace_id,event_id) SELECT ${workspace},id FROM e`;
@@ -290,7 +307,7 @@ export async function settleObservationTask(sql: Query, workspace: string, task:
   await sql`UPDATE assistant.attention_source_drafts SET state='failed',note=${`ended ${state}`},finished_at=now() WHERE workspace_id=${workspace} AND task_id=${task} AND state='dispatched'`;
 }
 
-/** A reply-draft run, for its whole life: its cards wait in 챙길 것 and the brief, it never pushes or notifies. */
+/** A reply-draft run, for its whole life: its cards wait in 피드 and the brief, it never pushes or notifies. */
 export async function isReplyDraftTask(sql: Query, workspace: string, task: string) {
   return !!(await sql`SELECT 1 FROM assistant.attention_source_drafts WHERE workspace_id=${workspace} AND task_id=${task}`)[0];
 }
@@ -304,9 +321,9 @@ export async function sourceRunPolicy(sql: Query, workspace: string, task: strin
   if (await sendJobKind(sql, workspace, task)) return 'send_once';
   return null;
 }
-type Coverage = { kind?: 'gmail' | 'slack_channels' | 'slack_history' | undefined; account?: string | undefined; after?: string | undefined; before?: string | null | undefined; channel?: string | undefined; oldest?: number | undefined; team?: string | undefined; cursor?: string | undefined; channels?: string[] | undefined; complete: boolean; rows: number };
-/** Gmail search dates are local days (KST); a window [after, before) as instants. */
-const kstDay = (d: string) => new Date(`${d.replace(/\//g, '-')}T00:00:00+09:00`);
+type Coverage = { kind?: 'gmail' | 'slack_channels' | 'slack_history' | undefined; account?: string | undefined; after?: string | undefined; before?: string | null | undefined; channel?: string | undefined; oldest?: number | undefined; team?: string | undefined; cursor?: string | undefined; next_cursor?: string | undefined; channels?: string[] | undefined; utc_offset_minutes?: number | undefined; complete: boolean; rows: number };
+/** A Gmail search day as an instant: midnight in the zone the browser searched in (UTC when not reported). */
+const searchDay = (d: string, offsetMinutes = 0) => new Date(new Date(`${d.replace(/\//g, '-')}T00:00:00Z`).getTime() - offsetMinutes * 60_000);
 /**
  * Did the adapter read everything this look needed? Gmail: a complete search of this account from at or before the
  * window start to at or after the look time. Slack: the full channel list, and every channel's history read to the end
@@ -320,15 +337,20 @@ function coverageComplete(run: Record<string, unknown>) {
     // One team; the channel list read to its end (pages joined); every listed channel's history read to the end
     // from at or before the window start (a channel is done when any of its calls reached the end).
     const lists = covered.filter(c => c.kind === 'slack_channels');
-    const teams = new Set(covered.map(c => c.team).filter(Boolean));
-    if (!lists.some(c => c.complete) || teams.size !== 1) return false;
+    // Every record from one team (records without a team do not count), and the channel list read from its first page
+    // (no cursor) through to a last page (complete), each later page asked with a cursor a previous page returned.
+    if (covered.some(c => !c.team)) return false;
+    const teams = new Set(covered.map(c => c.team));
+    if (teams.size !== 1 || !lists.some(c => !c.cursor) || !lists.some(c => c.complete)) return false;
+    const cursors = new Set(lists.map(c => c.next_cursor).filter(Boolean));
+    if (lists.some(c => c.cursor && !cursors.has(c.cursor))) return false;
     const channels = new Set(lists.flatMap(c => c.channels ?? []));
     const done = new Set(covered.filter(c => c.kind === 'slack_history' && c.complete && (c.oldest ?? Infinity) * 1000 <= start.getTime()).map(c => c.channel));
     return channels.size > 0 && [...channels].every(id => done.has(id));
   }
   // Gmail: complete windows of this account, joined, must span [window start, look time].
   const spans = covered.filter(c => (c.kind ?? 'gmail') === 'gmail' && c.complete && c.after && c.account?.toLowerCase() === String(run['account']).toLowerCase())
-    .map(c => [kstDay(c.after!).getTime(), c.before ? kstDay(c.before).getTime() : Infinity] as const).sort((a, b) => a[0] - b[0]);
+    .map(c => [searchDay(c.after!, c.utc_offset_minutes).getTime(), c.before ? searchDay(c.before, c.utc_offset_minutes).getTime() : Infinity] as const).sort((a, b) => a[0] - b[0]);
   let reach = start.getTime();
   for (const [from, to] of spans) { if (from > reach) break; reach = Math.max(reach, to); }
   return spans.length > 0 && spans[0]![0] <= start.getTime() && reach > asOf.getTime();
@@ -378,16 +400,18 @@ export async function setWatch(sql: Query, input: { workspace: string; conversat
   await sql`UPDATE assistant.attention_sources SET enabled=${enabled},revision=revision+${changed || !enabled ? 1 : 0},conversation_id=CASE WHEN ${enabled} THEN ${input.conversation}::uuid ELSE conversation_id END,source_message_id=${input.source_message},source_quote=${input.source_quote},
     interval_minutes=COALESCE(${input.interval_minutes},interval_minutes),next_check_at=CASE WHEN ${enabled && changed} THEN now() ELSE next_check_at END,
     health=CASE WHEN ${enabled} THEN 'ok' ELSE health END,failure_count=CASE WHEN ${enabled} THEN 0 ELSE failure_count END,updated_at=now() WHERE id=${id}`;
+  // A stopped watch's alerts stop at once.
+  if (!enabled) { const { withdrawStaleAlerts } = await import('./coordinator'); await withdrawStaleAlerts(sql, input.workspace); }
   return (await sql`SELECT id,enabled,interval_minutes,next_check_at FROM assistant.attention_sources WHERE id=${id}`)[0];
 }
 
 /**
- * For 챙길 것 and the brief: open items (one per thread, with the state of its reply draft folded in), and each watch
+ * For 피드 and the brief: open items (one per thread, with the state of its reply draft folded in), and each watch
  * with honest freshness. A single look's blocked login is shown even when the standing watch is off.
  */
 export async function sourceView(sql: Query, workspace: string) {
   const [items, unconfirmed, resolved, sources] = await Promise.all([
-    sql`SELECT i.id,i.subject,i.counterpart,i.category,i.action,i.reason,i.evidence,i.due_at,i.url,i.version,i.briefed_version,i.first_seen_at,i.last_seen_at,s.kind,s.account,
+    sql`SELECT EXISTS(SELECT 1 FROM assistant.attention_source_sends p WHERE p.item_id=i.id AND p.state IN ('dispatched','executing','unknown','checking','needs_user')) AS pending_send,i.waiting_since,i.next_chase_at,i.blocked_reason,i.id,i.subject,i.counterpart,i.category,i.action,i.reason,i.evidence,i.due_at,i.url,i.version,i.briefed_version,i.first_seen_at,i.last_seen_at,s.kind,s.account,
         coalesce(d.conversation_id,i.conversation_id,s.conversation_id) AS conversation_id,d.card_message_id AS draft_message_id,d.card_state AS draft_state,d.preparing,d.snoozed_until,d.draft_job,d.send_task
       FROM assistant.attention_source_items i JOIN assistant.attention_sources s ON s.id=i.source_id
       LEFT JOIN LATERAL (SELECT x.card_message_id,c.state AS card_state,c.snoozed_until,x.state AS draft_job,(x.state='dispatched') AS preparing,m.conversation_id,
@@ -419,10 +443,58 @@ export async function markSourceItemsBriefed(sql: Query, workspace: string, keys
 }
 
 /** Client: what the user says about a thread. Either way its unsent draft can no longer go out. */
+/**
+ * 답장 from the feed: the user asks for a reply draft on this thread, optionally saying what it should say. A ready or
+ * failed draft of the current version is retired so a new one is written with the note; the draft comes back as the
+ * usual approval card (nothing is sent without it).
+ */
+/**
+ * Re-check a draft that could not be verified (no thread revision): the same reply request again, keeping the user's
+ * note and the text they were about to approve, and only while that card is still the current request's draft.
+ */
+export async function redraftUnverified(sql: Query, workspace: string, card: string, body: string | null) {
+  const row = (await sql`SELECT i.id,i.version,i.reply_request_id,d.reply_request_id AS draft_request,d.version AS draft_version,d.state AS draft_state
+    FROM assistant.attention_source_drafts d JOIN assistant.attention_source_items i ON i.id=d.item_id
+    WHERE d.workspace_id=${workspace} AND d.card_message_id=${card} AND i.state='open' FOR UPDATE OF i`)[0];
+  // Only the current draft of the current request and thread version (a newer request or a changed thread wins).
+  if (!row || row['draft_state'] !== 'ready' || row['draft_version'] !== row['version'] || (row['draft_request'] ?? null) !== (row['reply_request_id'] ?? null)) return null;
+  if ((await sql`SELECT 1 FROM assistant.attention_source_sends WHERE item_id=${row['id']} AND state IN ('dispatched','executing','unknown','checking','needs_user')`)[0]) return null;
+  // The same request again: its id and note stay; the text the user approved is kept on its own.
+  await sql`UPDATE assistant.attention_source_items SET reply_keep_body=${body ? body.slice(0, 6000) : null},updated_at=now() WHERE id=${row['id']}`;
+  await closeDrafts(sql, workspace, String(row['id']), 'replaced');
+  await sql`UPDATE assistant.attention_source_drafts SET state='withdrawn',finished_at=now()-interval '1 hour' WHERE item_id=${row['id']} AND state='ready'`;
+  return row['reply_request_id'] ? String(row['reply_request_id']) : 'retry';
+}
+export async function requestReply(sql: Query, workspace: string, id: string, note: string | null) {
+  // Lock first and refuse before changing anything (a refused request leaves the note and permission as they were).
+  const item = (await sql`SELECT id,version FROM assistant.attention_source_items WHERE workspace_id=${workspace} AND id=${id} AND state='open' FOR UPDATE`)[0];
+  if (!item) return null;
+  if ((await sql`SELECT 1 FROM assistant.attention_source_sends WHERE item_id=${id} AND state IN ('dispatched','executing','unknown','checking','needs_user')`)[0]) return null;
+  // This request, and only it, may produce the next draft: older drafts (also one being written) no longer count.
+  const request = crypto.randomUUID();
+  await sql`UPDATE assistant.attention_source_items SET reply_note=${note},reply_keep_body=NULL,reply_request_id=${request},reply_requested_at=now(),action=CASE WHEN category IN ('promise','waiting') THEN action ELSE 'reply' END,
+      once_until=greatest(coalesce(once_until,now()),now()+interval '1 day'),updated_at=now() WHERE id=${id}`;
+  await closeDrafts(sql, workspace, id, 'replaced');
+  await withdrawItemDrafts(sql, id);
+  await sql`UPDATE assistant.attention_source_drafts SET state='withdrawn',finished_at=now()-interval '1 hour' WHERE item_id=${id} AND state IN ('ready','failed','expired','handled','not_needed')`;
+  return request;
+}
+/**
+ * The user moves an obligation's due date or says it is blocked (and why). Their date is kept over later readings of
+ * the thread until the obligation closes; a blocked one does not alert until unblocked or its date passes.
+ */
+export async function updateObligation(sql: Query, workspace: string, id: string, change: { due_at?: string | null; blocked?: string | null }) {
+  const row = (await sql`SELECT id FROM assistant.attention_source_items WHERE workspace_id=${workspace} AND id=${id} AND state='open' FOR UPDATE`)[0];
+  if (!row) return false;
+  if (change.due_at !== undefined) await sql`UPDATE assistant.attention_source_items SET user_due_at=${change.due_at},due_at=coalesce(${change.due_at}::timestamptz,due_at),updated_at=now() WHERE id=${id}`;
+  if (change.blocked !== undefined) await sql`UPDATE assistant.attention_source_items SET blocked_reason=${change.blocked},blocked_at=CASE WHEN ${change.blocked}::text IS NULL THEN NULL ELSE now() END,updated_at=now() WHERE id=${id}`;
+  await withdrawAlertsFor(sql, workspace, id);
+  return true;
+}
 export async function answerSourceItem(sql: Query, workspace: string, id: string, how: 'dismiss' | 'handled') {
   const rows = await sql`UPDATE assistant.attention_source_items SET state=${how === 'dismiss' ? 'dismissed' : 'resolved'},resolution=${how === 'handled' ? 'user_marked' : null},resolution_basis=${how === 'handled' ? 'user_confirmed' : null},
-    resolved_at=CASE WHEN ${how === 'handled'} THEN now() END,updated_at=now() WHERE workspace_id=${workspace} AND id=${id} AND state='open' RETURNING id`;
-  for (const row of rows) { await closeDrafts(sql, workspace, String(row['id']), how === 'handled' ? 'superseded' : 'replaced'); await withdrawItemDrafts(sql, String(row['id'])); }
+    resolved_at=CASE WHEN ${how === 'handled'} THEN now() END,user_due_at=NULL,blocked_reason=NULL,blocked_at=NULL,updated_at=now() WHERE workspace_id=${workspace} AND id=${id} AND state='open' RETURNING id`;
+  for (const row of rows) { await closeDrafts(sql, workspace, String(row['id']), how === 'handled' ? 'superseded' : 'replaced'); await withdrawItemDrafts(sql, String(row['id'])); await withdrawAlertsFor(sql, workspace, String(row['id'])); }
   return rows.length > 0;
 }
 async function withdrawItemDrafts(tx: Query, item: string) {
@@ -432,13 +504,15 @@ async function withdrawItemDrafts(tx: Query, item: string) {
 
 /** A draft card (or its approval) is still right only while its thread is open at the version it was written for. */
 export async function draftStillValid(sql: Query, workspace: string, message: string) {
-  const row = (await sql`SELECT d.version,d.source_revision,i.state,i.version AS current,i.action,i.once_until,s.enabled,s.revision FROM assistant.attention_source_drafts d
+  const row = (await sql`SELECT i.category,d.version,d.state AS draft_state,d.reply_request_id,i.reply_request_id AS current_request,d.source_revision,i.state,i.version AS current,i.action,i.once_until,s.enabled,s.revision FROM assistant.attention_source_drafts d
     JOIN assistant.attention_source_items i ON i.id=d.item_id JOIN assistant.attention_sources s ON s.id=d.source_id
     WHERE d.workspace_id=${workspace} AND d.card_message_id=${message}`)[0];
   if (!row) return { linked: false as const };
   // The draft was made under this permission (no stop/restart since) and its thread has not changed. The short window for
   // making drafts after a single look does not limit sending one already shown: the send re-checks the thread anyway.
-  const ok = row['state'] === 'open' && row['current'] === row['version'] && row['action'] === 'reply' && Number(row['source_revision']) === Number(row['revision']);
+  // ...and it is the draft of the current reply request (a rewrite asked for since makes older cards unusable).
+  const ok = row['state'] === 'open' && row['current'] === row['version'] && (row['action'] === 'reply' || row['category'] === 'promise' || row['category'] === 'waiting') && Number(row['source_revision']) === Number(row['revision'])
+    && row['draft_state'] === 'ready' && (row['reply_request_id'] ?? null) === (row['current_request'] ?? null);
   return { linked: true as const, ok: !!ok };
 }
 
@@ -454,8 +528,12 @@ export async function draftSendContext(sql: Query, workspace: string, message: s
 }
 
 /** One reply draft per thread version, prepared by a run that re-reads the thread (never from the stored summary). */
-export function replyObjective(item: { kind?: Kind; account: string; url: string | null; thread_key: string; subject: string; counterpart: string | null; reason: string; evidence: string | null }) {
+export function replyObjective(item: { kind?: Kind; account: string; url: string | null; thread_key: string; subject: string; counterpart: string | null; reason: string; evidence: string | null; note?: string | null; keep?: string | null; promise?: boolean; chase?: boolean }) {
   return [
+    ...(item.chase ? ['The user is waiting for an answer from the other side and it is late (see Why). Draft a short, polite follow-up in this thread that asks once more for what is pending, with the date it was asked; do not answer HANDLED or NOT_NEEDED unless the answer has in fact arrived.'] : []),
+    ...(item.promise ? ['This thread holds something the user promised (see Why). Draft the reply in this thread that delivers it as text and links from the note; it cannot carry attachments, so never say something is attached (if a file is needed, say in your last line that the user should attach it in Gmail). Do not answer HANDLED because the user already replied — the promise is still open.'] : []),
+    ...(item.keep ? [`The user already approved this text but it could not be checked against the thread; keep it unless the thread now says otherwise: """${item.keep}"""`] : []),
+    ...(item.note ? [`The user asked for this reply and said what it should say: "${item.note.slice(0, 1600)}". Write the draft from that (never NOT_NEEDED or HANDLED unless the thread already has exactly that reply).`] : []),
     `Prepare a reply draft for a ${SOURCE[item.kind ?? 'gmail'].name} thread in ${item.account} that needs the user's answer. Read only; do not send.`,
     `Thread: ${item.subject}${item.counterpart ? ` (from ${item.counterpart})` : ''}, id ${item.thread_key}${item.url ? `, ${item.url}` : ''}. Why: ${item.reason}${item.evidence ? `; they wrote: "${item.evidence}"` : ''}.`,
     SOURCE[item.kind ?? 'gmail'].reread,
@@ -467,10 +545,12 @@ export function replyObjective(item: { kind?: Kind; account: string; url: string
 const DRAFT_ATTEMPTS = 2;
 async function dispatchReplyDrafts(sql: Database, now: Date) {
   // Only threads the user's permission still covers: an enabled watch, or a single look's short window.
-  const items = await sql`SELECT i.id,i.thread_key,i.url,i.subject,i.counterpart,i.reason,i.evidence,i.version,s.kind,s.id AS source_id,s.revision,s.workspace_id,s.conversation_id,s.account,s.skill_id,s.skill_revision,
+  const items = await sql`SELECT i.category,i.reply_note,i.id,i.thread_key,i.url,i.subject,i.counterpart,i.reason,i.evidence,i.version,s.kind,s.id AS source_id,s.revision,s.workspace_id,s.conversation_id,s.account,s.skill_id,s.skill_revision,
       i.conversation_id AS once_conversation
     FROM assistant.attention_source_items i JOIN assistant.attention_sources s ON s.id=i.source_id
-    WHERE i.state='open' AND i.action='reply' AND (s.enabled OR i.once_until>${now})
+    WHERE i.state='open' AND (i.action='reply' OR i.category IN ('promise','waiting') AND i.reply_request_id IS NOT NULL) AND (s.enabled OR i.once_until>${now})
+      AND (i.category<>'waiting' OR i.next_chase_at IS NULL OR i.next_chase_at<=${now})
+      AND NOT EXISTS(SELECT 1 FROM assistant.attention_source_sends e WHERE e.item_id=i.id AND e.state IN ('dispatched','executing','unknown','checking','needs_user'))
       AND NOT EXISTS(SELECT 1 FROM assistant.attention_source_drafts d WHERE d.item_id=i.id AND d.version=i.version AND d.state IN ('dispatched','ready','handled','not_needed'))
       AND (SELECT count(*) FROM assistant.attention_source_drafts d WHERE d.item_id=i.id AND d.version=i.version AND d.state IN ('failed','expired'))<${DRAFT_ATTEMPTS}
       AND NOT EXISTS(SELECT 1 FROM assistant.attention_source_drafts d WHERE d.item_id=i.id AND d.state IN ('failed','expired') AND d.finished_at>${now}::timestamptz-interval '20 minutes')
@@ -478,14 +558,21 @@ async function dispatchReplyDrafts(sql: Database, now: Date) {
     ORDER BY i.first_seen_at LIMIT 3`;
   for (const i of items) {
     await sql.begin(async tx => {
-      const locked = (await tx`SELECT 1 FROM assistant.attention_source_items WHERE id=${i['id']} AND state='open' AND version=${i['version']} FOR UPDATE SKIP LOCKED`)[0];
+      // Read the request under the lock: the note and request id the draft is written for.
+      // Every condition again under the item's lock (a follow-up may have just been sent and used up the request).
+      const locked = (await tx`SELECT reply_note,reply_request_id,reply_keep_body,category FROM assistant.attention_source_items WHERE id=${i['id']} AND state='open' AND version=${i['version']}
+        AND (action='reply' OR category IN ('promise','waiting') AND reply_request_id IS NOT NULL)
+        AND (category<>'waiting' OR next_chase_at IS NULL OR next_chase_at<=${now})
+        AND NOT EXISTS(SELECT 1 FROM assistant.attention_source_sends e WHERE e.item_id=${i['id']} AND e.state IN ('dispatched','executing','unknown','checking','needs_user'))
+        FOR UPDATE SKIP LOCKED`)[0];
       if (!locked || (await tx`SELECT 1 FROM assistant.attention_source_drafts WHERE item_id=${i['id']} AND state='dispatched'`)[0]) return;
-      if (await quietWait(tx, String(i['workspace_id']), now)) return;
-      const objective = replyObjective({ kind: i['kind'] as Kind, account: String(i['account']), url: i['url'] ? String(i['url']) : null, thread_key: String(i['thread_key']), subject: String(i['subject']), counterpart: i['counterpart'] ? String(i['counterpart']) : null, reason: String(i['reason']), evidence: i['evidence'] ? String(i['evidence']) : null });
+      // Quiet hours hold the assistant's own drafts, not one the user just asked for.
+      if (!locked['reply_request_id'] && await quietWait(tx, String(i['workspace_id']), now)) return;
+      const objective = replyObjective({ kind: i['kind'] as Kind, account: String(i['account']), url: i['url'] ? String(i['url']) : null, thread_key: String(i['thread_key']), subject: String(i['subject']), counterpart: i['counterpart'] ? String(i['counterpart']) : null, reason: String(i['reason']), promise: i['category'] === 'promise', chase: i['category'] === 'waiting', note: locked['reply_note'] ? String(locked['reply_note']) : null, keep: locked['reply_keep_body'] ? String(locked['reply_keep_body']) : null, evidence: i['evidence'] ? String(i['evidence']) : null });
       const conversation = String(i['once_conversation'] ?? i['conversation_id']);
       const created = await createBackgroundTask(tx, { workspace: String(i['workspace_id']), conversation, objective, origin: 'responsibility', clientId: crypto.randomUUID() });
       if (i['skill_id'] && i['skill_revision']) await bindSkill(tx, { workspace: String(i['workspace_id']), task: created.task.id, message: created.message.id, skill: String(i['skill_id']), revision: Number(i['skill_revision']), kind: 'scheduled' });
-      await tx`INSERT INTO assistant.attention_source_drafts(task_id,workspace_id,source_id,item_id,source_revision,version,expires_at) VALUES(${created.task.id},${String(i['workspace_id'])},${String(i['source_id'])},${String(i['id'])},${Number(i['revision'])},${String(i['version'])},${now}::timestamptz+${OBSERVE_TTL_MINUTES}*interval '1 minute')`;
+      await tx`INSERT INTO assistant.attention_source_drafts(purpose,reply_request_id,task_id,workspace_id,source_id,item_id,source_revision,version,expires_at) VALUES(${i['category'] === 'waiting' ? 'chase' : i['category'] === 'promise' ? 'deliver' : 'reply'},${locked['reply_request_id'] ?? null},${created.task.id},${String(i['workspace_id'])},${String(i['source_id'])},${String(i['id'])},${Number(i['revision'])},${String(i['version'])},${now}::timestamptz+${OBSERVE_TTL_MINUTES}*interval '1 minute')`;
     });
   }
 }
@@ -496,12 +583,14 @@ async function dispatchReplyDrafts(sql: Database, now: Date) {
  * Returns null when the task is not a draft job; else whether to hide the message and whether a card may register.
  */
 export async function gateDraftOutput(sql: Query, workspace: string, task: string, out: { readonly content: string; readonly hasDraft: boolean; readonly final: boolean }) {
-  const job = (await sql`SELECT d.*,i.state AS item_state,i.version AS current,s.enabled,s.revision,i.once_until FROM assistant.attention_source_drafts d
+  const job = (await sql`SELECT d.*,i.state AS item_state,i.version AS current,i.reply_request_id AS current_request,s.enabled,s.revision,i.once_until FROM assistant.attention_source_drafts d
     JOIN assistant.attention_source_items i ON i.id=d.item_id JOIN assistant.attention_sources s ON s.id=d.source_id
     WHERE d.workspace_id=${workspace} AND d.task_id=${task} FOR UPDATE OF d`)[0];
   if (!job) return null;
   const permitted = job['enabled'] ? Number(job['revision']) === Number(job['source_revision']) : !!job['once_until'] && new Date(String(job['once_until'])) > new Date();
-  const live = job['state'] === 'dispatched' && job['item_state'] === 'open' && job['current'] === job['version'] && permitted;
+  // Written for an older reply request (the user asked again meanwhile): not shown, not closing anything.
+  const sameRequest = (job['reply_request_id'] ?? null) === (job['current_request'] ?? null);
+  const live = job['state'] === 'dispatched' && job['item_state'] === 'open' && job['current'] === job['version'] && permitted && sameRequest;
   if (!live) {
     if (job['state'] === 'dispatched') await sql`UPDATE assistant.attention_source_drafts SET state='withdrawn',finished_at=now() WHERE task_id=${task}`;
     return { hidden: true, register: false };
@@ -516,7 +605,7 @@ export async function gateDraftOutput(sql: Query, workspace: string, task: strin
       return { hidden: true, register: false };
     }
     await sql`UPDATE assistant.attention_source_drafts SET state=${handled ? 'handled' : 'not_needed'},note=${note},finished_at=now() WHERE task_id=${task}`;
-    await sql`UPDATE assistant.attention_source_items SET state='resolved',resolution=${handled ? 'replied' : 'not_needed'},resolution_note=${note},handled_evidence=${handled ? note.slice(0, 200) : null},resolution_basis=${handled ? 'observed_reply' : null},resolved_at=now(),updated_at=now() WHERE id=${job['item_id']} AND state='open'`;
+    await sql`UPDATE assistant.attention_source_items SET state='resolved',resolution=${handled ? 'replied' : 'not_needed'},resolution_note=${note},handled_evidence=${handled ? note.slice(0, 200) : null},resolution_basis=${handled ? 'observed_reply' : null},resolved_at=now(),updated_at=now() WHERE id=${job['item_id']} AND state='open' AND category NOT IN ('promise','waiting')`;
     await closeDrafts(sql, workspace, String(job['item_id']), 'superseded');
     return { hidden: true, register: false };
   }
@@ -524,6 +613,87 @@ export async function gateDraftOutput(sql: Query, workspace: string, task: strin
 }
 /** A draft job stored its card: it replaces an older unsent draft for the same thread. */
 /** The daemon records the revision a draft job read (its last source_gmail_thread of the item's thread). */
+/**
+ * A Gmail print-view time ("2026년 10월 25일 오전 10:13") as ISO; anything else is kept as it is. The print view
+ * renders in the browser's time zone, which on the VM is UTC (PRINT_VIEW_OFFSET overrides, e.g. "+09:00").
+ */
+export function printTime(text: string): string {
+  const m = /(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일\s*(오전|오후)\s*(\d{1,2}):(\d{2})/.exec(text);
+  if (!m) return text;
+  let h = Number(m[5]) % 12; if (m[4] === '오후') h += 12;
+  const pad = (n: string | number) => String(n).padStart(2, '0');
+  const d = new Date(`${m[1]}-${pad(m[2]!)}-${pad(m[3]!)}T${pad(h)}:${m[6]}:00${PRINT_VIEW_OFFSET}`);
+  return Number.isNaN(d.getTime()) ? text : d.toISOString();
+}
+const PRINT_VIEW_OFFSET = (typeof process !== 'undefined' && process.env?.['PRINT_VIEW_OFFSET']) || 'Z';
+/**
+ * How a new reading of a thread changes its item, decided once. "same" = the same obligation (what the user set on it
+ * stays: their date, blocked reason, reply note); a new one starts from the thread.
+ * - An open promise stays the promise: a reading cannot re-label it (overdue is a date, not a kind) or replace its text.
+ *   A new request on that thread is kept waiting behind it (the promise stays the item; the request shows in its reason).
+ * - An anchor that was unknown and is now known is the same obligation, not a new one.
+ * - A closed item reopens for a new request (another anchor), or as a promise the user made in a reply.
+ */
+export function mergeObligation(before: Record<string, unknown> | null, item: z.infer<typeof ObservationItem>) {
+  const fresh = { category: item.category as string, action: item.action as string, reason: item.reason, evidence: item.evidence, due_at: item.due_at, request_anchor: item.request_anchor };
+  if (!before) return { ...fresh, state: 'open', keepResolved: false, same: false };
+  const open = before['state'] === 'open';
+  const anchorBefore = before['request_anchor'] ? String(before['request_anchor']) : null;
+  const newAnchor = !!item.request_anchor && !!anchorBefore && item.request_anchor !== anchorBefore;
+  const userDue = before['user_due_at'] ? new Date(String(before['user_due_at'])).toISOString() : null;
+  if (open && before['category'] === 'promise') {
+    // The promise holds; a new request from the other side is noted, not swapped in.
+    const note = ` · 새 요청도 있어요: ${item.reason}`;
+    const reason = newAnchor && item.category === 'request' && !String(before['reason']).includes(note) ? `${String(before['reason'])}${note}`.slice(0, 400) : String(before['reason']);
+    return { category: 'promise', action: String(before['action']), reason, evidence: before['evidence'] ? String(before['evidence']) : null,
+      due_at: userDue ?? (before['due_at'] ? new Date(String(before['due_at'])).toISOString() : item.due_at), request_anchor: anchorBefore ?? item.request_anchor,
+      state: 'open', keepResolved: false, same: true };
+  }
+  // A wait read again for the same request stays a wait (late is a date, not a kind).
+  if (open && before['category'] === 'waiting' && !newAnchor && item.category !== 'promise') {
+    return { ...fresh, category: 'waiting', action: String(before['action']), due_at: userDue ?? item.due_at, request_anchor: anchorBefore ?? item.request_anchor, state: 'open', keepResolved: false, same: true };
+  }
+  const becomesPromise = item.category === 'promise' && before['category'] !== 'promise';
+  const same = !newAnchor && !becomesPromise && (open || (item.request_anchor ? item.request_anchor === anchorBefore : before['version'] === item.version));
+  const reopen = !open && (newAnchor || becomesPromise || (!item.request_anchor && before['version'] !== item.version));
+  return { ...fresh, due_at: same && userDue ? userDue : item.due_at, request_anchor: item.request_anchor ?? anchorBefore,
+    state: open || reopen ? 'open' : String(before['state']), keepResolved: !open && !reopen, same: same && (open || !reopen) };
+}
+/**
+ * A wait is answered only by a message this look read in the thread (its adapter snapshot) from someone other than the
+ * account, at or after the time the user asked. answered_by is "<address>|<time>" as read.
+ */
+function waitAnswered(run: Record<string, unknown>, r: z.infer<typeof Resolution>, item: Record<string, unknown> | undefined) {
+  if (r.how !== 'done' || !r.answered_by || !item) return false;
+  const snap = (run['thread_snapshots'] as Record<string, { messages?: ThreadMessage[] }> | null)?.[r.thread_key];
+  const [address, time] = r.answered_by.split('|').map(v => v.trim());
+  if (!address || !time) return false;
+  const at = Date.parse(printTime(time));
+  if (Number.isNaN(at)) return false;
+  const account = String(run['account']).toLowerCase();
+  // Asked when: the wait's own time, else its anchor's time. Without either the wait is not closed automatically.
+  const askedAt = item['waiting_since'] ? new Date(String(item['waiting_since'])).getTime()
+    : Date.parse(printTime(String(item['request_anchor'] ?? '').split('|')[1]?.trim() ?? ''));
+  if (Number.isNaN(askedAt)) return false;
+  // The answer: a message this look read, from that address (not the account), at that time, after the ask.
+  return !!snap?.messages?.some(m => {
+    const from = m.from_address?.toLowerCase();
+    const mAt = Date.parse(printTime(m.at));
+    return !!from && from === address.toLowerCase() && from !== account && !Number.isNaN(mAt) && Math.abs(mAt - at) < 60_000 && mAt > askedAt;
+  });
+}
+export type ThreadMessage = { from: string; from_address: string | null; at: string; to: string; body: string };
+/** The daemon stores the adapter's whole reading of a thread on its item (shown in the feed's thread view). */
+export async function noteThreadSnapshot(sql: Query, workspace: string, task: string, thread: string, messages: ThreadMessage[], cut = false) {
+  const truncated = cut || messages.length > 30 || messages.some(m => m.body.length > 6000);
+  const trimmed = messages.slice(-30).map(m => ({ ...m, at: printTime(m.at), body: m.body.slice(0, 6000) }));
+  // A look reads threads before its report creates their items: keep the reading on the run until then.
+  await sql`UPDATE assistant.attention_source_runs SET thread_snapshots=thread_snapshots||jsonb_build_object(${thread}::text,jsonb_build_object('messages',${JSON.stringify(trimmed)}::text::jsonb,'truncated',${truncated}))
+    WHERE workspace_id=${workspace} AND task_id=${task}`;
+  await sql`UPDATE assistant.attention_source_items i SET thread_snapshot=${JSON.stringify({ messages: trimmed, truncated })}::text::jsonb,thread_read_at=now()
+    WHERE i.workspace_id=${workspace} AND i.thread_key=${thread}
+      AND i.source_id IN (SELECT source_id FROM assistant.attention_source_runs WHERE task_id=${task} UNION SELECT source_id FROM assistant.attention_source_drafts WHERE task_id=${task})`;
+}
 export async function noteDraftRevision(sql: Query, workspace: string, task: string, thread: string, revision: string) {
   await sql`UPDATE assistant.attention_source_drafts d SET revision=${revision} FROM assistant.attention_source_items i
     WHERE d.workspace_id=${workspace} AND d.task_id=${task} AND d.state='dispatched' AND i.id=d.item_id AND i.thread_key=${thread}`;
@@ -555,21 +725,22 @@ export async function startSend(sql: Query, input: { workspace: string; card: st
   const addresses = input.recipient?.match(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi) ?? [];
   const address = addresses.length === 1 ? addresses[0]!.toLowerCase() : null;
   if (!address) return { blocked: '받는 사람 주소가 카드에 없어서 보낼 수 없어요. 수정에서 주소를 넣어 주세요.' };
-  const row = (await sql`SELECT i.id,i.thread_key,i.url,i.subject,i.counterpart,i.version,d.revision AS draft_revision,s.kind,s.account,coalesce(i.conversation_id,s.conversation_id) AS conversation_id
+  const row = (await sql`SELECT d.purpose,i.request_anchor,i.id,i.thread_key,i.url,i.subject,i.counterpart,i.version,d.revision AS draft_revision,s.kind,s.account,coalesce(i.conversation_id,s.conversation_id) AS conversation_id
     FROM assistant.attention_source_drafts d JOIN assistant.attention_source_items i ON i.id=d.item_id JOIN assistant.attention_sources s ON s.id=d.source_id
     WHERE d.workspace_id=${input.workspace} AND d.card_message_id=${input.card}`)[0];
   if (!row) return null;
   if (row['kind'] !== 'gmail') return { blocked: 'Slack 답장 발송은 아직 직접 해 주세요. 초안은 복사해서 쓰시면 돼요.' };
   // One open send per thread, across cards and versions: an unknown outcome must be checked before anything else goes.
   const open = (await sql`SELECT state FROM assistant.attention_source_sends WHERE item_id=${row['id']} AND state IN ('dispatched','executing','unknown','checking','needs_user')`)[0];
-  if (open) return { blocked: open['state'] === 'needs_user' ? '앞선 답장이 나갔는지 확인되지 않았어요. 챙길 것에서 다시 확인해 주세요' : open['state'] === 'unknown' || open['state'] === 'checking' ? '앞선 답장이 나갔는지 확인하고 있어요. 확인이 끝나면 알려 드릴게요' : '이미 보내는 중이에요' };
+  if (open) return { blocked: open['state'] === 'needs_user' ? '앞선 답장이 나갔는지 확인되지 않았어요. 피드에서 다시 확인해 주세요' : open['state'] === 'unknown' || open['state'] === 'checking' ? '앞선 답장이 나갔는지 확인하고 있어요. 확인이 끝나면 알려 드릴게요' : '이미 보내는 중이에요' };
   // The revision the draft was written from; without it the draft cannot be checked against the thread.
-  if (!row['draft_revision']) return { blocked: '이 초안은 메일 원문을 끝까지 확인하지 못한 상태라 보낼 수 없어요. 메일을 한 번 더 봐 달라고 하시면 새 초안을 만들어요' };
+  // Not sendable as it is: the caller starts a fresh draft for this thread (outside this refused approval).
+  if (!row['draft_revision']) return { blocked: '이 초안은 메일 원문을 끝까지 확인하지 못해서 보낼 수 없었어요. 원문을 다시 읽고 새 초안을 만들고 있어요', redraft: input.card, body: input.body };
   const objective = sendObjective({ kind: row['kind'] as Kind, account: String(row['account']), thread_key: String(row['thread_key']), subject: String(row['subject']) });
   const created = await createBackgroundTask(sql, { workspace: input.workspace, conversation: String(row['conversation_id']), objective, origin: 'responsibility', clientId: crypto.randomUUID() });
   // The envelope: what the user saw on the card (recipient from the card, not re-read), the thread and its message count.
-  await sql`INSERT INTO assistant.attention_source_sends(task_id,workspace_id,card_message_id,block_id,item_id,account,thread_key,version,body,body_hash,recipient,recipient_address,revision)
-    VALUES(${created.task.id},${input.workspace},${input.card},${input.block},${String(row['id'])},${String(row['account'])},${String(row['thread_key'])},${String(row['version'])},${input.body},${await bodyHash(input.body)},
+  await sql`INSERT INTO assistant.attention_source_sends(purpose,request_anchor,item_version,task_id,workspace_id,card_message_id,block_id,item_id,account,thread_key,version,body,body_hash,recipient,recipient_address,revision)
+    VALUES(${String(row['purpose'] ?? 'reply')},${row['request_anchor'] ?? null},${String(row['version'])},${created.task.id},${input.workspace},${input.card},${input.block},${String(row['id'])},${String(row['account'])},${String(row['thread_key'])},${String(row['version'])},${input.body},${await bodyHash(input.body)},
       ${input.recipient},${address},${String(row['draft_revision'])})`;
   return { task: created.task, conversation: String(row['conversation_id']) };
 }
@@ -632,6 +803,18 @@ async function settleSendOutcome(sql: Query, workspace: string, send: Record<str
     const msg = (await sql`INSERT INTO assistant.messages(workspace_id,conversation_id,task_id,role,content,origin,phase,blocks)
       VALUES(${workspace},${String(item['conversation_id'])},${String(send['task_id'])},'assistant',${String(send['note'] ?? '').startsWith('the user confirmed') ? `${result.target ?? ''}에게 보낸 답장을 확인해 주셨어요.`.trim() : `${result.target ?? ''}에게 답장을 보냈어요.`.trim()},'responsibility','final_answer',${JSON.stringify([result])}::text::jsonb) RETURNING id`)[0]!;
     await sql`UPDATE assistant.card_states SET state='resolved',retry_ok=false,result_message_id=${msg['id']},updated_at=now() WHERE workspace_id=${workspace} AND message_id=${card} AND block_id=${block}`;
+    // The reply answered the request: the item leaves 지금 할 일 now (a new request from the other side reopens it).
+    // Only the request this reply answered: a newer request that arrived meanwhile stays open.
+    await sql`UPDATE assistant.attention_source_items SET state='resolved',resolution='replied',resolution_note=${'여기서 승인한 답장을 보냈어요'},resolution_basis='sent_here',resolved_at=now(),updated_at=now()
+      WHERE id=${String(send['item_id'])} AND state='open' AND ${String(send['purpose'] ?? 'reply')}='reply' AND category NOT IN ('promise','waiting')
+        AND (CASE WHEN ${send['request_anchor'] ? String(send['request_anchor']) : null}::text IS NOT NULL AND request_anchor IS NOT NULL THEN request_anchor=${send['request_anchor'] ? String(send['request_anchor']) : null}::text ELSE version=${String(send['item_version'] ?? send['version'])} END)`;
+    await withdrawAlertsFor(sql, workspace, String(send['item_id']));
+    // A follow-up went out: the wait goes on, and the next follow-up is not offered for three days.
+    if (send['purpose'] !== 'reply') await sql`UPDATE assistant.attention_source_items SET
+        next_chase_at=CASE WHEN ${send['purpose'] === 'chase'} THEN now()+interval '3 days' ELSE next_chase_at END,reply_request_id=NULL,reply_note=NULL,updated_at=now()
+      WHERE id=${String(send['item_id'])} AND state='open'
+        AND (CASE WHEN ${send['request_anchor'] ? String(send['request_anchor']) : null}::text IS NOT NULL THEN request_anchor=${send['request_anchor'] ? String(send['request_anchor']) : null}::text
+          ELSE request_anchor IS NULL AND category=${send['purpose'] === 'chase' ? 'waiting' : 'promise'} END)`;
     await sql`WITH e AS (INSERT INTO assistant.events(workspace_id,kind,payload) VALUES(${workspace},'message.created',${JSON.stringify({ message: { id: msg['id'] } })}::text::jsonb) RETURNING id) INSERT INTO assistant.outbox(workspace_id,event_id) SELECT ${workspace},id FROM e`;
   } else if (outcome === 'refused') {
     await sql`UPDATE assistant.card_states SET state='replaced',retry_ok=false,updated_at=now() WHERE workspace_id=${workspace} AND message_id=${card} AND block_id=${block}`;
@@ -692,7 +875,7 @@ export async function settleSendTask(sql: Query, workspace: string, task: string
   await settleSendOutcome(sql, workspace, send, outcome);
 }
 
-/** The user asks to check an unconfirmed send again (from 챙길 것): a fresh read-only check, attempts reset. */
+/** The user asks to check an unconfirmed send again (from 피드): a fresh read-only check, attempts reset. */
 export async function recheckSend(sql: Query, workspace: string, sendTask: string) {
   const send = (await sql`SELECT task_id FROM assistant.attention_source_sends WHERE workspace_id=${workspace} AND task_id=${sendTask} AND state IN ('needs_user','unknown') FOR UPDATE`)[0];
   if (!send) return false;
@@ -708,4 +891,79 @@ export async function confirmSend(sql: Query, workspace: string, sendTask: strin
   await sql`UPDATE assistant.attention_source_sends SET state=${outcome},note=${sent ? 'the user confirmed it was sent' : 'the user confirmed it was not sent'},finished_at=now() WHERE task_id=${send['task_id']}`;
   await settleSendOutcome(sql, workspace, { ...send, note: sent ? 'the user confirmed it was sent' : 'the user confirmed it was not sent' }, outcome);
   return true;
+}
+
+/**
+ * One item's thread for the feed: the adapter's last whole reading (per message) and the current reply draft, if any
+ * (its approval card, so the feed can approve, edit or ask again in place).
+ */
+export async function itemThread(sql: Query, workspace: string, id: string) {
+  const i = (await sql`SELECT i.once_until,s.enabled,i.id,i.subject,i.counterpart,i.url,i.state,i.version,i.reply_note,i.reply_request_id,i.reply_requested_at,i.thread_snapshot,i.thread_read_at,s.kind,s.account,
+      coalesce(i.conversation_id,s.conversation_id) AS conversation_id FROM assistant.attention_source_items i JOIN assistant.attention_sources s ON s.id=i.source_id
+    WHERE i.workspace_id=${workspace} AND i.id=${id}`)[0];
+  if (!i) return null;
+  // The draft of this thread version and of the current reply request only (an older one is never offered).
+  const d = (await sql`SELECT d.state AS job,d.card_message_id,m.blocks,c.state AS card_state,c.approved_body,c.retry_ok,m.conversation_id
+    FROM assistant.attention_source_drafts d LEFT JOIN assistant.messages m ON m.id=d.card_message_id
+    LEFT JOIN assistant.card_states c ON c.workspace_id=d.workspace_id AND c.message_id=d.card_message_id
+    WHERE d.workspace_id=${workspace} AND d.item_id=${id} AND d.version=${i['version']} AND d.reply_request_id IS NOT DISTINCT FROM ${i['reply_request_id'] ?? null}::uuid
+      AND d.state IN ('dispatched','ready') ORDER BY d.created_at DESC LIMIT 1`)[0];
+  // The user's reply request: queued until a draft job starts, preparing while it runs, ready with a card, failed after the attempts.
+  const req = i['reply_request_id'] ? (await sql`SELECT
+      count(*) FILTER (WHERE state='dispatched') AS running, count(*) FILTER (WHERE state='ready') AS ready, count(*) FILTER (WHERE state IN ('failed','expired')) AS failed,
+      count(*) FILTER (WHERE state IN ('handled','not_needed')) AS done, bool_or(state='withdrawn') AS withdrawn
+    FROM assistant.attention_source_drafts WHERE item_id=${id} AND reply_request_id=${i['reply_request_id']} AND version=${i['version']}`)[0] : null;
+  // Ended states first: the thread was closed (handled here, in Gmail, or dismissed), the draft job found no reply
+  // needed, or the one-off permission ran out before a draft was made.
+  const expired = !i['enabled'] && (!i['once_until'] || new Date(String(i['once_until'])) <= new Date());
+  const reqState = !req ? null : i['state'] !== 'open' || Number(req['done']) ? 'completed' : Number(req['ready']) ? 'ready' : Number(req['running']) ? 'preparing'
+    : Number(req['failed']) >= 2 ? 'failed' : expired ? 'expired' : 'queued';
+  const snap = i['thread_snapshot'] as { messages?: ThreadMessage[]; truncated?: boolean } | ThreadMessage[] | null;
+  const messages = Array.isArray(snap) ? snap : snap?.messages ?? [];
+  const block = d ? ((d['blocks'] as { kind: string; id: string; target: string | null; title: string | null; body: string }[] | null) ?? []).find(b => b.kind === 'draft') : undefined;
+  return {
+    id: String(i['id']), subject: String(i['subject']), counterpart: i['counterpart'] ? String(i['counterpart']) : null, url: i['url'] ? String(i['url']) : null,
+    source: i['kind'] === 'slack' ? 'Slack' : 'Gmail', account: String(i['account']), open: i['state'] === 'open', reply_note: i['reply_note'] ? String(i['reply_note']) : null,
+    messages: messages.map(m => ({ ...m, at: printTime(m.at) })), truncated: !Array.isArray(snap) && snap?.truncated === true,
+    reply_request: i['reply_request_id'] && reqState ? { id: String(i['reply_request_id']), state: reqState, note: i['reply_note'] ? String(i['reply_note']) : null, at: new Date(String(i['reply_requested_at'])).toISOString() } : null,
+    read_at: i['thread_read_at'] ? new Date(String(i['thread_read_at'])).toISOString() : null,
+    draft: !d ? null : d['job'] === 'dispatched' || !block ? { preparing: true } : {
+      preparing: false, conversation_id: String(d['conversation_id']), message_id: String(d['card_message_id']), block_id: block.id, target: block.target, title: block.title,
+      body: d['approved_body'] ? String(d['approved_body']) : block.body, card_state: d['card_state'] ? String(d['card_state']) : 'pending', retry_ok: d['retry_ok'] === true },
+  };
+}
+
+/** Is this the account of the source the task works for (a look or a draft job)? */
+export async function taskSourceAccount(sql: Query, workspace: string, task: string, account: string | null) {
+  if (!account) return false;
+  const row = (await sql`SELECT s.account FROM assistant.attention_sources s WHERE s.workspace_id=${workspace} AND s.id IN (
+      SELECT source_id FROM assistant.attention_source_runs WHERE task_id=${task} UNION SELECT source_id FROM assistant.attention_source_drafts WHERE task_id=${task})`)[0];
+  return !!row && String(row['account']).toLowerCase() === account.toLowerCase();
+}
+
+/** The account a source job may read (its source), for the daemon to pin reader calls to. */
+export async function sourceScope(sql: Query, workspace: string, task: string): Promise<{ kind: Kind; account: string } | null> {
+  const row = (await sql`SELECT s.kind,s.account FROM assistant.attention_sources s WHERE s.workspace_id=${workspace} AND s.id IN (
+      SELECT source_id FROM assistant.attention_source_runs WHERE task_id=${task} UNION SELECT source_id FROM assistant.attention_source_drafts WHERE task_id=${task})`)[0];
+  return row ? { kind: row['kind'] as Kind, account: String(row['account']) } : null;
+}
+
+/** A due alert for this item that no longer holds stops notifying now (not at the next tick). */
+async function withdrawAlertsFor(sql: Query, workspace: string, item: string) {
+  const { withdrawStaleAlerts } = await import('./coordinator');
+  await withdrawStaleAlerts(sql, workspace, new Date(), item);
+}
+
+/**
+ * 다시 확인 on a blocked source (the user logged in): one look now, answered where the source was last asked for. A
+ * stopped watch stays stopped; only this one look runs (the user's press is the request).
+ */
+export async function retrySource(sql: Query, workspace: string, id: string) {
+  const s = (await sql`SELECT * FROM assistant.attention_sources WHERE workspace_id=${workspace} AND id=${id} AND health IN ('needs_user','degraded','retrying') FOR UPDATE`)[0];
+  if (!s) return null;
+  if ((await sql`SELECT 1 FROM assistant.attention_source_runs WHERE source_id=${id} AND state='dispatched'`)[0]) return 'already';
+  const message = String(s['source_message_id']);
+  const task = await startLook(sql, s, new Date(), { conversation: String(s['conversation_id']), message });
+  await sql`UPDATE assistant.attention_sources SET health='retrying',updated_at=now() WHERE id=${id}`;
+  return task;
 }

@@ -9,7 +9,17 @@ struct ShellView: View {
     @StateObject private var data: ShellData
     @StateObject private var panels: PanelStore
     @Environment(\.scenePhase) private var phase
-    @State private var panel: ShellPanel?
+    #if os(macOS)
+    @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
+    #endif
+    #if os(iOS)
+    private enum ShellTab: Hashable { case chat, attention, tasks, schedules, more }
+    @State private var selectedTab: ShellTab = .chat
+    @State private var morePath: [ShellPanel] = []
+    #else
+    private enum SidebarDestination: Hashable { case chat, panel(ShellPanel) }
+    @State private var sidebarSelection: SidebarDestination? = .chat
+    #endif
     @State private var selectionError: String?
     @State private var failedSelection: (id: String, message: String?)?
     @State private var selectionRequest = UUID()
@@ -32,14 +42,23 @@ struct ShellView: View {
             } message: { Text(selectionError ?? "") }
             .task(id: shell.authenticated && phase == .active) {
                 data.webView = shell.webView
-                guard shell.authenticated, phase == .active else {
-                    if !shell.authenticated { data.clear(); panels.clear() }
-                    return
-                }
+                guard shell.authenticated, phase == .active else { return }
                 WebPanelCache.warm(["settings", "computer"])
                 await panels.prefetch()
             }
-            .onChange(of: shell.resultRevision) { _, _ in panel = nil }
+            .onChange(of: shell.authenticated, initial: true) { _, authenticated in
+                guard !authenticated else { return }
+                data.clear()
+                panels.clear()
+                WebPanelCache.clear()
+                showConversation()
+                #if os(iOS)
+                morePath = []
+                shell.presentedPanel = false
+                shell.updateComposerPresentation()
+                #endif
+            }
+            .onChange(of: shell.resultRevision) { _, _ in showConversation() }
             .onChange(of: shell.panelRequest) { _, request in
                 guard let request else { return }
                 shell.panelRequest = nil
@@ -63,95 +82,122 @@ struct ShellView: View {
     }
 
     @ViewBuilder private var navigation: some View {
-        #if os(macOS)
-        NavigationStack {
+        if shell.authenticated {
+            authenticatedNavigation
+        } else {
             ConversationSurface(shell: shell)
-                .ignoresSafeArea(.container, edges: .top)
-                .navigationTitle("")
-                .toolbar { shellToolbar }
-                .toolbarBackground(.hidden, for: .windowToolbar)
+                .ignoresSafeArea(.container, edges: .all)
+                #if os(macOS)
+                .frame(minWidth: 560, minHeight: 480)
+                #endif
         }
-        .inspector(isPresented: Binding(get: { panel != nil }, set: { if !$0 { panel = nil } })) {
-            if let panel {
-                NavigationStack {
-                    NativePanelView(panel: panel, data: data, panels: panels, assistant: shell.assistant, openConversation: select) { self.panel = nil }
+    }
+
+    @ViewBuilder private var authenticatedNavigation: some View {
+        #if os(macOS)
+        NavigationSplitView(columnVisibility: $sidebarVisibility) {
+            List(selection: $sidebarSelection) {
+                NavigationLink(value: SidebarDestination.chat) {
+                    Label("대화", systemImage: "bubble.left.and.bubble.right")
                 }
-                .inspectorColumnWidth(min: 320, ideal: panel == .computer ? 540 : 380, max: 800)
+                ForEach([ShellPanel.attention, .tasks, .schedules, .memory, .computer]) { item in
+                    NavigationLink(value: SidebarDestination.panel(item)) {
+                        Label(item.title, systemImage: item.symbol)
+                    }
+                    .accessibilityIdentifier("shell-\(item.rawValue)")
+                }
+                Section {
+                    SettingsLink { Label("설정", systemImage: ShellPanel.settings.symbol) }
+                        .buttonStyle(.plain)
+                }
+            }
+            .listStyle(.sidebar)
+            .navigationTitle("크래커")
+            .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 280)
+        } detail: {
+            NavigationStack {
+                if let sidebarSelection, case .panel(let item) = sidebarSelection {
+                    NativePanelView(panel: item, data: data, panels: panels, assistant: shell.assistant,
+                                    openConversation: select, close: showConversation, isModal: false)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ConversationSurface(shell: shell)
+                        .ignoresSafeArea(.container, edges: .top)
+                        .navigationTitle("")
+                        .toolbarBackground(.hidden, for: .windowToolbar)
+                }
             }
         }
+        .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 560, minHeight: 480)
         #else
-        ConversationSurface(shell: shell)
-            .ignoresSafeArea(.container, edges: .top)
-            .overlay(alignment: .top) { if shell.authenticated { conversationBar } }
-        .sheet(item: $panel) { item in
+        TabView(selection: $selectedTab) {
+            ConversationSurface(shell: shell)
+                .ignoresSafeArea(.container, edges: .top)
+                .tabItem { Label("대화", systemImage: "bubble.left.and.bubble.right") }
+                .tag(ShellTab.chat)
             NavigationStack {
-                NativePanelView(panel: item, data: data, panels: panels, assistant: shell.assistant, openConversation: select) { panel = nil }
+                tabPanel(.attention)
             }
-            .presentationDetents(item.compact ? [.medium, .large] : [.large])
-            .presentationDragIndicator(.visible)
-            .presentationCornerRadius(24)
+            .tabItem { Label(ShellPanel.attention.title, systemImage: ShellPanel.attention.symbol) }
+            .tag(ShellTab.attention)
+            NavigationStack {
+                tabPanel(.tasks)
+            }
+            .tabItem { Label(ShellPanel.tasks.title, systemImage: ShellPanel.tasks.symbol) }
+            .tag(ShellTab.tasks)
+            NavigationStack {
+                tabPanel(.schedules)
+            }
+            .tabItem { Label(ShellPanel.schedules.title, systemImage: ShellPanel.schedules.symbol) }
+            .tag(ShellTab.schedules)
+            NavigationStack(path: $morePath) {
+                List([ShellPanel.memory, .computer, .settings, .notifications]) { item in
+                    NavigationLink(value: item) { Label(item.title, systemImage: item.symbol) }
+                }
+                .navigationTitle("더보기")
+                .navigationBarTitleDisplayMode(.large)
+                .navigationDestination(for: ShellPanel.self) { item in tabPanel(item) }
+            }
+            .tabItem { Label("더보기", systemImage: "ellipsis.circle") }
+            .tag(ShellTab.more)
         }
-        .onChange(of: panel) { _, value in
-            shell.presentedPanel = value != nil
+        .onChange(of: selectedTab, initial: true) { _, value in
+            if value != .chat { shell.nativeComposer.preparePanelSource() }
+            shell.presentedPanel = value != .chat
             shell.updateComposerPresentation()
         }
         #endif
     }
 
     #if os(iOS)
-    /// The persona and thinking state stay in the web header (Messages-style); the tools menu is native.
-    private var conversationBar: some View {
-        HStack {
-            Spacer()
-            shellMenu
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(ShellStyle.accent)
-        .padding(.horizontal, 8)
+    private func tabPanel(_ item: ShellPanel) -> some View {
+        NativePanelView(panel: item, data: data, panels: panels, assistant: shell.assistant,
+                        openConversation: select, close: {}, isModal: false)
     }
     #endif
-    @ToolbarContentBuilder private var shellToolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
-            #if os(macOS)
-            ForEach([ShellPanel.attention, .tasks, .schedules, .memory, .computer]) { item in
-                Button { toggle(item) } label: { Label(item.title, systemImage: item.symbol) }
-                    .help(item.title)
-                    .disabled(!shell.authenticated)
-                    .accessibilityIdentifier("shell-\(item.rawValue)")
-            }
-            SettingsLink { Label("설정", systemImage: "gearshape") }.help("설정")
-            #else
-            shellMenu
-            #endif
-        }
-    }
-    #if os(macOS)
-    private func toggle(_ item: ShellPanel) {
-        withAnimation(.snappy(duration: 0.28)) { panel = panel == item ? nil : item }
-    }
-    #endif
-    private var shellMenu: some View {
-            Menu {
-                ForEach(ShellPanel.allCases.filter { $0 != .settings && $0 != .notifications }) { item in
-                    Button { open(item) } label: { Label(item.title, systemImage: item.symbol) }
-                }
-                Divider()
-                #if os(macOS)
-                SettingsLink { Label("설정", systemImage: "gearshape") }
-                #else
-                Button { open(.settings) } label: { Label("설정", systemImage: "gearshape") }
-                #endif
-            } label: { Label("도구", systemImage: "ellipsis.circle").labelStyle(.iconOnly).frame(width: 44, height: 44) }
-                .disabled(!shell.authenticated)
-                .accessibilityIdentifier("shell-tools")
-    }
     private func open(_ item: ShellPanel) {
         #if os(iOS)
         shell.nativeComposer.preparePanelSource()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        switch item {
+        case .attention: selectedTab = .attention
+        case .tasks: selectedTab = .tasks
+        case .schedules: selectedTab = .schedules
+        case .memory, .computer, .settings, .notifications:
+            morePath = [item]
+            selectedTab = .more
+        }
+        #else
+        sidebarSelection = .panel(item)
         #endif
-        panel = item
+    }
+    private func showConversation() {
+        #if os(iOS)
+        selectedTab = .chat
+        #else
+        sidebarSelection = .chat
+        #endif
     }
     private func select(_ id: String, _ message: String?) {
         let request = UUID()
@@ -164,7 +210,7 @@ struct ShellView: View {
                 selectionError = "대화를 불러오지 못했어요. 연결을 확인한 뒤 다시 시도해 주세요."
                 return
             }
-            panel = nil
+            showConversation()
         }
     }
 }

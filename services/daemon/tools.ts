@@ -85,6 +85,10 @@ export class ToolExecutor {
   mcpTools(name:string):readonly {name:string;description:string}[]{return this.offered.get(name)??[];}
   private readonly clients = new Map<string, { readonly client: Client; readonly name: string; readonly server: string; readonly readOnly:boolean; readonly category:ServerCategory|null }>();
   toolCategory(name:string):ServerCategory|null{return this.clients.get(name)?.category??null;}
+  /** The MCP server's own method name behind an offered tool name (never derived from the display name). */
+  mcpMethod(name:string):string|null{return this.clients.get(name)?.name??null;}
+  /** The namespace (cfg_<hash of the extension id>) of the MCP server behind an offered tool name. */
+  mcpServer(name:string):string|null{return this.clients.get(name)?.server??null;}
   parallelRead(name:string):boolean{return this.clients.get(name)?.readOnly===true;}
   isMcp(name:string):boolean{return this.clients.has(name);}
   private readonly secrets = new Map<Client, readonly string[]>();
