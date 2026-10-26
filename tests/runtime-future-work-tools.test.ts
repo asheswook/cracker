@@ -9,7 +9,7 @@ import { ScheduleRequest } from "../services/control/repository/schedule-enrollm
 const scope = { runId: crypto.randomUUID(), actionId: "synthetic-run:edit-1" };
 const source = { source_message_id: crypto.randomUUID(), source_quote: "Update the existing routine." };
 const target = { kind: "responsibility", id: crypto.randomUUID(), expected_version: "a".repeat(64) } as const;
-const configuration = { title: "정오 알림", objective: "Include a submission reminder", trigger: { kind: "daily", hour: 12, minute: 0, timezone: "Asia/Seoul" }, notification_mode: "enabled", quiet_hours: null };
+const configuration = { title: "정오 알림", until_at: null, objective: "Include a submission reminder", trigger: { kind: "daily", hour: 12, minute: 0, timezone: "Asia/Seoul" }, notification_mode: "enabled", quiet_hours: null };
 const updated = { work: { kind: "responsibility", id: target.id, version: "b".repeat(64), state: "active", conversation_id: crypto.randomUUID(), configuration, next_due_at: "2027-01-01T03:00:00.000Z", skill_id: null, skill_revision: null }, already_dispatched_task_ids: [] };
 
 test("work titles normalize blank values and enforce the display limit", () => {

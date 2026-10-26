@@ -27,7 +27,7 @@ async function fixture() {
   if (!poll.assignment) throw new TypeError('Missing assignment');
   return { runId: poll.assignment.run_id, conversationId: conversation, actionId: `${poll.assignment.run_id}:call1`, source, task };
 }
-function args(source: string) { return JSON.stringify({ source_message_id: source, source_quote: 'Watch the report every ten minutes and notify me of meaningful changes.', objective: 'Watch the report for meaningful changes', trigger_kind: 'periodic', due_at: null, timezone: null, task_id: null, interval_minutes: 10 }); }
+function args(source: string) { return JSON.stringify({ source_message_id: source, source_quote: 'Watch the report every ten minutes and notify me of meaningful changes.', objective: 'Watch the report for meaningful changes', trigger_kind: 'periodic', due_at: null, timezone: null, task_id: null, interval_minutes: 10, until_at: null, starts_at: null }); }
 test('model enrollment action persists once across repeated action delivery', async () => {
   // Given
   const scope = await fixture(), call = { name: 'create_responsibility', args: args(scope.source), signal: AbortSignal.timeout(5000) };

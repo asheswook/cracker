@@ -109,6 +109,45 @@ test("title-only routine edits preserve pending work and creation idempotency",a
   expect((await f.request("/v1/daemon/responsibilities",f.machine,creation)).status).toBe(201);
   expect((await list(current.run_id)).items.find(row=>row.id===item.id)?.configuration.title).toBe("바뀐 제목");
 });
+test("until-only edits are listed, change the version, and preserve pending actions until expiry",async()=>{
+  const current=await active();
+  expect((await f.request("/v1/daemon/responsibilities",f.machine,{...current,vm_id:f.vm,client_responsibility_id:crypto.randomUUID(),objective:"End-date fixture",trigger:{kind:"daily",hour:9,minute:0,timezone:"UTC"}})).status).toBe(201);
+  let item=(await list(current.run_id)).items.find(row=>row.configuration.objective==="End-date fixture");
+  if(item?.kind!=="responsibility")throw new Error("Missing end-date fixture");
+  expect(item.configuration.until_at).toBeNull();
+  const originalDue=item.next_due_at;
+  await f.sql`INSERT INTO assistant.responsibility_actions(workspace_id,responsibility_id,context_hash,objective) VALUES(${f.workspace},${item.id},'until-only','Pending action')`;
+  for(const until_at of ["2099-01-01T00:00:00.000Z",null]){
+    const previousVersion=item.version;
+    const response=await f.request(`${base}/update`,f.machine,{...current,client_action_id:crypto.randomUUID(),work:{kind:"responsibility",id:item.id,expected_version:item.version,configuration:{...item.configuration,until_at}}});
+    expect(response.status).toBe(200);
+    const updated=FutureWorkMutationResult.parse(await response.json()).work;
+    if(updated.kind!=="responsibility")throw new Error("Wrong kind");
+    expect(updated.configuration.until_at).toBe(until_at);
+    expect(updated.version).not.toBe(previousVersion);
+    expect(updated.next_due_at).toBe(originalDue);
+    expect(updated.state).toBe("active");
+    expect(await f.sql`SELECT id FROM assistant.responsibility_actions WHERE responsibility_id=${item.id} AND state='pending'`).toHaveLength(1);
+    item=(await list(current.run_id)).items.find(row=>row.id===updated.id);
+    if(item?.kind!=="responsibility")throw new Error("Missing updated end-date fixture");
+    expect(item.configuration.until_at).toBe(until_at);
+  }
+  const expired=await f.request(`${base}/update`,f.machine,{...current,client_action_id:crypto.randomUUID(),work:{kind:"responsibility",id:item.id,expected_version:item.version,configuration:{...item.configuration,until_at:new Date(Date.now()-60_000).toISOString()}}});
+  expect(expired.status).toBe(200);
+  expect(FutureWorkMutationResult.parse(await expired.json()).work.state).toBe("complete");
+  expect(await f.sql`SELECT state,task_id FROM assistant.responsibility_actions WHERE responsibility_id=${item.id}`).toMatchObject([{state:"cancelled",task_id:null}]);
+});
+test("updates reject an end date for deadline and task-change triggers",async()=>{
+  const current=await active();
+  await f.request("/v1/daemon/responsibilities",f.machine,{...current,vm_id:f.vm,client_responsibility_id:crypto.randomUUID(),objective:"Invalid end-date fixture",trigger:{kind:"periodic",interval_minutes:60}});
+  const item=(await list(current.run_id)).items.find(row=>row.configuration.objective==="Invalid end-date fixture");
+  if(item?.kind!=="responsibility")throw new Error("Missing end-date fixture");
+  for(const trigger of [{kind:"deadline",due_at:"2099-01-01T00:00:00Z",timezone:"UTC"},{kind:"task_change",task_id:crypto.randomUUID()}]){
+    const response=await f.request(`${base}/update`,f.machine,{...current,client_action_id:crypto.randomUUID(),work:{kind:"responsibility",id:item.id,expected_version:item.version,configuration:{...item.configuration,trigger,until_at:"2099-01-02T00:00:00Z"}}});
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({error:{code:"invalid_until"}});
+  }
+});
 test("owned run cannot see or mutate another VM responsibility and list never dispatches due work",async()=>{
   const current=await active();
   await f.request("/v1/daemon/responsibilities",f.machine,{...current,vm_id:f.vm,client_responsibility_id:crypto.randomUUID(),objective:"VM isolation test",trigger:{kind:"daily",hour:9,minute:0,timezone:"UTC"}});

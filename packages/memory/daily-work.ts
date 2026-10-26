@@ -7,7 +7,7 @@ export async function nextDailyAt(sql: Query, trigger: Daily, after: string): Pr
   const row = z.object({next:z.string()}).parse((await sql`
     WITH local AS (SELECT ${after}::timestamptz AT TIME ZONE ${trigger.timezone} AS clock),
     candidate AS (SELECT date_trunc('day',clock)+make_interval(hours=>${trigger.hour},mins=>${trigger.minute}) AS wall FROM local)
-    SELECT CASE WHEN wall AT TIME ZONE ${trigger.timezone}>${after}::timestamptz
+    SELECT CASE WHEN wall AT TIME ZONE ${trigger.timezone}>=${after}::timestamptz
       THEN wall AT TIME ZONE ${trigger.timezone}
       ELSE (wall+interval '1 day') AT TIME ZONE ${trigger.timezone} END AS next FROM candidate
   `)[0]);

@@ -84,7 +84,7 @@ export async function runFutureWork(http: KyInstance, scope: WorkScope, call: Wo
       }
       const body = z.object({ error: z.object({ code: z.string().regex(/^[a-z_]{1,80}$/) }) }).safeParse(raw);
       const code = body.success ? body.data.error.code : "unclassified_rejection";
-      const rejected = new Set(["invalid_request", "invalid_source", "source_mismatch", "invalid_timezone", "stale_version", "not_found", "inactive", "idempotency_conflict"]);
+      const rejected = new Set(["invalid_request", "invalid_source", "source_mismatch", "invalid_timezone", "invalid_until", "stale_version", "not_found", "inactive", "idempotency_conflict"]);
       if ([400, 404, 409].includes(error.response.status) && rejected.has(code))
         return JSON.stringify({ kind: "future_work_rejected", code, persisted: false, next_step: "Read the latest matching work with list_future_work and correct the arguments using the exact current user request. Do not create a replacement routine or claim this rejected change succeeded." });
       throw new ProactiveError(`future_work_http_${error.response.status}_${code}`);

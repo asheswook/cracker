@@ -18,6 +18,7 @@ export const ScheduleConfiguration = z.object({
 });
 export const ResponsibilityConfiguration = z.object({
   title: z.string().trim().max(60).nullable().transform(v => v || null),
+  until_at: z.iso.datetime({ offset: true }).nullable().describe("For daily/periodic only: ISO end date, or null for no end date."),
   objective: z.string().min(1).max(4000),
   trigger: Trigger,
   notification_mode: z.enum(["enabled", "quiet"]),

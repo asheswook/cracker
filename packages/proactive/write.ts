@@ -33,9 +33,11 @@ export async function applyMutation(
       await tx`UPDATE assistant.schedules SET title=${config.title},objective=${config.objective},due_at=${config.due_at},timezone=${config.timezone},management_revision=management_revision+1 WHERE id=${current.id}`;
     } else {
       const config = work.configuration;
+      if (config.until_at !== null && config.trigger.kind !== "daily" && config.trigger.kind !== "periodic") throw new DomainError("invalid_until", "Only daily/periodic routines accept end dates", 400);
+      const expired = config.until_at !== null && new Date(config.until_at).getTime() <= Date.now();
       const previous = current.kind === "responsibility" ? current.configuration.trigger : null;
       const changed = JSON.stringify(previous) !== JSON.stringify(config.trigger);
-      supersedesPending = changed || current.configuration.objective !== config.objective;
+      supersedesPending = expired || changed || current.configuration.objective !== config.objective;
       if (
         config.trigger.kind === "task_change" &&
         !(
@@ -63,7 +65,7 @@ export async function applyMutation(
           }
         }
       }
-      await tx`UPDATE assistant.responsibilities SET title=${config.title},objective=${config.objective},trigger=${JSON.stringify(config.trigger)}::text::jsonb,notification_mode=${config.notification_mode},quiet_hours=${config.quiet_hours ? JSON.stringify(config.quiet_hours) : null}::text::jsonb,next_review_at=${due},management_revision=management_revision+1,failure_count=0,last_error=NULL WHERE id=${current.id}`;
+      await tx`UPDATE assistant.responsibilities SET until_at=${config.until_at},state=${expired ? "complete" : current.state},title=${config.title},objective=${config.objective},trigger=${JSON.stringify(config.trigger)}::text::jsonb,notification_mode=${config.notification_mode},quiet_hours=${config.quiet_hours ? JSON.stringify(config.quiet_hours) : null}::text::jsonb,next_review_at=${due},management_revision=management_revision+1,failure_count=0,last_error=NULL WHERE id=${current.id}`;
     }
   }
   let dispatched: { task_id: string }[] = [];

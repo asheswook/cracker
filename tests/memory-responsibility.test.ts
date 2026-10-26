@@ -5,6 +5,7 @@ import { createApp } from "../services/control/app.ts";
 import { hashToken } from "../services/control/auth.ts";
 import { createResponsibility, dueResponsibilities, recordEvaluation, snapshot, ResponsibilityRow } from "../packages/memory/responsibility-store.ts";
 import { ResponsibilityInput, quietNow } from "../packages/memory/responsibility-schema.ts";
+import { dispatchActions } from "../packages/memory/responsibility-actions.ts";
 const sql = createDatabase(process.env["TEST_DATABASE_URL"] ?? "postgres://assistant:assistant@127.0.0.1:55439/assistant_dev");
 const workspace = crypto.randomUUID(), vm = crypto.randomUUID(), clientToken = crypto.randomUUID() + crypto.randomUUID(), machineToken = crypto.randomUUID() + crypto.randomUUID();
 const client = { workspace_id: workspace, vm_id: null, role: "client" as const }, machine = { workspace_id: workspace, vm_id: vm, role: "vm" as const };
@@ -169,8 +170,65 @@ test("responsibility cancellation prevents pending action dispatch", async () =>
 test('a daily routine with an end date completes after it instead of running on', async () => {
   const { input } = await fixture();
   const r = await createResponsibility(sql, client, ResponsibilityInput.parse({ ...input, client_responsibility_id: crypto.randomUUID(), trigger: { kind: 'daily', hour: 18, minute: 0, timezone: 'Asia/Seoul' }, until_at: new Date(Date.now() - 60_000).toISOString() }));
-  await sql`UPDATE assistant.responsibilities SET next_review_at=now()-interval '1 minute' WHERE id=${r.id}`;
+  await sql`UPDATE assistant.responsibilities SET next_review_at=now()+interval '1 day' WHERE id=${r.id}`;
   await dueResponsibilities(sql, machine);
   expect((await sql`SELECT state FROM assistant.responsibilities WHERE id=${r.id}`)[0]?.['state']).toBe('complete');
   expect((await sql`SELECT count(*)::int AS n FROM assistant.responsibility_actions WHERE responsibility_id=${r.id}`)[0]?.['n']).toBe(0);
+  expect((await sql`SELECT management_revision FROM assistant.responsibilities WHERE id=${r.id}`)[0]?.['management_revision']).toBe(1);
+});
+
+test("expiry cancels pending actions before dispatch and leaves dispatched tasks alone", async () => {
+  const { input, task } = await fixture();
+  const row = await createResponsibility(sql, client, { ...input, client_responsibility_id: crypto.randomUUID(), trigger: { kind: "periodic", interval_minutes: 60 }, until_at: new Date(Date.now() - 60_000).toISOString() });
+  await sql`UPDATE assistant.responsibilities SET next_review_at=now()+interval '1 day' WHERE id=${row.id}`;
+  await sql`INSERT INTO assistant.responsibility_actions(workspace_id,responsibility_id,context_hash,objective) VALUES(${workspace},${row.id},'pending','Must not dispatch')`;
+  await sql`INSERT INTO assistant.responsibility_actions(workspace_id,responsibility_id,context_hash,objective,state,task_id) VALUES(${workspace},${row.id},'dispatched','Running work','dispatched',${task})`;
+  await dueResponsibilities(sql, machine);
+  expect(await sql`SELECT state,task_id FROM assistant.responsibility_actions WHERE responsibility_id=${row.id} AND context_hash='pending'`).toMatchObject([{ state: "cancelled", task_id: null }]);
+  expect(await sql`SELECT state FROM assistant.responsibility_actions WHERE responsibility_id=${row.id} AND context_hash='dispatched'`).toMatchObject([{ state: "dispatched" }]);
+  expect(await sql`SELECT state FROM assistant.tasks WHERE id=${task}`).toMatchObject([{ state: "running" }]);
+});
+
+test("dispatch and evaluation independently refuse expired routines", async () => {
+  const { input } = await fixture();
+  const row = await createResponsibility(sql, client, { ...input, client_responsibility_id: crypto.randomUUID(), trigger: { kind: "periodic", interval_minutes: 60 }, until_at: new Date(Date.now() - 60_000).toISOString() });
+  const current = await snapshot(sql, row);
+  await sql`INSERT INTO assistant.responsibility_actions(workspace_id,responsibility_id,context_hash,objective) VALUES(${workspace},${row.id},${current.context_hash},'Must not dispatch')`;
+  await sql.begin(tx => dispatchActions(tx, machine));
+  expect(await sql`SELECT state,task_id FROM assistant.responsibility_actions WHERE responsibility_id=${row.id}`).toMatchObject([{ state: "cancelled", task_id: null }]);
+  await expect(recordEvaluation(sql, machine, { responsibility_id: row.id, context_hash: current.context_hash, evaluation: { outcome: "action", reason: "Too late", notification: null, action_objective: "Must not create", next_review_minutes: 5 } })).rejects.toThrow("Responsibility is inactive");
+  expect(await sql`SELECT id FROM assistant.responsibility_actions WHERE responsibility_id=${row.id}`).toHaveLength(1);
+});
+
+test("starts_at tomorrow selects tomorrow's first daily occurrence, including midnight", async () => {
+  const { input } = await fixture();
+  const tomorrow = new Date();
+  tomorrow.setUTCHours(0, 0, 0, 0);
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  for (const hour of [0, 18]) {
+    const row = await createResponsibility(sql, client, { ...input, client_responsibility_id: crypto.randomUUID(), trigger: { kind: "daily", hour, minute: 0, timezone: "UTC" }, starts_at: tomorrow.toISOString() });
+    const expected = new Date(tomorrow);
+    expected.setUTCHours(hour);
+    expect(row.next_review_at).toBe(expected.toISOString());
+  }
+  const periodic = await createResponsibility(sql, client, { ...input, client_responsibility_id: crypto.randomUUID(), trigger: { kind: "periodic", interval_minutes: 60 }, starts_at: tomorrow.toISOString() });
+  expect(periodic.next_review_at).toBe(tomorrow.toISOString());
+});
+
+test("deadline and task-change reject routine start/end dates with invalid_until", async () => {
+  const { input } = await fixture();
+  for (const trigger of [{ kind: "deadline", due_at: "2099-01-01T00:00:00Z", timezone: "UTC" } as const, input.trigger]) {
+    for (const dates of [{ until_at: "2099-01-02T00:00:00Z" }, { starts_at: "2099-01-01T00:00:00Z" }]) {
+      await expect(createResponsibility(sql, client, { ...input, ...dates, client_responsibility_id: crypto.randomUUID(), trigger })).rejects.toMatchObject({ code: "invalid_until", status: 400 });
+    }
+  }
+});
+
+test("creation idempotency includes normalized until_at but not title", async () => {
+  const { input } = await fixture();
+  const creation = { ...input, client_responsibility_id: crypto.randomUUID(), trigger: { kind: "periodic", interval_minutes: 60 } as const, until_at: "2099-01-01T09:00:00+09:00" };
+  const row = await createResponsibility(sql, client, creation);
+  expect((await createResponsibility(sql, client, { ...creation, title: "Another title", until_at: "2099-01-01T00:00:00.000Z" })).id).toBe(row.id);
+  await expect(createResponsibility(sql, client, { ...creation, until_at: null })).rejects.toMatchObject({ code: "idempotency_conflict" });
+  await expect(createResponsibility(sql, client, { ...creation, until_at: "2099-01-02T00:00:00Z" })).rejects.toMatchObject({ code: "idempotency_conflict" });
 });

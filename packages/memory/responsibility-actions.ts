@@ -5,9 +5,14 @@ import type { Transaction } from "../../services/control/db.ts";
 import { createBackgroundTask, recordEvent } from "../../services/control/repository/common.ts";
 import { ResponsibilityRow, snapshot } from "./responsibility-store.ts";
 export async function dispatchActions(tx: Transaction, principal: Principal): Promise<void> {
+  await tx`UPDATE assistant.responsibility_actions a SET state='cancelled' FROM assistant.responsibilities r WHERE r.id=a.responsibility_id AND r.workspace_id=${principal.workspace_id} AND r.vm_id=${principal.vm_id} AND r.until_at<=now() AND a.state='pending'`;
   const pending = await tx`SELECT a.id AS action_id,a.objective AS action_objective,a.context_hash AS action_context_hash,r.* FROM assistant.responsibility_actions a JOIN assistant.responsibilities r ON r.id=a.responsibility_id WHERE r.workspace_id=${principal.workspace_id} AND r.vm_id=${principal.vm_id} AND r.state='active' AND a.state='pending' ORDER BY a.created_at LIMIT 20 FOR UPDATE OF a`;
   for (const raw of pending) {
     const row = ResponsibilityRow.extend({ action_id: z.uuid(), action_objective: z.string(), action_context_hash: z.string() }).parse(raw);
+    if (row.until_at && new Date(row.until_at).getTime() <= Date.now()) {
+      await tx`UPDATE assistant.responsibility_actions SET state='cancelled' WHERE id=${row.action_id}`;
+      continue;
+    }
     await tx`SELECT id FROM assistant.conversations WHERE id=${row.conversation_id} FOR UPDATE`;
     if (row.trigger.kind !== "daily" && (await snapshot(tx, row)).context_hash !== row.action_context_hash) {
       await tx`UPDATE assistant.responsibility_actions SET state='cancelled' WHERE id=${row.action_id}`;

@@ -12,6 +12,7 @@ import { fenceRun } from '../../services/control/repository/daemon-session';
 import { QuietHours, Trigger, type ResponsibilitySnapshot, ResponsibilityInput, type EvaluationRequest, quietNow } from "./responsibility-schema.ts";
 export const ResponsibilityRow = z.object({ title: z.string().nullable().default(null), until_at: z.coerce.string().nullable().default(null), skill_id:z.uuid().nullable().default(null),skill_revision:z.number().int().positive().nullable().default(null), id: z.uuid(), workspace_id: z.uuid(), conversation_id: z.uuid(), vm_id: z.uuid(), client_responsibility_id: z.uuid(), source_message_id: z.uuid(), source_quote: z.string(), objective: z.string(), trigger: Trigger, notification_mode: z.enum(["enabled", "quiet"]), quiet_hours: QuietHours.nullable(), state: z.enum(["active", "complete", "cancelled"]), next_review_at: z.string() });
 export async function createResponsibility(sql: Database, principal: Principal, input: ResponsibilityInput & { readonly run_id?: string }) {
+  if (input.trigger.kind !== "daily" && input.trigger.kind !== "periodic" && (input.until_at != null || input.starts_at != null)) throw new DomainError("invalid_until", "Only daily/periodic routines accept start or end dates", 400);
   return sql.begin(async tx => {
     await tx`SELECT id FROM assistant.workspaces WHERE id=${principal.workspace_id} FOR UPDATE`;
     await fenceRun(tx,principal,input.run_id);
@@ -28,11 +29,16 @@ export async function createResponsibility(sql: Database, principal: Principal, 
     const prior = await tx`SELECT * FROM assistant.responsibilities WHERE workspace_id=${principal.workspace_id} AND client_responsibility_id=${input.client_responsibility_id}`;
     if (prior[0]) {
       const existing = ResponsibilityRow.parse(prior[0]);
-      const identity = ResponsibilityInput.omit({ title: true, until_at: true });
-      if (JSON.stringify(identity.parse(existing)) !== JSON.stringify(identity.parse(input))) throw new DomainError("idempotency_conflict", "Responsibility key reused", 409);
+      const identity = ResponsibilityInput.omit({ title: true, starts_at: true });
+      const normalized = (value: unknown) => {
+        const parsed = identity.parse(value);
+        return { ...parsed, until_at: parsed.until_at === null ? null : new Date(parsed.until_at).toISOString() };
+      };
+      if (JSON.stringify(normalized(existing)) !== JSON.stringify(normalized(input))) throw new DomainError("idempotency_conflict", "Responsibility key reused", 409);
       return existing;
     }
-    const due = input.trigger.kind === "deadline" ? input.trigger.due_at : input.trigger.kind === "daily" ? await nextDailyAt(tx,input.trigger,new Date().toISOString()) : new Date().toISOString();
+    const after = new Date(Math.max(Date.now(), input.starts_at ? new Date(input.starts_at).getTime() : 0)).toISOString();
+    const due = input.trigger.kind === "deadline" ? input.trigger.due_at : input.trigger.kind === "daily" ? await nextDailyAt(tx,input.trigger,after) : after;
     const created = ResponsibilityRow.parse((await tx`INSERT INTO assistant.responsibilities(until_at,title,workspace_id,conversation_id,vm_id,client_responsibility_id,source_message_id,source_quote,objective,trigger,notification_mode,quiet_hours,next_review_at,skill_id,skill_revision) VALUES(${input.until_at ?? null},${input.title || null},${principal.workspace_id},${input.conversation_id},${input.vm_id},${input.client_responsibility_id},${input.source_message_id},${input.source_quote},${input.objective},${JSON.stringify(input.trigger)}::text::jsonb,${input.notification_mode},${JSON.stringify(input.quiet_hours)}::text::jsonb,${due},${input.skill_id},${input.skill_revision}) RETURNING *`)[0]);
     await recordEvent(tx, { workspace: principal.workspace_id, kind: "responsibility.created", payload: JSON.stringify({ responsibility_id: created.id }) });
     return created;
@@ -52,13 +58,12 @@ export async function dueResponsibilities(sql: Database, principal: Principal): 
   return sql.begin(async tx => {
     await tx`SELECT id FROM assistant.workspaces WHERE id=${principal.workspace_id} FOR UPDATE`;
     await fenceRun(tx,principal);
+    await tx`WITH expired AS (UPDATE assistant.responsibilities SET state='complete',management_revision=management_revision+1 WHERE workspace_id=${principal.workspace_id} AND vm_id=${principal.vm_id} AND state='active' AND until_at<=now() RETURNING id) UPDATE assistant.responsibility_actions SET state='cancelled' WHERE responsibility_id IN (SELECT id FROM expired) AND state='pending'`;
     await dispatchActions(tx, principal);
     await deliverNotifications(tx, principal);
     const rows = z.array(ResponsibilityRow).parse(await tx`SELECT * FROM assistant.responsibilities WHERE workspace_id=${principal.workspace_id} AND vm_id=${principal.vm_id} AND state='active' AND (next_review_at<=now() OR (trigger->>'kind'='task_change' AND failure_count=0)) ORDER BY next_review_at LIMIT 10 FOR UPDATE`);
     const pending: ResponsibilitySnapshot[] = [];
     for (const row of rows) {
-      // Past its end date the routine is done: nothing more is run.
-      if(row.until_at&&new Date(row.until_at).getTime()<=Date.now()){await tx`UPDATE assistant.responsibilities SET state='complete',management_revision=management_revision+1 WHERE id=${row.id}`;continue;}
       if(row.trigger.kind==="daily"){await enqueueDaily(tx,{...row,trigger:row.trigger});continue;}
       const current = await snapshot(tx, row);
       if ((await tx`SELECT id FROM assistant.responsibility_evaluations WHERE workspace_id=${principal.workspace_id} AND responsibility_id=${row.id} AND context_hash=${current.context_hash}`)[0]) {
@@ -80,7 +85,7 @@ export async function recordEvaluation(sql: Database, principal: Principal, requ
     await tx`SELECT id FROM assistant.conversations WHERE id=${row.conversation_id} FOR UPDATE`;
     const prior = await tx`SELECT id FROM assistant.responsibility_evaluations WHERE workspace_id=${principal.workspace_id} AND responsibility_id=${row.id} AND context_hash=${request.context_hash}`;
     if (prior[0]) return;
-    if (row.state !== "active") throw new DomainError("inactive", "Responsibility is inactive", 409);
+    if (row.state !== "active" || (row.until_at && new Date(row.until_at).getTime() <= Date.now())) throw new DomainError("inactive", "Responsibility is inactive", 409);
     if ((await snapshot(tx, row)).context_hash !== request.context_hash) throw new DomainError("stale_evaluation", "Evidence changed during evaluation", 409);
     const evaluation = request.evaluation;
     await tx`INSERT INTO assistant.responsibility_evaluations(workspace_id,responsibility_id,context_hash,outcome,reason) VALUES(${principal.workspace_id},${row.id},${request.context_hash},${evaluation.outcome},${evaluation.reason})`;
