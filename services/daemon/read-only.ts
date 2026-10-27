@@ -17,7 +17,7 @@ export function readOnlyRefusal(name: string): string | null {
 }
 
 /** The morning brief: it reads what it reports from and may ask with a card; it has nothing to send, post or browse with. */
-export const BRIEF_TOOLS = new Set(['read_attention', 'ask_user', 'load_skill', 'search_prior_work', 'retrieve_prior_work', 'read_prior_source', 'list_future_work']);
+export const BRIEF_TOOLS = new Set(['read_attention', 'ask_user', 'load_skill', 'search_prior_work', 'retrieve_prior_work', 'read_prior_source', 'list_future_work', 'plan_meeting_prep']);
 export type RunPolicy = 'read_only' | 'send_once' | 'brief';
 /**
  * Today's schedule for the brief: an MCP tool whose real method (as the server registered it, not the display name)

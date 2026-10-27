@@ -14,6 +14,7 @@ import { createBackgroundTask } from '../../services/control/repository/common';
 import { attention, type Attention } from './store';
 import { markSourceItemsBriefed } from './sources';
 import { enqueueMessageNotification } from '../notifications/store.ts';
+import { publishMeetingPrep, tickMeetingPreps } from './meeting-prep';
 
 const Settings = z.object({
   workspace_id: z.uuid(), timezone: z.string(), brief_enabled: z.boolean(), brief_at_minute: z.number().int().nullable(),
@@ -25,6 +26,7 @@ export const BRIEF_OBJECTIVE = [
   'Morning brief (assistant-owned). Call read_attention first; since_last_brief lists what is new.',
   'Report only from read_attention (and today\'s calendar if you have it); do not open mail, Slack or the browser yourself — watched sources are read by their own looks.',
   'If today has meetings on the calendar, add a short "오늘 회의" part: each meeting as one line with its time, who is in it, and — only from read_attention items or prior work about the same people or subject — one thing worth knowing or asking before it. Skip meetings you know nothing useful about beyond the title; never invent context.',
+  'After reading today\'s calendar, call plan_meeting_prep once with today\'s meetings that have attendees other than the user or a subject you have prior work on. Use the calendar event id as event_key (or title|start if none), the exact ISO starts_at, attendees, and a short note_hint from known work (may be empty). Do this even if the brief itself is NO_REPORT.',
   'If nothing needs the user and nothing in since_last_brief is worth telling, reply exactly NO_REPORT.',
   'Otherwise reply with the brief as your final report. Its first line is a one-line count summary like "확인할 것 2개, 진행 중 3개" (real numbers; name the most important item in a few words if it fits); that line becomes the notification.',
   'Then one line per item, needs-the-user first, by topic. Refer to existing cards by what they ask; do not create a new card for a decision that already has one. Do not call notify_user.',
@@ -280,10 +282,15 @@ async function upcomingBrief(sql: Query, workspace: string, now: Date): Promise<
 export async function tickAttention(sql: Database, now = new Date()): Promise<Record<string, number>> {
   await sql`INSERT INTO assistant.attention_settings(workspace_id) SELECT id FROM assistant.workspaces WHERE default_conversation_id IS NOT NULL ON CONFLICT DO NOTHING`;
   const workspaces = (await sql`SELECT workspace_id FROM assistant.attention_settings`).map(r => String(r['workspace_id']));
+  // Most workspaces have no preparations. Only enter a dispatch transaction when a row could be due or stale.
+  const prepWorkspaces = new Set((await sql`SELECT DISTINCT workspace_id FROM assistant.meeting_preps
+    WHERE state='planned' AND starts_at<=${now}::timestamptz+interval '12 minutes'`).map(r => String(r['workspace_id'])));
   const counts: Record<string, number> = {};
   for (const workspace of workspaces) {
     let outcome: string;
     try {
+      const preps = prepWorkspaces.has(workspace) ? await tickMeetingPreps(sql, workspace, now) : 0;
+      if (preps) counts['meeting_preps'] = (counts['meeting_preps'] ?? 0) + preps;
       outcome = await tickWorkspace(sql, workspace, now);
       // Only workspaces with an open item that has a due date (most have none).
       const dueSoon = (await sql`SELECT 1 FROM assistant.attention_source_items WHERE workspace_id=${workspace} AND state='open' AND due_at IS NOT NULL LIMIT 1`).length > 0
@@ -307,6 +314,8 @@ export async function tickAttention(sql: Database, now = new Date()): Promise<Re
  * Returns how the caller must store the message: { hidden, notify, push }.
  */
 export async function publishBriefMessage(sql: Query, workspace: string, task: string, message: { readonly final: boolean; readonly empty: boolean }) {
+  const prep = await publishMeetingPrep(sql, workspace, task, message);
+  if (prep) return prep;
   if (!(await isBriefTask(sql, workspace, task))) return null;
   // The brief row is the publication right: set_brief (off / new time) removes it, expiry ends it. Any output of a
   // brief run without a live row is dropped, whatever its kind.
@@ -325,13 +334,15 @@ export async function publishBriefMessage(sql: Query, workspace: string, task: s
   return { hidden: false, notify: true, push: true };
 }
 export async function markBriefDelivered(sql: Query, workspace: string, task: string, messageId: string) {
+  await sql`UPDATE assistant.meeting_preps SET state='done' WHERE workspace_id=${workspace} AND task_id=${task} AND state='dispatched'`;
   const rows = await sql`UPDATE assistant.attention_briefs SET state='delivered',message_id=${messageId},finished_at=now() WHERE workspace_id=${workspace} AND task_id=${task} AND state='dispatched' RETURNING snapshot`;
   // Exactly what the body was written from is no longer news.
   const snap = rows[0]?.['snapshot'] as { needs?: string[] } | null | undefined;
   if (snap?.needs) await markSourceItemsBriefed(sql, workspace, snap.needs);
 }
 export async function isBriefTask(sql: Query, workspace: string, task: string) {
-  return !!(await sql`SELECT 1 FROM assistant.attention_brief_runs WHERE workspace_id=${workspace} AND task_id=${task}`)[0];
+  return !!(await sql`SELECT 1 FROM assistant.attention_brief_runs WHERE workspace_id=${workspace} AND task_id=${task}
+    UNION ALL SELECT 1 FROM assistant.meeting_preps WHERE workspace_id=${workspace} AND task_id=${task} LIMIT 1`)[0];
 }
 async function cancelQueuedBrief(sql: Query, task: string) {
   await sql`UPDATE assistant.tasks SET state='cancelled',reason='Morning brief expired or superseded before it ran',updated_at=now() WHERE id=${task} AND state='queued' AND lane='background'`;
@@ -349,6 +360,7 @@ export async function withdrawBrief(sql: Query, workspace: string) {
 /** The brief run ended without publishing a body. */
 export async function settleBriefForTask(sql: Query, workspace: string, task: string, state: string) {
   if (!['succeeded', 'failed', 'cancelled'].includes(state)) return;
+  await sql`UPDATE assistant.meeting_preps SET state='skipped' WHERE workspace_id=${workspace} AND task_id=${task} AND state='dispatched'`;
   await sql`UPDATE assistant.attention_briefs SET state=${state === 'succeeded' ? 'skipped' : 'failed'},reason=reason||${state === 'succeeded' ? ' no_body' : ` ${state}`},finished_at=now()
     WHERE workspace_id=${workspace} AND task_id=${task} AND state='dispatched'`;
 }

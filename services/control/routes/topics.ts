@@ -6,7 +6,8 @@ import { DomainError } from '../../../packages/protocol';
 import { conversationTopics, topicBranch } from '../../../packages/topics/store';
 import { branchWork } from '../../../packages/topics/work';
 import { attention } from '../../../packages/attention/store';
-import { briefContext, withdrawBrief } from '../../../packages/attention/coordinator';
+import { briefContext, isBriefTask, withdrawBrief } from '../../../packages/attention/coordinator';
+import { MeetingPrepPlan, planMeetingPrep } from '../../../packages/attention/meeting-prep';
 import { answerSourceItem, retrySource, updateObligation, itemThread, requestReply, taskSourceAccount, claimSend, claimSendCheck, confirmSend, noteAdapterCoverage, noteDraftRevision, noteThreadSnapshot, pinSendRevision, recheckSend, recordObservation, recordSendCheck, recordSendResult, sendJobKind, setWatch, WatchRequest } from '../../../packages/attention/sources';
 import { authorizeReferenceRun } from '../repository/work-search';
 
@@ -49,6 +50,17 @@ export function topicRoutes(sql: Database) {
       const full = await attention(tx, principal.workspace_id);
       // The run reading the view is not news to itself.
       return { ...full, in_progress: full.in_progress.filter(i => i.id !== `task:${task}`) };
+    }));
+  });
+  app.post('/context/:run/meeting-prep', async c => {
+    const principal = c.get('principal'), run = z.uuid().parse(c.req.param('run'));
+    await authorizeReferenceRun(sql, principal, run);
+    const plan = MeetingPrepPlan.parse(await c.req.json());
+    return c.json(await sql.begin(async tx => {
+      const task = z.object({ task_id: z.uuid(), conversation_id: z.uuid() }).parse((await tx`SELECT r.task_id,t.conversation_id
+        FROM assistant.runs r JOIN assistant.tasks t ON t.id=r.task_id WHERE r.id=${run} AND r.workspace_id=${principal.workspace_id}`)[0]);
+      if (!(await isBriefTask(tx, principal.workspace_id, task.task_id))) throw new DomainError('forbidden', 'Meeting preparation planning is only available to brief runs', 403);
+      return planMeetingPrep(tx, principal.workspace_id, task.conversation_id, plan);
     }));
   });
   app.post('/context/:run/brief', async c => {

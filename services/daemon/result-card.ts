@@ -118,6 +118,19 @@ export const setBriefTool: Tool = {
   parameters: { type: "object", properties: { enabled: { type: "boolean" }, time: { type: ["string", "null"], pattern: "^([01]\\d|2[0-3]):[0-5]\\d$" }, source_quote: { type: "string", maxLength: 300 } }, required: ["enabled", "time", "source_quote"], additionalProperties: false },
 };
 
+/** Brief-only scheduling, with calendar reads supplied by the bound MCP server. */
+export const planMeetingPrepTool: Tool = {
+  type: 'function', name: 'plan_meeting_prep', strict: true,
+  description: 'After reading today\'s calendar, plan one preparation note per meeting with other attendees or a subject known from prior work. Call once with today\'s meetings; event_key is the calendar event id (or title|start), starts_at is ISO with offset, note_hint is short known context or empty. Re-planning updates meetings not yet dispatched.',
+  parameters: { type: 'object', additionalProperties: false, required: ['meetings'], properties: {
+    meetings: { type: 'array', items: { type: 'object', additionalProperties: false,
+      required: ['event_key', 'title', 'starts_at', 'attendees', 'note_hint'], properties: {
+        event_key: { type: 'string' }, title: { type: 'string' }, starts_at: { type: 'string' },
+        attendees: { type: 'array', items: { type: 'string' } }, note_hint: { type: 'string' },
+      } } },
+  } },
+};
+
 /** report_observation: an assistant-owned watch run (e.g. Gmail) reports what it saw, once, in structured form. */
 export const reportObservationTool: Tool = {
   type: "function",

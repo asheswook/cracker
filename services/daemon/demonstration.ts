@@ -12,7 +12,14 @@ type StepDetails =
   | { kind: "keydown"; key: "Enter" };
 export type Step = StepDetails & { timestamp: string; url: string };
 export type Recording = { steps: Step[]; truncated?: true };
-export type Demonstration = Recording & { finished_at: string; partial?: true; in_progress?: true };
+export type Demonstration = Recording & { finished_at: string; started_at?: string; expires_at?: string; partial?: true; in_progress?: true };
+const DEMONSTRATION_TTL_MS = 3 * 60 * 60 * 1000;
+function demonstrationTimes(steps: readonly Step[]): { started_at: string; expires_at: string } | null {
+  if (!steps.length) return null;
+  const times = steps.map(step => Date.parse(step.timestamp));
+  if (times.some(time => !Number.isFinite(time))) return null;
+  return { started_at: new Date(Math.min(...times)).toISOString(), expires_at: new Date(Math.max(...times) + DEMONSTRATION_TTL_MS).toISOString() };
+}
 const SECRET = /pass|pw|otp|code|인증|비밀|card|카드|cvc|ssn|주민|token|key|secret|api|이메일|email|전화|phone|계좌|account/i;
 /** Redact before truncation, so cutting a token never exposes its prefix. */
 export function minimizeText(value: unknown): string {
@@ -79,15 +86,27 @@ export function readDemonstration(value: unknown, now = Date.now(), discard: () 
     const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
     if (!parsed || typeof parsed !== "object") return { none: true };
     const record = parsed as Demonstration;
-    const age = now - Date.parse(record.finished_at);
-    if (!Number.isFinite(age) || age < 0 || age > 3 * 60 * 60 * 1000 || !Array.isArray(record.steps) || record.steps.length < (record.partial ? 1 : 2)) { discard(); return { none: true }; }
-    return { finished_at: record.finished_at, steps: record.steps, ...(record.partial ? { partial: true } : {}), ...(record.truncated ? { truncated: true } : {}) };
+    if (!Array.isArray(record.steps) || record.steps.length < (record.partial ? 1 : 2)) { discard(); return { none: true }; }
+    const times = demonstrationTimes(record.steps);
+    // Legacy records derive their deadline from steps, never from the last save/read time.
+    const expires = Math.min(Date.parse(record.expires_at ?? times?.expires_at ?? ""), Date.parse(times?.expires_at ?? ""));
+    if (!times || !Number.isFinite(Date.parse(record.finished_at)) || !Number.isFinite(expires) || now > expires) { discard(); return { none: true }; }
+    return { finished_at: record.finished_at, started_at: times.started_at, expires_at: new Date(expires).toISOString(), steps: record.steps, ...(record.partial ? { partial: true } : {}), ...(record.truncated ? { truncated: true } : {}) };
   } catch { discard(); return { none: true }; }
 }
 
 type DemonstrationJournal = { control(): "agent" | "user"; lastDemonstration(): string | null; setLastDemonstration(value: string): void; clearLastDemonstration(): void };
 type Recorder = { start(endpoint: string): Promise<void>; snapshot(): Promise<Recording>; stop(): Promise<Recording> };
 const DEMONSTRATION_IDLE_MS = 10 * 60 * 1000;
+type DemonstrationTiming = { now(): number; every(ms: number, run: () => void | Promise<void>): () => void };
+const demonstrationTiming: DemonstrationTiming = {
+  now: () => Date.now(),
+  every: (ms, run) => {
+    const timer = setInterval(() => { void run(); }, ms);
+    timer.unref();
+    return () => clearInterval(timer);
+  },
+};
 /** Owns session boundaries and persistence; no browser data outlives its three-hour read window. */
 export class DemonstrationSession {
   private last: Demonstration | undefined;
@@ -97,16 +116,24 @@ export class DemonstrationSession {
   private prefix: Recording = { steps: [] };
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private startedAt = Date.now();
-  constructor(private readonly journal: DemonstrationJournal, private readonly create: () => Recorder = () => new DemonstrationRecorder()) {
+  private cancelCheckpoint: (() => void) | undefined;
+  private readonly cancelSweeper: () => void;
+  private savedSteps = "";
+  private checkpointBusy = false;
+  constructor(private readonly journal: DemonstrationJournal, private readonly create: () => Recorder = () => new DemonstrationRecorder(), private readonly timing: DemonstrationTiming = demonstrationTiming) {
     const saved = this.readSaved(); // Also purge expired records at daemon startup.
+    this.cancelSweeper = timing.every(DEMONSTRATION_IDLE_MS, () => this.sweepExpired());
     if (journal.control() === "user") this.start(true, "none" in saved ? undefined : saved);
   }
   private clear(): void {
     this.last = undefined;
+    this.savedSteps = "";
     try { this.journal.clearLastDemonstration(); } catch { /* Never block ownership on a recording setting. */ }
   }
   clearPrevious(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.cancelCheckpoint?.();
+    this.cancelCheckpoint = undefined;
     this.generation++;
     this.clear();
     const previous = this.recorder;
@@ -114,11 +141,11 @@ export class DemonstrationSession {
     this.prefix = { steps: [] };
     void previous?.stop().catch(() => {});
   }
-  private readSaved(now = Date.now()): Demonstration | { none: true } {
+  private readSaved(now = this.timing.now()): Demonstration | { none: true } {
     try { return readDemonstration(this.last ?? this.journal.lastDemonstration(), now, () => this.clear()); }
     catch { return { none: true }; }
   }
-  async read(now = Date.now()): Promise<Demonstration | { none: true }> {
+  async read(now = this.timing.now()): Promise<Demonstration | { none: true }> {
     const recorder = this.recorder, generation = this.generation;
     if (!recorder) return this.readSaved(now);
     try {
@@ -126,22 +153,26 @@ export class DemonstrationSession {
       if (generation !== this.generation || recorder !== this.recorder) return this.readSaved(now);
       const result = this.combine(snapshot);
       this.saveSnapshot(result, now);
-      return { ...result, finished_at: new Date(now).toISOString(), in_progress: true, ...(this.partial ? { partial: true } : {}) };
+      const times = demonstrationTimes(result.steps);
+      if (times && now > Date.parse(times.expires_at)) { this.clear(); return { none: true }; }
+      return { ...result, ...times, finished_at: new Date(now).toISOString(), in_progress: true, ...(this.partial ? { partial: true } : {}) };
     } catch { return this.readSaved(now); }
   }
   start(partial = false, resume?: Demonstration): void {
     this.clearPrevious();
     this.partial = partial;
-    this.startedAt = Date.now();
+    this.startedAt = this.timing.now();
     // A crash/restart continues the same user-control session, not a fresh takeover.
     if (resume) {
       this.prefix = { steps: resume.steps, ...(resume.truncated ? { truncated: true } : {}) };
       this.last = resume;
+      this.savedSteps = JSON.stringify(resume.steps);
       try { this.journal.setLastDemonstration(JSON.stringify(resume)); } catch { /* Best effort. */ }
     }
     try {
       this.recorder = this.create();
       void this.recorder.start("http://127.0.0.1:9222").catch(() => {});
+      this.cancelCheckpoint = this.timing.every(60000, () => this.checkpoint());
       this.scheduleIdle(DEMONSTRATION_IDLE_MS);
     } catch { /* Chrome/worker availability never affects takeover. */ }
   }
@@ -152,13 +183,32 @@ export class DemonstrationSession {
     if (truncated) void this.recorder?.stop().catch(() => {});
     return { steps, ...(truncated ? { truncated: true } : {}) };
   }
-  private saveSnapshot(result: Recording, now: number): void {
-    if (result.steps.length < 2) return;
-    this.last = { ...result, finished_at: new Date(now).toISOString(), partial: true };
-    try { this.journal.setLastDemonstration(JSON.stringify(this.last)); } catch { /* Keep the live snapshot usable. */ }
+  private saveSnapshot(result: Recording, now: number, minimumSteps = 2): void {
+    if (result.steps.length < minimumSteps) return;
+    const times = demonstrationTimes(result.steps);
+    if (!times || now > Date.parse(times.expires_at)) { this.clear(); return; }
+    const fingerprint = JSON.stringify(result.steps);
+    if (fingerprint === this.savedSteps) return;
+    this.last = { ...result, ...times, finished_at: new Date(now).toISOString(), partial: true };
+    try {
+      this.journal.setLastDemonstration(JSON.stringify(this.last));
+      this.savedSteps = fingerprint;
+    } catch { /* Keep the live snapshot usable; retry the write at the next checkpoint. */ }
   }
+  /** Poll only while recording; write changed steps at most once per 60-second tick. */
+  async checkpoint(): Promise<void> {
+    const recorder = this.recorder, generation = this.generation;
+    if (!recorder || this.checkpointBusy) return;
+    this.checkpointBusy = true;
+    try {
+      const snapshot = await recorder.snapshot();
+      if (generation === this.generation && recorder === this.recorder) this.saveSnapshot(this.combine(snapshot), this.timing.now(), 1);
+    } catch { /* A checkpoint cannot interfere with recording. */ }
+    finally { this.checkpointBusy = false; }
+  }
+  sweepExpired(): void { this.readSaved(this.timing.now()); }
   /** Check at the last known idle deadline, then adjust it if a more recent step arrived. */
-  async checkpointIdle(now = Date.now()): Promise<number> {
+  async checkpointIdle(now = this.timing.now()): Promise<number> {
     const recorder = this.recorder, generation = this.generation;
     if (!recorder) return DEMONSTRATION_IDLE_MS;
     try {
@@ -182,6 +232,8 @@ export class DemonstrationSession {
   }
   async finish(partial = false): Promise<void> {
     if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.cancelCheckpoint?.();
+    this.cancelCheckpoint = undefined;
     const recorder = this.recorder, generation = this.generation, wasPartial = this.partial;
     this.recorder = undefined;
     if (!recorder) return;
@@ -190,10 +242,14 @@ export class DemonstrationSession {
       if (generation !== this.generation) return;
       const result = this.combine(recording);
       if (result.steps.length < (partial || wasPartial ? 1 : 2)) return;
-      this.last = { ...result, finished_at: new Date().toISOString(), ...(partial || wasPartial ? { partial: true } : {}) };
+      const times = demonstrationTimes(result.steps);
+      if (!times || this.timing.now() > Date.parse(times.expires_at)) { this.clear(); return; }
+      this.last = { ...result, ...times, finished_at: new Date(this.timing.now()).toISOString(), ...(partial || wasPartial ? { partial: true } : {}) };
       this.journal.setLastDemonstration(JSON.stringify(this.last));
+      this.savedSteps = JSON.stringify(result.steps);
     } catch { /* Recording never affects ownership or shutdown. */ }
   }
+  async close(): Promise<void> { this.cancelSweeper(); await this.finish(true); }
 }
 
 export const readDemonstrationTool: Tool = {

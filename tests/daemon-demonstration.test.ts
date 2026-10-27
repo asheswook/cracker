@@ -61,10 +61,12 @@ test("consecutive duplicates collapse regardless of timestamp and recording caps
 });
 
 test("reader expires after three hours, handles absent/corrupt records and reloads journal JSON", () => {
-  const record = { finished_at: at, steps: [fake({ kind: "navigate", title: "Work" }), fake({ kind: "click", text: "Save" })] };
+  const record = { finished_at: at, started_at: at, expires_at: new Date(Date.parse(at) + 3 * 3600000).toISOString(), steps: [fake({ kind: "navigate", title: "Work" }), fake({ kind: "click", text: "Save" })] };
   const now = Date.parse(at);
   expect(readDemonstration(record, now + 3 * 60 * 60 * 1000)).toEqual(record);
   expect(readDemonstration(record, now + 3 * 60 * 60 * 1000 + 1)).toEqual({ none: true });
+  expect(readDemonstration({ ...record, finished_at: new Date(now + 4 * 3600000).toISOString() }, now + 4 * 3600000)).toEqual({ none: true });
+  expect(readDemonstration({ ...record, expires_at: new Date(now - 1).toISOString() }, now)).toEqual({ none: true });
   for (const invalid of [null, undefined, "broken", {}, { ...record, finished_at: "invalid" }, { ...record, steps: [] }]) expect(readDemonstration(invalid, now)).toEqual({ none: true });
   const journal = new Journal(":memory:");
   try {
@@ -133,8 +135,10 @@ test("fake worker snapshots do not stop recording or resolve its final result", 
 
 test("session clears prior records, purges expired settings on startup/read, and preserves partial/truncated flags", async () => {
   const journal = new Journal(":memory:");
-  const steps = [fake({ kind: "navigate", title: "Work" }), fake({ kind: "click", text: "Save" })];
-  const old = { finished_at: new Date(Date.now() - 4 * 3600000).toISOString(), steps };
+  const timestamp = new Date().toISOString();
+  const steps = [fake({ kind: "navigate", title: "Work" }, timestamp), fake({ kind: "click", text: "Save" }, timestamp)];
+  const oldAt = new Date(Date.now() - 4 * 3600000).toISOString();
+  const old = { finished_at: timestamp, started_at: oldAt, expires_at: new Date(Date.parse(oldAt) + 3 * 3600000).toISOString(), steps: steps.map(step => ({ ...step, timestamp: oldAt })) };
   let result: Recording = { steps }, starts = 0;
   const create = () => ({ start: async () => { starts++; }, snapshot: async () => result, stop: async () => result });
   try {
@@ -174,8 +178,9 @@ test("live session reads and ten-minute idle checkpoints persist without returni
   try {
     session.start();
     const live = await session.read(now);
-    expect(live).toEqual({ steps, finished_at: new Date(now).toISOString(), in_progress: true });
-    expect(readDemonstration(journal.lastDemonstration(), now)).toEqual({ steps, finished_at: new Date(now).toISOString(), partial: true });
+    const times = { started_at: new Date(now).toISOString(), expires_at: new Date(now + 3 * 3600000).toISOString() };
+    expect(live).toEqual({ steps, ...times, finished_at: new Date(now).toISOString(), in_progress: true });
+    expect(readDemonstration(journal.lastDemonstration(), now)).toEqual({ steps, ...times, finished_at: new Date(now).toISOString(), partial: true });
     expect(stops).toBe(0);
     session.clearPrevious(); session.start(); // Test the idle-only path, without a tool read.
     await session.checkpointIdle(now + 9 * 60000);
@@ -191,6 +196,88 @@ test("live session reads and ten-minute idle checkpoints persist without returni
     await session.finish();
     expect((await session.read() as { steps: Step[] }).steps).toHaveLength(3);
   } finally { await session.finish(); journal.close(); }
+});
+
+class SessionClock {
+  private time = Date.now();
+  private readonly timers = new Set<{ ms: number; next: number; run: () => void | Promise<void> }>();
+  now = () => this.time;
+  every = (ms: number, run: () => void | Promise<void>) => {
+    const timer = { ms, next: this.time + ms, run };
+    this.timers.add(timer);
+    return () => { this.timers.delete(timer); };
+  };
+  async advance(ms: number): Promise<void> {
+    const end = this.time + ms;
+    while (true) {
+      const timer = [...this.timers].filter(timer => timer.next <= end).sort((a, b) => a.next - b.next)[0];
+      if (!timer) break;
+      this.time = timer.next;
+      timer.next += timer.ms;
+      await timer.run();
+    }
+    this.time = end;
+  }
+}
+
+test("changed recordings checkpoint within 60 seconds without reads, and unchanged steps do not write", async () => {
+  const journal = new Journal(":memory:"), clock = new SessionClock();
+  const first = clock.now();
+  let result: Recording = { steps: [fake({ kind: "click", text: "Open" }, new Date(first).toISOString())] };
+  const session = new DemonstrationSession(journal, () => ({ start: async () => {}, snapshot: async () => result, stop: async () => result }), clock);
+  try {
+    session.start();
+    await clock.advance(59999);
+    expect(journal.lastDemonstration()).toBeNull();
+    await clock.advance(1);
+    const saved = journal.lastDemonstration();
+    expect(JSON.parse(saved!)).toMatchObject({ started_at: new Date(first).toISOString(), expires_at: new Date(first + 3 * 3600000).toISOString(), partial: true });
+    expect(JSON.parse(saved!).steps).toHaveLength(1);
+    await clock.advance(60000);
+    expect(journal.lastDemonstration()).toBe(saved);
+    const last = clock.now();
+    result = { steps: [...result.steps, fake({ kind: "click", text: "Next" }, new Date(last).toISOString())] };
+    await clock.advance(59999);
+    expect(journal.lastDemonstration()).toBe(saved);
+    await clock.advance(1);
+    const updated = JSON.parse(journal.lastDemonstration()!);
+    expect(updated.steps).toHaveLength(2);
+    expect(updated.started_at).toBe(new Date(first).toISOString());
+    expect(updated.expires_at).toBe(new Date(last + 3 * 3600000).toISOString());
+  } finally { await session.close(); journal.close(); }
+});
+
+test("idle checkpoints and repeated live reads never extend the last-step expiry", async () => {
+  const journal = new Journal(":memory:"), clock = new SessionClock();
+  const first = clock.now();
+  const result: Recording = { steps: [fake({ kind: "click", text: "Open" }, new Date(first).toISOString()), fake({ kind: "click", text: "Save" }, new Date(first).toISOString())] };
+  const session = new DemonstrationSession(journal, () => ({ start: async () => {}, snapshot: async () => result, stop: async () => result }), clock);
+  try {
+    session.start();
+    await clock.advance(60000);
+    const original = JSON.parse(journal.lastDemonstration()!);
+    await clock.advance(20 * 60000);
+    await session.checkpointIdle(clock.now());
+    const live = await session.read();
+    expect(live).toMatchObject({ in_progress: true, started_at: original.started_at, expires_at: original.expires_at });
+    expect(JSON.parse(journal.lastDemonstration()!).expires_at).toBe(original.expires_at);
+    await session.finish();
+    expect(JSON.parse(journal.lastDemonstration()!).expires_at).toBe(original.expires_at);
+  } finally { await session.close(); journal.close(); }
+});
+
+test("daemon sweeper deletes an expired journal record without any read", async () => {
+  const journal = new Journal(":memory:"), clock = new SessionClock();
+  const stepAt = new Date(clock.now() - 3 * 3600000 + 1000).toISOString();
+  const expiresAt = new Date(clock.now() + 1000).toISOString();
+  journal.setLastDemonstration(JSON.stringify({ finished_at: new Date(clock.now()).toISOString(), started_at: stepAt, expires_at: expiresAt,
+    steps: [fake({ kind: "click", text: "Open" }, stepAt), fake({ kind: "click", text: "Save" }, stepAt)] }));
+  const session = new DemonstrationSession(journal, undefined, clock);
+  try {
+    expect(journal.lastDemonstration()).not.toBeNull();
+    await clock.advance(10 * 60000);
+    expect(journal.lastDemonstration()).toBeNull();
+  } finally { await session.close(); journal.close(); }
 });
 
 class FakeElement {
