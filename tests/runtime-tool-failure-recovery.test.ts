@@ -38,7 +38,7 @@ for(const {followUp,uncertainUpload} of [{followUp:false,uncertainUpload:false},
   history.push([...input]);
   switch(history.length){
    case 1:return response([{type:'function_call',call_id:'prior',name:'shell',arguments:JSON.stringify({command:`printf prior >> '${effect}'; printf artifact > \"$OUTPUT_DIR/result.txt\"`})}]);
-    case 2:return response([{type:'function_call',call_id:'failed-call',name:failingTool,arguments:JSON.stringify(uncertainUpload?{path:'result.txt',name:'result.txt',media_type:'text/plain',series:null,change_summary:null}:{session_id:crypto.randomUUID(),action:'poll',input:null,yield_ms:0,max_output_chars:1000})}]);
+    case 2:return response([{type:'function_call',call_id:'failed-call',name:failingTool,arguments:JSON.stringify(uncertainUpload?{path:'result.txt',name:'result.txt',media_type:'text/plain',series:null,change_summary:null,updates:null}:{session_id:crypto.randomUUID(),action:'poll',input:null,yield_ms:0,max_output_chars:1000})}]);
    case 3:return response([{type:'function_call',call_id:'remaining',name:'shell',arguments:JSON.stringify({command:`printf remaining >> '${effect}'`})}]);
    default:return response([{type:'message',id:'final',role:'assistant',status:'completed',content:[{type:'output_text',text:'finished',annotations:[]}]}]);
   }

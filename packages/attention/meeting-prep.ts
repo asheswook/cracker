@@ -16,7 +16,7 @@ export const MeetingPrepPlan = z.object({ meetings: z.array(z.object({
 }).strict()).max(200) }).strict();
 
 /** Call inside a transaction. The workspace lock serializes re-planning with dispatch. */
-export async function planMeetingPrep(sql: Query, workspace: string, conversation: string, plan: z.infer<typeof MeetingPrepPlan>) {
+export async function planMeetingPrep(sql: Query, workspace: string, conversation: string, plan: z.infer<typeof MeetingPrepPlan>, task?: string) {
   await sql`SELECT id FROM assistant.workspaces WHERE id=${workspace} FOR UPDATE`;
   for (const m of plan.meetings) {
     // Prefer this occurrence's day; an undelivered occurrence can also move across midnight.
@@ -38,6 +38,15 @@ export async function planMeetingPrep(sql: Query, workspace: string, conversatio
     } else await sql`INSERT INTO assistant.meeting_preps(workspace_id,event_key,title,starts_at,attendees,note_hint,conversation_id)
       VALUES(${workspace},${m.event_key},${m.title},${m.starts_at},${JSON.stringify(m.attendees)}::text::jsonb,${m.note_hint},${conversation}) ON CONFLICT DO NOTHING`;
   }
+  // Record only a successful call (including an empty calendar), never merely a dispatched brief.
+  // Quiet planners must finish successfully themselves; their attempts are also in attention_brief_runs.
+  if (task) await sql`INSERT INTO assistant.events(workspace_id,kind,payload)
+    SELECT ${workspace},'meeting_prep.planned',jsonb_build_object('task_id',b.task_id,'local_date',b.local_date::text,
+      'half',CASE WHEN extract(hour FROM coalesce(a.dispatched_at,b.created_at) AT TIME ZONE s.timezone)>=13 THEN 'afternoon' ELSE 'morning' END)
+    FROM assistant.attention_brief_runs b JOIN assistant.tasks t ON t.id=b.task_id
+      JOIN assistant.attention_settings s ON s.workspace_id=b.workspace_id
+      LEFT JOIN assistant.attention_briefs a ON a.workspace_id=b.workspace_id AND a.task_id=b.task_id
+    WHERE b.workspace_id=${workspace} AND b.task_id=${task} AND t.objective<>${MEETING_PREP_PLANNING_OBJECTIVE}`;
   return { planned: plan.meetings.length };
 }
 

@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from 'bun:test';
 import { createNotificationFixtures } from './native-notifications-fixture';
-import { tickAttention } from '../packages/attention/coordinator';
+import { publishBriefMessage, tickAttention } from '../packages/attention/coordinator';
 import { executionPolicy } from '../services/control/repository/execution-policy';
 import { applyPolicy, offered } from '../services/daemon/read-only';
 
@@ -162,6 +162,72 @@ test('quiet morning/afternoon planning runs without a brief and can never publis
   await tickAttention(sql, at('13:00'));
   await tickAttention(sql, at('13:01'));
   expect((await sql`SELECT * FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`).length).toBe(2);
+});
+
+test('a failed quiet planner retries once, only after thirty minutes, and keeps the old attempt silent', async () => {
+  const f = await planner();
+  await sql`DELETE FROM assistant.attention_brief_runs WHERE task_id=${f.task}`;
+  const attempt = async () => String((await sql`SELECT task_id FROM assistant.meeting_prep_runs
+    WHERE workspace_id=${f.workspace} AND local_date='2026-10-27' AND half='morning'`)[0]?.['task_id']);
+  await tickAttention(sql, at('08:30'));
+  const first = await attempt();
+  await sql`UPDATE assistant.tasks SET state='failed',updated_at=${at('08:35')} WHERE id=${first}`;
+  await tickAttention(sql, at('09:04'));
+  expect(await attempt()).toBe(first);
+  await Promise.all([tickAttention(sql, at('09:05')), tickAttention(sql, at('09:05'))]);
+  const retry = await attempt();
+  expect(retry).not.toBe(first);
+  expect((await sql`SELECT count(*)::int AS n FROM assistant.tasks WHERE workspace_id=${f.workspace}
+    AND title='회의 준비 계획'`)[0]?.['n']).toBe(2);
+  expect((await executionPolicy(sql, f.workspace, first)).run_policy).toBe('brief');
+  expect(await publishBriefMessage(sql, f.workspace, first, { final: true, empty: false }))
+    .toEqual({ hidden: true, notify: false, push: false });
+  await sql`UPDATE assistant.tasks SET state='failed',updated_at=${at('09:10')} WHERE id=${retry}`;
+  await tickAttention(sql, at('09:40'));
+  await tickAttention(sql, at('12:59'));
+  expect(await attempt()).toBe(retry);
+  expect((await sql`SELECT count(*)::int AS n FROM assistant.tasks WHERE workspace_id=${f.workspace}
+    AND title='회의 준비 계획'`)[0]?.['n']).toBe(2);
+  // Exhausting the morning retry budget does not consume the afternoon's planning slot.
+  await tickAttention(sql, at('13:00'));
+  expect((await sql`SELECT * FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`).length).toBe(2);
+});
+
+test('a successful quiet planner completes its half-day without another attempt', async () => {
+  const f = await planner();
+  await sql`DELETE FROM assistant.attention_brief_runs WHERE task_id=${f.task}`;
+  await tickAttention(sql, at('08:30'));
+  const first = (await sql`SELECT task_id FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`)[0]?.['task_id'];
+  await sql`UPDATE assistant.tasks SET state='succeeded',updated_at=${at('08:35')} WHERE id=${first}`;
+  await tickAttention(sql, at('09:05'));
+  await tickAttention(sql, at('12:59'));
+  expect((await sql`SELECT count(*)::int AS n FROM assistant.tasks WHERE workspace_id=${f.workspace}
+    AND title='회의 준비 계획'`)[0]?.['n']).toBe(1);
+});
+
+test('only a successful plan call by the same half-day brief replaces quiet planning, including an empty plan', async () => {
+  for (const half of ['morning', 'afternoon']) {
+    const f = await planner(), start = half === 'morning' ? '08:30' : '13:00';
+    await sql`UPDATE assistant.attention_brief_runs SET created_at=${at(start)} WHERE task_id=${f.task}`;
+    // Invalid input cannot consume the slot.
+    expect((await f.plan([meeting({ starts_at: 'invalid' })])).status).toBe(400);
+    expect((await sql`SELECT * FROM assistant.events WHERE workspace_id=${f.workspace} AND kind='meeting_prep.planned'`).length).toBe(0);
+    expect((await f.plan([])).status).toBe(200);
+    const planned = (await sql`SELECT payload FROM assistant.events WHERE workspace_id=${f.workspace} AND kind='meeting_prep.planned'`)[0];
+    expect(planned?.['payload']).toMatchObject({ task_id: f.task, local_date: '2026-10-27', half });
+    await tickAttention(sql, at(start));
+    expect((await sql`SELECT * FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`).length).toBe(0);
+    await tickAttention(sql, half === 'morning' ? at('13:00') : new Date('2026-10-28T08:30:00+09:00'));
+    expect((await sql`SELECT * FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`).length).toBe(1);
+  }
+});
+
+test('a brief that never planned meetings does not consume quiet planning', async () => {
+  const f = await planner();
+  await sql`UPDATE assistant.attention_brief_runs SET created_at=${at('08:30')} WHERE task_id=${f.task}`;
+  await sql`UPDATE assistant.tasks SET state='succeeded' WHERE id=${f.task}`;
+  await tickAttention(sql, at('09:00'));
+  expect((await sql`SELECT * FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`).length).toBe(1);
 });
 
 test('moving an undelivered dispatched/skipped meeting re-arms it and hides the old attempt', async () => {

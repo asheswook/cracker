@@ -291,10 +291,28 @@ async function tickMeetingPrepPlanning(sql: Database, workspace: string, now: Da
     const morningMinute = Number(brief?.['planned_minute'] ?? row['brief_at_minute'] ?? 510);
     const half = minute >= 780 ? 'afternoon' : 'morning';
     if (half === 'morning' && minute < morningMinute) return 0;
-    if ((await tx`SELECT 1 FROM assistant.meeting_prep_runs WHERE workspace_id=${workspace} AND local_date=${day}::date AND half=${half}`)[0]) return 0;
+    // A successful calendar-plan call by this half-day's brief already did the quiet planner's work.
+    if ((await tx`SELECT 1 FROM assistant.events WHERE workspace_id=${workspace} AND kind='meeting_prep.planned'
+      AND payload->>'local_date'=${day} AND payload->>'half'=${half} LIMIT 1`)[0]) return 0;
+    // The row tracks an attempt, not completion: only a succeeded task consumes this half-day.
+    const previous = (await tx`SELECT t.state,t.updated_at FROM assistant.meeting_prep_runs p
+      JOIN assistant.tasks t ON t.id=p.task_id
+      WHERE p.workspace_id=${workspace} AND p.local_date=${day}::date AND p.half=${half}`)[0];
+    const retryId = await briefClientId(workspace, `meeting-prep:${day}:${half}:retry`);
+    if (previous) {
+      if (!['failed', 'cancelled'].includes(String(previous['state']))) return 0;
+      if (now.getTime() < new Date(String(previous['updated_at'])).getTime() + 30 * 60_000) return 0;
+      // Preserve the one-retry budget even when that retry also fails.
+      if ((await tx`SELECT 1 FROM assistant.messages WHERE workspace_id=${workspace} AND client_message_id=${retryId}`)[0]) return 0;
+    }
     const created = await createBackgroundTask(tx, { workspace, conversation: String(row['conversation']),
-      objective: MEETING_PREP_PLANNING_OBJECTIVE, origin: 'responsibility', title: '회의 준비 계획', clientId: crypto.randomUUID() });
-    await tx`INSERT INTO assistant.meeting_prep_runs(workspace_id,local_date,half,task_id) VALUES(${workspace},${day}::date,${half},${created.task.id})`;
+      objective: MEETING_PREP_PLANNING_OBJECTIVE, origin: 'responsibility', title: '회의 준비 계획',
+      clientId: previous ? retryId : await briefClientId(workspace, `meeting-prep:${day}:${half}:first`) });
+    // Keep all attempts classified as brief/silent, including the superseded first attempt after a retry.
+    await tx`INSERT INTO assistant.attention_brief_runs(task_id,workspace_id,local_date)
+      VALUES(${created.task.id},${workspace},${day}::date) ON CONFLICT DO NOTHING`;
+    await tx`INSERT INTO assistant.meeting_prep_runs(workspace_id,local_date,half,task_id) VALUES(${workspace},${day}::date,${half},${created.task.id})
+      ON CONFLICT (workspace_id,local_date,half) DO UPDATE SET task_id=excluded.task_id`;
     return 1;
   });
 }

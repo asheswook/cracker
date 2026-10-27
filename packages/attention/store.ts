@@ -93,15 +93,19 @@ export async function attention(sql: Query, workspace: string, options: { readon
     sql`SELECT m.id,m.conversation_id,m.blocks,m.content,m.created_at FROM assistant.messages m LEFT JOIN assistant.tasks t ON t.id=m.task_id
         -- What the assistant did: two weeks for the feed's 한 일 view (a brief asks only since it last reported).
          WHERE m.workspace_id=${workspace} AND m.role='assistant' AND NOT m.hidden AND m.blocks @> '[{"kind":"result"}]' AND m.created_at>${resultSince}
-         AND coalesce(t.objective,'') !~* '^\s*QA' ORDER BY m.created_at DESC LIMIT 200`,
-    // Pick the latest revision before filtering summaries: "변화 없음" must suppress older changes in the series.
-    sql`SELECT a.id,a.conversation_id,a.series_key,a.change_summary,a.created_at,
-          (SELECT m.id FROM assistant.message_artifacts ma JOIN assistant.messages m ON m.workspace_id=ma.workspace_id AND m.id=ma.message_id
-           WHERE ma.workspace_id=${workspace} AND ma.artifact_id=a.id AND NOT m.hidden ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS message_id
-        FROM (SELECT DISTINCT ON (series_key) id,conversation_id,series_key,change_summary,created_at,state
-              FROM assistant.artifacts WHERE workspace_id=${workspace} AND series_key IS NOT NULL AND state='ready'
-              ORDER BY series_key,created_at DESC,id DESC) a
-        WHERE a.state='ready' AND a.created_at>${resultSince} ORDER BY a.created_at DESC`,
+         AND coalesce(t.objective,'') !~* '^\\s*QA' ORDER BY m.created_at DESC LIMIT 200`,
+    // A published change is news only after it reached a visible assistant message (never QA or user uploads).
+    sql`SELECT a.id,a.conversation_id,a.series_key,a.change_summary,a.created_at,linked.message_ids
+        FROM assistant.artifacts a JOIN LATERAL (
+          SELECT array_agg(m.id ORDER BY m.created_at DESC,m.id DESC) AS message_ids
+          FROM assistant.message_artifacts ma JOIN assistant.messages m ON m.workspace_id=ma.workspace_id AND m.id=ma.message_id
+          LEFT JOIN assistant.tasks t ON t.id=m.task_id
+          WHERE ma.workspace_id=${workspace} AND ma.artifact_id=a.id AND m.role='assistant' AND NOT m.hidden
+            AND coalesce(t.objective,'') !~* '^\\s*QA'
+        ) linked ON cardinality(linked.message_ids)>0
+        WHERE a.workspace_id=${workspace} AND a.series_key IS NOT NULL AND a.state='ready' AND a.created_at>${resultSince}
+          AND btrim(coalesce(a.change_summary,''))<>'' AND btrim(a.change_summary)<>'변화 없음'
+        ORDER BY a.created_at,a.id`,
   ]);
   const needs: AttentionItem[] = [], progress: AttentionItem[] = [], done: AttentionItem[] = [];
   const cardTasks = new Set<string>();
@@ -142,15 +146,26 @@ export async function attention(sql: Query, workspace: string, options: { readon
     conversation_id: String(r['conversation_id']), message_id: r['source_message_id'] ? String(r['source_message_id']) : null, state: 'active' });
   for (const s of schedules) progress.push({ id: `schedule:${s['id']}`, kind: 'schedule', title: firstLine(String(s['objective'])), detail: null,
     at: iso(s['due_at']), conversation_id: String(s['conversation_id']), message_id: s['source_message_id'] ? String(s['source_message_id']) : null, state: 'pending', topic: null });
-  for (const row of results) for (const b of MessageBlocks.catch([]).parse(row['blocks'])) if (b.kind === 'result')
+  const artifactMessages = new Set<string>();
+  const seriesChanges = new Map<string, { latest: (typeof artifacts)[number]; summaries: string[] }>();
+  for (const row of artifacts) {
+    const summary = String(row['change_summary']).trim();
+    if (!summary || summary === '변화 없음') continue;
+    const messages = row['message_ids'] as string[];
+    for (const id of messages) artifactMessages.add(id);
+    const series = String(row['series_key']), existing = seriesChanges.get(series);
+    const summaries = existing?.summaries ?? [];
+    summaries.push(summary);
+    seriesChanges.set(series, { latest: row, summaries });
+  }
+  for (const row of results) for (const b of MessageBlocks.catch([]).parse(row['blocks'])) if (b.kind === 'result' && !artifactMessages.has(String(row['id'])))
     // The headline names the channel already: the line under it is what it was about.
     done.push({ id: `result:${row['id']}`, kind: 'result', title: b.title ?? b.channel, detail: b.target, at: iso(row['created_at']), source: b.channel.replace(/\s*\(.*$/, ''), who: b.target ? b.target.replace(/\s*[<(].*$/, '').trim() : null,
       conversation_id: String(row['conversation_id']), message_id: String(row['id']), state: b.action, topic: null });
-  for (const row of artifacts) {
-    const summary = row['change_summary'] == null ? '' : String(row['change_summary']).trim();
-    if (!summary || summary === '변화 없음') continue;
-    done.push({ id: `artifact:${row['id']}`, kind: 'result', title: `결과물 · ${row['series_key']}: ${summary}`, detail: null,
-      at: iso(row['created_at']), conversation_id: String(row['conversation_id']), message_id: row['message_id'] ? String(row['message_id']) : null,
+  for (const [series, { latest: row, summaries }] of seriesChanges) {
+    const summary = summaries.join(' · ').slice(0, 200);
+    done.push({ id: `artifact:${row['id']}`, kind: 'result', title: `결과물 · ${series}: ${summary}`, detail: null,
+      at: iso(row['created_at']), conversation_id: String(row['conversation_id']), message_id: (row['message_ids'] as string[])[0] ?? null,
       state: 'ready', topic: null });
   }
   // Watched sources: open threads that need the user, and each watch with its freshness; a broken watch needs the user only when it cannot recover on its own.

@@ -60,7 +60,7 @@ export function topicRoutes(sql: Database) {
       const task = z.object({ task_id: z.uuid(), conversation_id: z.uuid() }).parse((await tx`SELECT r.task_id,t.conversation_id
         FROM assistant.runs r JOIN assistant.tasks t ON t.id=r.task_id WHERE r.id=${run} AND r.workspace_id=${principal.workspace_id}`)[0]);
       if (!(await isBriefTask(tx, principal.workspace_id, task.task_id))) throw new DomainError('forbidden', 'Meeting preparation planning is only available to brief runs', 403);
-      return planMeetingPrep(tx, principal.workspace_id, task.conversation_id, plan);
+      return planMeetingPrep(tx, principal.workspace_id, task.conversation_id, plan, task.task_id);
     }));
   });
   app.post('/context/:run/brief', async c => {

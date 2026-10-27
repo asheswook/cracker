@@ -27,6 +27,7 @@ export type UploadMetadata = {
   readonly sha256: string;
   readonly series?: string | null;
   readonly changeSummary?: string | null;
+  readonly updates?: string | null;
 };
 type Reservation =
   | { readonly kind: "existing"; readonly artifact: z.infer<typeof Artifact> }
@@ -50,6 +51,13 @@ export async function reserveUpload(
     await tx`SELECT id FROM assistant.workspaces WHERE id=${workspace} FOR UPDATE`;
     await authorizeArtifactRun(tx, input.scope, true);
     await conversation(tx, workspace, input.scope.conversation);
+    let series = metadata.series ?? null;
+    if (metadata.updates) {
+      const updated = (await tx`SELECT series_key FROM assistant.artifacts
+        WHERE id=${metadata.updates} AND workspace_id=${workspace} AND state='ready'`)[0];
+      if (!updated) throw new DomainError("not_found", "Artifact to update not found in this workspace", 404);
+      series = updated['series_key'] == null ? null : String(updated['series_key']);
+    }
     const prior =
       await tx`SELECT *,lease_expires_at>now() AS leased FROM assistant.artifacts WHERE id=${metadata.id} FOR UPDATE`;
     let additionalBytes = metadata.bytes;
@@ -62,7 +70,7 @@ export async function reserveUpload(
         row.bytes !== metadata.bytes ||
         row.name !== metadata.name ||
         row.media_type !== metadata.mediaType ||
-        (row.series_key ?? null) !== (metadata.series ?? null) ||
+        (row.series_key ?? null) !== series ||
         (row.change_summary ?? null) !== (metadata.changeSummary ?? null)
       )
         throw new DomainError(
@@ -88,7 +96,7 @@ export async function reserveUpload(
       throw new DomainError("artifact_quota_exceeded", "Workspace file quota is 1 GB", 409);
     const objectKey = `${workspace}/${metadata.id}`,
       leaseId = crypto.randomUUID();
-    await tx`INSERT INTO assistant.artifacts(id,workspace_id,conversation_id,name,media_type,bytes,sha256,object_key,lease_id,lease_expires_at,series_key,change_summary) VALUES(${metadata.id},${workspace},${input.scope.conversation},${metadata.name},${metadata.mediaType},${metadata.bytes},${metadata.sha256},${objectKey},${leaseId},now()+interval '15 minutes',${metadata.series ?? null},${metadata.changeSummary ?? null}) ON CONFLICT(id) DO UPDATE SET state='uploading',lease_id=${leaseId},lease_expires_at=now()+interval '15 minutes',purged_at=NULL`;
+    await tx`INSERT INTO assistant.artifacts(id,workspace_id,conversation_id,name,media_type,bytes,sha256,object_key,lease_id,lease_expires_at,series_key,change_summary,previous_id) VALUES(${metadata.id},${workspace},${input.scope.conversation},${metadata.name},${metadata.mediaType},${metadata.bytes},${metadata.sha256},${objectKey},${leaseId},now()+interval '15 minutes',${series},${metadata.changeSummary ?? null},${metadata.updates ?? null}) ON CONFLICT(id) DO UPDATE SET state='uploading',lease_id=${leaseId},lease_expires_at=now()+interval '15 minutes',purged_at=NULL`;
     return { kind: "reserved", objectKey, leaseId };
   });
 }
