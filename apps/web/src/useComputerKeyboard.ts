@@ -58,6 +58,26 @@ export function useComputerKeyboard(enabled: boolean, send: (message: unknown) =
     }
     reset();
     let lastComposition = '';
+    let compositionPrefix = '';
+    let consumedValue = '';
+    let resetPending = false;
+    let disposed = false;
+    const value = () => element.value.startsWith(anchor) ? element.value.slice(1) : element.value;
+    const difference = (text: string, prefix: string) => text.startsWith(prefix) ? text.slice(prefix.length) : text;
+    const resetField = () => {
+      if (composing.current) return;
+      reset();
+      consumedValue = '';
+      resetPending = false;
+    };
+    const deferReset = () => {
+      resetPending = true;
+      // Korean IMEs may start the next syllable immediately after compositionend.
+      // Rewriting the value/selection in that gap aborts the next composition.
+      queueMicrotask(() => {
+        if (!disposed && active.current && resetPending) resetField();
+      });
+    };
     const commit = (text: string) => {
       if (!active.current || !text) return;
       const chunks = splitComputerText(pending.current + text);
@@ -68,14 +88,18 @@ export function useComputerKeyboard(enabled: boolean, send: (message: unknown) =
     };
     const start = () => {
       composing.current = true;
+      compositionPrefix = value();
       lastComposition = '';
     };
     const end = (event: CompositionEvent) => {
-      if (!composing.current) { reset(); return; }
+      if (!composing.current) return;
       composing.current = false;
-      lastComposition = event.data;
-      commit(event.data);
-      reset();
+      const text = event.data || difference(value(), compositionPrefix);
+      lastComposition = text;
+      consumedValue = compositionPrefix + text;
+      // Only completed text enters the 60ms batching buffer, never an IME update.
+      commit(text);
+      deferReset();
     };
     const input = (event: Event) => {
       if (!(event instanceof InputEvent) || composing.current || event.isComposing) return;
@@ -85,13 +109,15 @@ export function useComputerKeyboard(enabled: boolean, send: (message: unknown) =
         event.data === lastComposition
       ) {
         lastComposition = '';
-        reset();
+        consumedValue = value();
+        deferReset();
         return;
       }
       lastComposition = '';
-      const text = element.value.startsWith(anchor) ? element.value.slice(1) : element.value;
-      commit(text);
-      reset();
+      const text = value();
+      commit(difference(text, consumedValue));
+      consumedValue = text;
+      deferReset();
     };
     const before = (event: InputEvent) => {
       if (composing.current || event.isComposing) return;
@@ -106,7 +132,7 @@ export function useComputerKeyboard(enabled: boolean, send: (message: unknown) =
       if (name) {
         event.preventDefault();
         key(name);
-        reset();
+        resetField();
       }
     };
     const keyboard = (event: KeyboardEvent) => {
@@ -115,13 +141,13 @@ export function useComputerKeyboard(enabled: boolean, send: (message: unknown) =
       if (name) {
         event.preventDefault();
         key(name);
-        reset();
+        resetField();
       }
     };
     const blur = () => {
       flush();
       composing.current = false;
-      reset();
+      resetField();
     };
     element.addEventListener('compositionstart', start);
     element.addEventListener('compositionend', end);
@@ -130,6 +156,7 @@ export function useComputerKeyboard(enabled: boolean, send: (message: unknown) =
     element.addEventListener('keydown', keyboard);
     element.addEventListener('blur', blur);
     return () => {
+      disposed = true;
       discard();
       element.removeEventListener('compositionstart', start);
       element.removeEventListener('compositionend', end);
