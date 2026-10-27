@@ -32,6 +32,7 @@ for(const report of ['Completed autonomously','NO_REPORT'])test(`background runt
     return f.app.fetch(request);
   }});
   const runtime=new Runtime({controlUrl:server.url.href,token:f.machine,journal,tools:new NoDesktopTools(),artifactRoot:directory,provider:{respond:async(input,_tools,_signal,observer,budget)=>{
+    expect(_tools.some(tool=>'name' in tool&&tool.name==='read_demonstration')).toBe(false);
     expect(observer).toBeUndefined();expect(budget).toBe(backgroundRetry);
     expect(input.some(item=>'content' in item&&typeof item.content==='string'&&item.content.includes('Do not ask the user questions; finish autonomously.'))).toBe(true);
     calls++;

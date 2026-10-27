@@ -44,6 +44,7 @@ import { rejectedRequest, rejectedRequestFeedback, stripRecentImages } from './r
 import { interruptedContinuation } from './inference-continuation';
 import type { ContinuationReader, ProviderContinuation } from '../../packages/provider/continuation';
 import type { ProviderResponseObserver } from '../../packages/provider/stream';
+import { DemonstrationRecorder, readDemonstration, readDemonstrationTool, type Demonstration } from './demonstration.ts';
 
 const Context = z.object({ messages: z.array(Message) });
 type ActivityCategory=Extract<DaemonEvent,{kind:"activity"}>["activity"];
@@ -95,6 +96,8 @@ export class Runtime {
   private readonly inputFlights = new Map<string,{readonly cursor:number;readonly abort:AbortController;readonly signal:AbortSignal}>();
   private flushing: Promise<Map<string,unknown>> | undefined;
   private control: "agent" | "user" = "agent";
+  private demonstrationRecorder: DemonstrationRecorder | undefined;
+  private lastDemonstration: Demonstration | undefined;
   private readonly controlWaiters = new Set<() => void>();
   constructor(private readonly config: RuntimeConfig & {readonly sessionProtocol?:boolean;readonly sessionId?:string;readonly toolConcurrency?:number;readonly agentConcurrency?:number;readonly semanticReferenceCombinedMaxBytes?:number;readonly knowledgeTreeAuxTimeoutMs?:number}) {
     this.sessionId=config.sessionId??crypto.randomUUID();
@@ -461,11 +464,26 @@ export class Runtime {
         await this.inputBarrier();
         this.config.tools.desktopInputsReleased();
         this.config.journal.setControl("user");
+        if (!this.demonstrationRecorder) {
+          const recorder = this.demonstrationRecorder = new DemonstrationRecorder();
+          void recorder.start('http://127.0.0.1:9222').catch(() => {});
+        }
         break;
       }
       case "return_control": {
         resumeSafe=this.config.journal.suspended().some(run=>this.config.journal.recoverable(run)!==null);
         await this.config.releaseInput?.();
+        const recorder = this.demonstrationRecorder;
+        this.demonstrationRecorder = undefined;
+        if (recorder) {
+          try {
+            const steps = await recorder.stop();
+            if (steps.length >= 2) {
+              this.lastDemonstration = { finished_at: new Date().toISOString(), steps };
+              this.config.journal.setLastDemonstration(JSON.stringify(this.lastDemonstration));
+            }
+          } catch { /* Recording must never affect computer ownership. */ }
+        }
         this.control = "agent"; this.config.journal.setControl("agent");
         this.config.tools.setDesktopOwner('agent');
         break;
@@ -574,7 +592,7 @@ export class Runtime {
       const checkpointValue=():RunCheckpoint=>({version:1,assignment,input,cursor,seenCallIds:[...seenCallIds],toolImageIndexes:toolImages.map(item=>input.indexOf(item)),artifacts:artifacts.checkpoint(),inputTokens,argumentRepairs,pendingSemanticSourceIds:[...pendingSemanticSourceIds],appliedUserIds:attribution.checkpoint(),...(nativeState?{nativeContext:nativeState}:{}),...(native?{appliedInputIds:[...appliedInputIds]}:{}),...(semantic?{semanticContext:semantic.checkpoint()}:{})});
       const scope={runId:assignment.run_id,lane:assignment.lane??assignment.task.lane??'foreground',workspace:artifacts.outputDirectory};
       const runPolicy=assignment.run_policy;
-      const offerTools=(tools:readonly Tool[]):Tool[]=>tools.filter(tool=>!('name' in tool)||tool.name!=='source_gmail_send_reply').filter(tool=>!runPolicy||!('name' in tool)||offered(runPolicy,String(tool.name),{server:this.config.tools.mcpServer(String(tool.name)),method:this.config.tools.mcpMethod(String(tool.name))},assignment.calendar_servers));
+      const offerTools=(tools:readonly Tool[]):Tool[]=>tools.filter(tool=>!('name' in tool)||tool.name!=='source_gmail_send_reply').filter(tool=>!('name' in tool)||tool.name!=='read_demonstration'||scope.lane==='foreground'&&!runPolicy).filter(tool=>!runPolicy||!('name' in tool)||offered(runPolicy,String(tool.name),{server:this.config.tools.mcpServer(String(tool.name)),method:this.config.tools.mcpMethod(String(tool.name))},assignment.calendar_servers));
       const toolScope=this.config.sessionProtocol?scope:undefined;
       const pendingShells=()=>!explainOnly&&this.config.tools.hasPendingShellSessions(toolScope?.runId);
       const cleanup=async()=>{if(explainOnly)return;if(toolScope)await this.config.tools.releaseRun(assignment.run_id);else await this.resetDesktop(artifacts.outputDirectory);};
@@ -731,7 +749,7 @@ export class Runtime {
         queueSemantic();
         await applyMailbox();
         if (semantic?.finalCursor !== undefined) { if (await completeTurn()) break; continue; }
-        const nativeRequest=()=>({runId:assignment.run_id,input,tools:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,updateFeedItemTool,setBriefTool,watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]),signal,...(background?{budget:backgroundRetry}:{}),...(nativeState?{state:nativeState}:{})});
+        const nativeRequest=()=>({runId:assignment.run_id,input,tools:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,readDemonstrationTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,updateFeedItemTool,setBriefTool,watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]),signal,...(background?{budget:backgroundRetry}:{}),...(nativeState?{state:nativeState}:{})});
         let nativeClock=native?utcInstruction():"";
         const measureNative=async():Promise<number>=>{
           if(!native)return 0;
@@ -756,7 +774,7 @@ export class Runtime {
         if(!explainOnly&&native&&nativeState&&!pendingShells()&&budget>=threshold&&budget>=lastCompactBudget+threshold/4){
           lastCompactBudget=budget;
           try {
-            const offeredTools=explainOnly?[]:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,updateFeedItemTool,setBriefTool,watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]);
+            const offeredTools=explainOnly?[]:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,readDemonstrationTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,updateFeedItemTool,setBriefTool,watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]);
             const compacted=await native.compact({runId:assignment.run_id,input,tools:offeredTools,state:nativeState,signal,...(background?{budget:backgroundRetry}:{})});
             signal.throwIfAborted();
             if(compacted)commitNative(compacted);
@@ -772,7 +790,7 @@ export class Runtime {
           await applyMailbox();
         }
         if(native&&nativeBudget>nativeLimit)throw new NativeContextError("input_budget_exceeded");
-        const offeredTools=explainOnly?[]:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,updateFeedItemTool,setBriefTool,watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]);
+        const offeredTools=explainOnly?[]:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,readDemonstrationTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,updateFeedItemTool,setBriefTool,watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]);
         await this.waitReceipts(assignment.run_id,signal);
         const composing=background?silentComposing():await observeComposing(this.http,assignment.run_id,input,signal,native?[...appliedInputIds]:undefined);
         const semanticContextId = semantic?.contextId;
@@ -884,7 +902,7 @@ export class Runtime {
           const latest = await this.readContext(assignment.run_id,cursor,signal);
           // New input steers the work instead of discarding it: read-only lookups already chosen still run and
           // their results stay usable; only actions with side effects wait until the model has read the new input.
-          const readOnly=this.config.tools.parallelRead(item.name)||item.name==='search_prior_work'||item.name==='retrieve_prior_work'||item.name==='read_attention';
+          const readOnly=this.config.tools.parallelRead(item.name)||item.name==='search_prior_work'||item.name==='retrieve_prior_work'||item.name==='read_attention'||item.name==='read_demonstration';
           if (!readOnly && latest.messages.some(m => m.role !== "assistant" && m.sequence > cursor)) {
             return {result:{text:'Not run yet: the user sent a new message. Read it, then decide whether this action is still wanted.'}};
           }
@@ -908,6 +926,7 @@ export class Runtime {
             if(item.name === "search_prior_work"||item.name === "read_prior_source")return {text:await runWorkSearch(this.http,{runId:assignment.run_id,artifacts},{name:item.name,args:item.arguments,signal})};
           if(item.name === "load_skill") return {text:await this.extensions.load(item.arguments,signal,assignment)};
           if(item.name === "save_skill") return {text:await this.extensions.save(item.arguments,signal,assignment)};
+          if(item.name === "read_demonstration") return {text:JSON.stringify(scope.lane !== 'foreground' ? {none:true} : readDemonstration(this.lastDemonstration ?? this.config.journal.lastDemonstration()))};
             if(item.name === "publish_artifact"){
               const artifact=await artifacts.publish(item.arguments,signal);
               const eventId = crypto.randomUUID(), messageId = semantic?.tracksDeliveryIds ? eventId : undefined;
@@ -981,7 +1000,7 @@ export class Runtime {
           return {result,actionId};
           };
            if(item.name==='wait_agent'||item.name==='wait_for_desktop')return execute();
-           return scheduler.run(this.config.tools.parallelRead(item.name)||item.name==='search_prior_work'||item.name==='retrieve_prior_work'||item.name==='read_attention'?'read':'exclusive',signal,execute);
+           return scheduler.run(this.config.tools.parallelRead(item.name)||item.name==='search_prior_work'||item.name==='retrieve_prior_work'||item.name==='read_attention'||item.name==='read_demonstration'?'read':'exclusive',signal,execute);
         },signal);
         for(const [index,item] of calls.entries()){
           const value=completed[index];if(!value)throw new TypeError('Missing tool result');
@@ -1070,6 +1089,8 @@ export class Runtime {
   }
   async stop(): Promise<void> {
     for(const run of this.runs.values())run.abort.abort();
+    await this.demonstrationRecorder?.stop().catch(() => {});
+    this.demonstrationRecorder = undefined;
     const draining = await Promise.allSettled([this.config.releaseInput?.(), this.memoryQueue.stop(), this.semanticQueue.stop(), this.structureQueue.stop(), ...[...this.runs.values()].map(run=>run.done)]);
     const closing = await Promise.allSettled([this.config.tools.close(), this.flush()]);
     const failures = [...draining, ...closing].flatMap(result => result.status === "rejected" ? [result.reason] : []);

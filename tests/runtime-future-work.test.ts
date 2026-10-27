@@ -44,7 +44,7 @@ test("runtime edits and cancels the same responsibility through durable manageme
       const call = (name: string, args: unknown) => response([{ type: "function_call", call_id: `future-work-${round}`, name, arguments: JSON.stringify(args) }]);
       switch (round) {
         case 1:
-          expect(tools.filter(tool => tool.type === "function").map(tool => tool.name)).toEqual(expect.arrayContaining(["list_future_work", "update_future_work", "cancel_future_work", "complete_future_work"]));
+          expect(tools.filter(tool => tool.type === "function").map(tool => tool.name)).toEqual(expect.arrayContaining(["list_future_work", "update_future_work", "cancel_future_work", "complete_future_work", "read_demonstration", "save_skill"]));
           return call("create_responsibility", { ...source, objective: "Synthetic noon routine", title: "점심 루틴", trigger_kind: "daily", hour: 12, minute: 0, timezone: "Asia/Seoul", due_at: null, task_id: null, interval_minutes: null, until_at: null, starts_at: null });
         case 2: {
           const saved = z.object({ responsibility: z.object({ id: z.uuid(), next_review_at: z.string() }) }).parse(result(input)).responsibility;
