@@ -26,6 +26,18 @@ async function fixture(mode: "enabled" | "quiet" = "enabled") {
   return { row, task, conversation, input };
 }
 const notify = { outcome: "notify", reason: "Watched task changed", notification: "The watched task needs attention", action_objective: null, next_review_minutes: 60 } as const;
+async function scheduledFixture(trigger: z.infer<typeof ResponsibilityInput>["trigger"] = { kind: "deadline", due_at: "2000-01-01T00:00:00Z", timezone: "UTC" }, mode: "enabled" | "quiet" = "enabled") {
+  const f = await fixture(mode);
+  await sql`UPDATE assistant.responsibilities SET trigger=${JSON.stringify(trigger)}::text::jsonb,next_review_at='2000-01-01T00:00:00Z' WHERE id=${f.row.id}`;
+  return { ...f, row: ResponsibilityRow.parse((await sql`SELECT * FROM assistant.responsibilities WHERE id=${f.row.id}`)[0]) };
+}
+async function scheduledReview(id: string, hour: number, evaluation = notify) {
+  await sql`UPDATE assistant.responsibilities SET next_review_at=${`2000-01-01T${String(hour).padStart(2, "0")}:00:00Z`} WHERE id=${id}`;
+  const row = ResponsibilityRow.parse((await sql`SELECT * FROM assistant.responsibilities WHERE id=${id}`)[0]);
+  const current = await snapshot(sql, row);
+  await recordEvaluation(sql, machine, { responsibility_id: id, context_hash: current.context_hash, evaluation });
+  return current;
+}
 test("same creation key reuses one durable responsibility", async () => {
   // Given
   const { row, input } = await fixture();
@@ -61,24 +73,60 @@ test("deadline and periodic quiet evaluations run again for the next scheduled r
     expect(await sql`SELECT id FROM assistant.responsibility_evaluations WHERE responsibility_id=${row.id}`).toHaveLength(2);
   }
 });
-test("identical scheduled notifications within 24 hours are recorded as quiet", async () => {
+test("unchanged evidence suppresses reworded notifications for 24 hours after delivery, not creation", async () => {
   const { input, conversation } = await fixture();
   const row = await createResponsibility(sql, client, { ...input, client_responsibility_id: crypto.randomUUID(), trigger: { kind: "deadline", due_at: "2000-01-01T00:00:00Z", timezone: "UTC" } });
   const first = await snapshot(sql, row);
   await recordEvaluation(sql, machine, { responsibility_id: row.id, context_hash: first.context_hash, evaluation: notify });
+  await sql`UPDATE assistant.responsibility_notifications SET created_at=now()-interval '25 hours' WHERE responsibility_id=${row.id}`;
   await sql`UPDATE assistant.responsibilities SET next_review_at='2000-01-01T01:00:00Z' WHERE id=${row.id}`;
   const second = (await dueResponsibilities(sql, machine)).find(item => item.id === row.id);
   if (!second) throw new Error("Missing repeat review");
-  await recordEvaluation(sql, machine, { responsibility_id: row.id, context_hash: second.context_hash, evaluation: notify });
+  await recordEvaluation(sql, machine, { responsibility_id: row.id, context_hash: second.context_hash, evaluation: { ...notify, notification: "Reworded reminder about the same watched task" } });
   expect(await sql`SELECT outcome FROM assistant.responsibility_evaluations WHERE responsibility_id=${row.id} AND context_hash=${second.context_hash}`).toMatchObject([{ outcome: "quiet" }]);
   expect(await sql`SELECT id FROM assistant.responsibility_notifications WHERE responsibility_id=${row.id}`).toHaveLength(1);
   expect(await sql`SELECT id FROM assistant.messages WHERE conversation_id=${conversation} AND role='assistant'`).toHaveLength(1);
-  await sql`UPDATE assistant.responsibility_notifications SET created_at=now()-interval '25 hours' WHERE responsibility_id=${row.id}`;
+  await sql`UPDATE assistant.responsibility_notifications SET created_at=now(),delivered_at=now()-interval '25 hours' WHERE responsibility_id=${row.id}`;
   await sql`UPDATE assistant.responsibilities SET next_review_at='2000-01-01T02:00:00Z' WHERE id=${row.id}`;
   const third = (await dueResponsibilities(sql, machine)).find(item => item.id === row.id);
   if (!third) throw new Error("Missing later review");
   await recordEvaluation(sql, machine, { responsibility_id: row.id, context_hash: third.context_hash, evaluation: notify });
   expect(await sql`SELECT id FROM assistant.messages WHERE conversation_id=${conversation} AND role='assistant'`).toHaveLength(2);
+});
+test("new message evidence notifies normally even with identical notification text", async () => {
+  const { row, conversation } = await scheduledFixture();
+  await scheduledReview(row.id, 0);
+  await sql`INSERT INTO assistant.messages(workspace_id,conversation_id,role,content) VALUES(${workspace},${conversation},'user','The awaited document arrived')`;
+  const next = await scheduledReview(row.id, 1);
+  expect(await sql`SELECT outcome FROM assistant.responsibility_evaluations WHERE responsibility_id=${row.id} AND context_hash=${next.context_hash}`).toMatchObject([{ outcome: "notify" }]);
+  expect(await sql`SELECT id FROM assistant.messages WHERE conversation_id=${conversation} AND role='assistant'`).toHaveLength(2);
+});
+test("task evidence is compared with the last delivery, not any older matching delivery", async () => {
+  const { row, task, conversation } = await scheduledFixture();
+  await scheduledReview(row.id, 0);
+  await sql`UPDATE assistant.tasks SET state='failed' WHERE id=${task}`;
+  await scheduledReview(row.id, 1);
+  await sql`UPDATE assistant.tasks SET state='running' WHERE id=${task}`;
+  await scheduledReview(row.id, 2);
+  expect(await sql`SELECT id FROM assistant.messages WHERE conversation_id=${conversation} AND role='assistant'`).toHaveLength(3);
+});
+test("periodic cadence still notifies with unchanged evidence and identical text", async () => {
+  const { row, conversation } = await scheduledFixture({ kind: "periodic", interval_minutes: 60 });
+  await scheduledReview(row.id, 0);
+  await scheduledReview(row.id, 1);
+  expect(await sql`SELECT outcome FROM assistant.responsibility_evaluations WHERE responsibility_id=${row.id}`).toMatchObject([{ outcome: "notify" }, { outcome: "notify" }]);
+  expect(await sql`SELECT id FROM assistant.messages WHERE conversation_id=${conversation} AND role='assistant'`).toHaveLength(2);
+});
+test("pending notifications do not dedupe until delivery, then unchanged queued repeats become quiet", async () => {
+  const { row, conversation } = await scheduledFixture(undefined, "quiet");
+  await scheduledReview(row.id, 0);
+  const repeat = await scheduledReview(row.id, 1);
+  expect(await sql`SELECT state FROM assistant.responsibility_notifications WHERE responsibility_id=${row.id}`).toMatchObject([{ state: "pending" }, { state: "pending" }]);
+  expect(await sql`SELECT outcome FROM assistant.responsibility_evaluations WHERE responsibility_id=${row.id} AND context_hash=${repeat.context_hash}`).toMatchObject([{ outcome: "notify" }]);
+  await sql`UPDATE assistant.responsibilities SET notification_mode='enabled' WHERE id=${row.id}`;
+  await dueResponsibilities(sql, machine);
+  expect(await sql`SELECT id FROM assistant.messages WHERE conversation_id=${conversation} AND role='assistant'`).toHaveLength(1);
+  expect(await sql`SELECT outcome FROM assistant.responsibility_evaluations WHERE responsibility_id=${row.id} AND context_hash=${repeat.context_hash}`).toMatchObject([{ outcome: "quiet" }]);
 });
 test("unchanged evidence skips model reevaluation regardless of review time", async () => {
   // Given

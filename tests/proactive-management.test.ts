@@ -3,7 +3,7 @@ import { z } from "zod";
 import { DaemonPoll,Message } from "../packages/protocol/index.ts";
 import { FutureWorkListResult,FutureWorkMutationResult,UpdateRequest } from "../packages/proactive/schema.ts";
 import { dispatchDueSchedules } from "../services/control/repository/schedules.ts";
-import { dueResponsibilities,ResponsibilityRow,snapshot } from "../packages/memory/responsibility-store.ts";
+import { dueResponsibilities,recordEvaluation,ResponsibilityRow,snapshot } from "../packages/memory/responsibility-store.ts";
 import { controlFixture } from "./control-fixture.ts";
 import { attention } from "../packages/attention/store.ts";
 
@@ -148,6 +148,50 @@ test("starts_at persists, updates, and bounds the next daily run when retimed",a
   if(listed?.kind!=="responsibility")throw new Error("Missing updated start fixture");
   expect(listed.configuration.starts_at).toBe("2099-02-01T00:00:00.000Z");
   expect(listed.version).not.toBe(retimed.version);
+});
+test("automatic responsibility action completes only its own work using stored evidence",async()=>{
+  const current=await active();
+  for(const objective of ["Automatic completion fixture","Unrelated held work"]){
+    expect((await f.request("/v1/daemon/responsibilities",f.machine,{...current,vm_id:f.vm,client_responsibility_id:crypto.randomUUID(),objective,trigger:{kind:"deadline",due_at:"2099-01-01T00:00:00Z",timezone:"UTC"}})).status).toBe(201);
+  }
+  const items=(await list(current.run_id)).items;
+  const own=items.find(row=>row.configuration.objective==="Automatic completion fixture");
+  const other=items.find(row=>row.configuration.objective==="Unrelated held work");
+  if(own?.kind!=="responsibility"||other?.kind!=="responsibility")throw new Error("Missing responsibility fixtures");
+  await f.finishActive();
+  const row=ResponsibilityRow.parse((await f.sql`SELECT * FROM assistant.responsibilities WHERE id=${own.id}`)[0]);
+  const context=await snapshot(f.sql,row);
+  await recordEvaluation(f.sql,{role:"vm",workspace_id:f.workspace,vm_id:f.vm},{responsibility_id:own.id,context_hash:context.context_hash,evaluation:{outcome:"action",reason:"Awaited input arrived",notification:null,action_objective:"Finish the held report",next_review_minutes:60}});
+  const run=DaemonPoll.parse(await(await f.request("/v1/daemon/poll",f.machine)).json()).assignment;
+  if(!run)throw new Error("Missing automatic run");
+  const source=z.object({id:z.uuid(),task_id:z.uuid(),content:z.string()}).parse((await f.sql`SELECT m.id,m.task_id,m.content FROM assistant.messages m JOIN assistant.runs r ON r.task_id=m.task_id WHERE r.id=${run.run_id} AND m.role='system'`)[0]);
+  expect(await f.sql`SELECT id FROM assistant.messages WHERE task_id=${source.task_id} AND role='user'`).toHaveLength(0);
+  const evidence="The awaited input was received and the final report was delivered.";
+  expect(source.content).not.toContain(evidence);
+  const body={run_id:run.run_id,source_message_id:source.id,source_quote:evidence,evidence,client_action_id:crypto.randomUUID(),target:{kind:own.kind,id:own.id,expected_version:own.version}};
+  for(const rejected of [
+    {...body,target:{kind:other.kind,id:other.id,expected_version:other.version}},
+    {...body,source_message_id:crypto.randomUUID()},
+    {...body,source_quote:"Not part of the completion evidence"},
+  ]){
+    const response=await f.request(`${base}/complete`,f.machine,rejected);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({error:{code:"invalid_source"}});
+  }
+  const cancelled=await f.request(`${base}/cancel`,f.machine,body);
+  expect(cancelled.status).toBe(409);
+  expect(await cancelled.json()).toMatchObject({error:{code:"invalid_source"}});
+  const updated=await f.request(`${base}/update`,f.machine,{...body,work:{...body.target,configuration:{...own.configuration,objective:"Unauthorized edit"}}});
+  expect(updated.status).toBe(409);
+  expect(await updated.json()).toMatchObject({error:{code:"invalid_source"}});
+  const response=await f.request(`${base}/complete`,f.machine,body);
+  expect(response.status).toBe(200);
+  const result=FutureWorkMutationResult.parse(await response.json());
+  expect(result.work.state).toBe("complete");
+  expect(result.already_dispatched_task_ids).toEqual([source.task_id]);
+  expect((await f.request(`${base}/complete`,f.machine,body)).status).toBe(200);
+  expect((await f.sql`SELECT request->'body'->>'evidence' AS evidence,request->'body'->>'source_quote' AS quote FROM assistant.proactive_mutations WHERE workspace_id=${f.workspace} AND client_action_id=${body.client_action_id}`)[0]).toMatchObject({evidence,quote:evidence});
+  expect((await f.sql`SELECT state FROM assistant.responsibilities WHERE id=${other.id}`)[0]).toMatchObject({state:"active"});
 });
 test("until-only edits are listed, change the version, and preserve pending actions until expiry",async()=>{
   const current=await active();

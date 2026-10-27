@@ -173,6 +173,11 @@ export async function attention(sql: Query, workspace: string, options: { readon
       state: String(s['health']), topic: null, version: null, url: null, source: s['kind'] === 'slack' ? 'Slack' : 'Gmail' };
     // Only a step the user must take (login, account choice) needs them; repeated outages are shown as degraded work.
     if (s['health'] === 'needs_user') { const name = s['kind'] === 'slack' ? 'Slack' : 'Gmail'; needs.push({ ...item, title: `${name} 로그인이 필요해요`, detail: `login:VM 화면에서 ${name}에 로그인해 주세요${s['enabled'] ? '. 다음 확인부터 이어서 봐요' : '. 로그인한 뒤 다시 봐 달라고 하시면 돼요'}` }); }
+    // A watch the user relies on that has not managed a full look for half a day: they should know, once, in their terms.
+    else if (s['enabled'] && s['health'] === 'degraded' && (!s['last_success_at'] || Date.now() - new Date(String(s['last_success_at'])).getTime() > 12 * 3_600_000)) {
+      const what = s['kind'] === 'slack' ? 'Slack' : '메일';
+      needs.push({ ...item, title: `${what}을 못 챙기고 있어요`, detail: `stale:${s['last_success_at'] ? iso(s['last_success_at']) : ''}` });
+    }
     else progress.push(item);
   }
   const byNewest = (a: AttentionItem, b: AttentionItem) => b.at.localeCompare(a.at);

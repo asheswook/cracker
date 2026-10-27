@@ -18,6 +18,7 @@ export const briefLabel = (at: string, now = new Date()) => `${startOfDay(new Da
 const detail = (item: Item): string | null => {
   if (!item.detail) return null;
   if (item.detail.startsWith('login:')) return item.detail.slice(6);
+  if (item.detail.startsWith('stale:')) return null;
   if (/^(degraded|partial|checked|next):/.test(item.detail)) return null;
   if (item.state === 'stopped' || /^Runtime\/provider\/tool failure/.test(item.detail)) return null;
   return item.detail;
@@ -43,6 +44,7 @@ const personal = (item: Item): string | null => {
   if (item.kind === 'mail' && item.state === 'handled' && src) return `${src}에서 처리된 걸 확인했어요`;
   if (item.kind === 'send' && who) return `${who}에게 보낸 답장이 나갔는지 확인해 주세요`;
   if (item.kind === 'result' && src) return ({ sent: `${who ? `${who}에게 ` : ''}${src} 답장을 보냈어요`, posted: `${src}에 게시했어요`, booked: `${src}에서 예약했어요`, scheduled: `${src}에 일정을 등록했어요` } as Record<string, string>)[item.state ?? ''] ?? null;
+  if (item.kind === 'watch' && item.detail?.startsWith('stale:')) return item.title;
   if (item.kind === 'watch' && src) return `${src}에 다시 로그인해 주세요`;
   return null;
 };

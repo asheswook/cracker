@@ -42,7 +42,7 @@ export const futureWorkTools: readonly Tool[] = [
   },
   {
     type: "function", name: "complete_future_work", strict: true,
-    description: "Use when the held work is finished (the awaited thing arrived and the work is done); cancel_future_work is only for the user calling it off. Only responsibilities support completion, not schedules. First list_future_work for its exact ID and latest version. Quote the current user message with source_message_id and give short evidence of completion. Pending actions and notifications are cancelled; already dispatched tasks are not stopped. Do not claim completion unless this tool confirms it.",
+    description: "Use when the held work is finished (the awaited thing arrived and the work is done); cancel_future_work is only for the user calling it off. Only responsibilities support completion, not schedules. First list_future_work for its exact ID and latest version. Quote the current user message with source_message_id and give short evidence of completion. An automatic action created by that responsibility may instead use its own task's system message ID and quote the completion evidence in source_quote. Pending actions and notifications are cancelled; already dispatched tasks are not stopped. Do not claim completion unless this tool confirms it.",
     parameters: parameters(FutureWorkCompleteInput),
   },
   {

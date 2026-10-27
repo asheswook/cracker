@@ -42,12 +42,17 @@ export async function mutateFutureWork(sql: Database, principal: Principal, muta
       return receipt.result;
     }
     const run = await ownedRun(tx, principal, body.run_id);
+    const target = mutation.kind === "update" ? mutation.body.work : mutation.body.target;
     const source = (
       await tx`SELECT id FROM assistant.messages WHERE workspace_id=${principal.workspace_id} AND task_id=${run.task_id} AND id=${body.source_message_id} AND role='user' AND position(${body.source_quote} IN content)>0`
     )[0];
-    if (!source)
+    // An automatic action can close only its own responsibility, using its system message
+    // as the source and quoting the completion evidence retained in the mutation receipt.
+    const ownAction = !source && mutation.kind === "complete" && target.kind === "responsibility" && mutation.body.evidence.includes(body.source_quote) && (
+      await tx`SELECT a.id FROM assistant.responsibility_actions a JOIN assistant.responsibilities r ON r.id=a.responsibility_id JOIN assistant.messages m ON m.workspace_id=a.workspace_id AND m.task_id=a.task_id WHERE a.workspace_id=${principal.workspace_id} AND r.vm_id=${principal.vm_id} AND a.responsibility_id=${target.id} AND a.task_id=${run.task_id} AND m.id=${body.source_message_id}`
+    )[0];
+    if (!source && !ownAction)
       throw new DomainError("invalid_source", "Exact current task user source required", 409);
-    const target = mutation.kind === "update" ? mutation.body.work : mutation.body.target;
     const current = (await records(tx, principal, target))[0];
     if (!current) throw new DomainError("not_found", "Future work not found on this VM", 404);
     if (current.version !== target.expected_version)
@@ -61,7 +66,7 @@ export async function mutateFutureWork(sql: Database, principal: Principal, muta
     await recordEvent(tx, {
       workspace: principal.workspace_id,
       kind: `${current.kind}.${mutation.kind === "update" ? "updated" : mutation.kind === "complete" ? "completed" : "cancelled"}`,
-      payload: JSON.stringify({ id: current.id, source_message_id: body.source_message_id }),
+      payload: JSON.stringify({ id: current.id, source_message_id: body.source_message_id, ...(mutation.kind === "complete" ? { evidence: mutation.body.evidence } : {}) }),
     });
     return result;
   });

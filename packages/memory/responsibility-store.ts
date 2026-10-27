@@ -90,7 +90,7 @@ export async function recordEvaluation(sql: Database, principal: Principal, requ
     if (row.state !== "active" || (row.until_at && new Date(row.until_at).getTime() <= Date.now())) throw new DomainError("inactive", "Responsibility is inactive", 409);
     if ((await snapshot(tx, row)).context_hash !== request.context_hash) throw new DomainError("stale_evaluation", "Evidence changed during evaluation", 409);
     let evaluation = request.evaluation;
-    if (evaluation.outcome === "notify" && (await tx`SELECT id FROM assistant.responsibility_notifications WHERE responsibility_id=${row.id} AND content=${evaluation.notification} AND state IN ('pending','delivered') AND created_at>now()-interval '24 hours' LIMIT 1`)[0]) {
+    if (evaluation.outcome === "notify" && await repeatsRecentDelivery(tx, row)) {
       evaluation = { ...evaluation, outcome: "quiet", notification: null };
     }
     await tx`INSERT INTO assistant.responsibility_evaluations(workspace_id,responsibility_id,context_hash,outcome,reason,review_at) VALUES(${principal.workspace_id},${row.id},${request.context_hash},${evaluation.outcome},${evaluation.reason},${row.next_review_at})`;
@@ -102,6 +102,15 @@ export async function recordEvaluation(sql: Database, principal: Principal, requ
     await deliverNotifications(tx, principal);
   });
 }
+async function repeatsRecentDelivery(sql: Query, row: z.infer<typeof ResponsibilityRow>): Promise<boolean> {
+  // Periodic work is an explicit request to repeat, even without new conversation evidence.
+  if (row.trigger.kind === "periodic") return false;
+  const last = (await sql`SELECT context_hash FROM assistant.responsibility_notifications WHERE responsibility_id=${row.id} AND state='delivered' AND delivered_at>now()-interval '24 hours' ORDER BY delivered_at DESC,id DESC LIMIT 1`)[0];
+  if (!last) return false;
+  const { context_hash } = z.object({ context_hash: z.string() }).parse(last);
+  // Reuse the delivered evaluation's occurrence to compare only objective/trigger/messages/tasks.
+  return (await snapshot(sql, row, context_hash)).context_hash === context_hash;
+}
 async function deliverNotifications(tx: Transaction, principal: Principal): Promise<void> {
   const rows = await tx`SELECT n.id AS notification_id,n.content,n.context_hash AS notification_context_hash,r.* FROM assistant.responsibility_notifications n JOIN assistant.responsibilities r ON r.id=n.responsibility_id WHERE r.workspace_id=${principal.workspace_id} AND r.vm_id=${principal.vm_id} AND r.state<>'cancelled' AND n.state='pending' ORDER BY n.created_at LIMIT 50 FOR UPDATE OF n`;
   for (const raw of rows) {
@@ -112,6 +121,12 @@ async function deliverNotifications(tx: Transaction, principal: Principal): Prom
       continue;
     }
     if (row.notification_mode === "quiet" || quietNow(row.quiet_hours, new Date())) continue;
+    // Several reviews may have queued while muted; only an actual delivery starts deduplication.
+    if (await repeatsRecentDelivery(tx, row)) {
+      await tx`UPDATE assistant.responsibility_notifications SET state='cancelled' WHERE id=${row.notification_id}`;
+      await tx`UPDATE assistant.responsibility_evaluations SET outcome='quiet' WHERE responsibility_id=${row.id} AND context_hash=${row.notification_context_hash} AND outcome='notify'`;
+      continue;
+    }
     const message = z.object({ id: z.uuid() }).parse((await tx`INSERT INTO assistant.messages(workspace_id,conversation_id,role,content,origin,notify) VALUES(${principal.workspace_id},${row.conversation_id},'assistant',${row.content},'responsibility',true) RETURNING id`)[0]);
     await enqueueMessageNotification(tx, principal.workspace_id, message);
     await tx`UPDATE assistant.responsibility_notifications SET state='delivered',message_id=${message.id},delivered_at=now() WHERE id=${row.notification_id}`;
