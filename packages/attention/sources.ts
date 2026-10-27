@@ -166,8 +166,13 @@ export async function tickSources(sql: Database, now = new Date()) {
         const s = (await tx`SELECT * FROM assistant.attention_sources WHERE id=${id} AND enabled AND next_check_at<=${now} FOR UPDATE SKIP LOCKED`)[0];
         if (!s) return 0;
         if ((await tx`SELECT 1 FROM assistant.attention_source_runs WHERE source_id=${id} AND state='dispatched'`)[0]) return 0;
+        // Quiet hours limit interruptions, not looking: a look still runs (at most every two hours at night), so a late
+        // request or a moved deadline is known by morning — and alerts keep their own quiet rules.
         const wait = await quietWait(tx, String(s['workspace_id']), now);
-        if (wait) { await tx`UPDATE assistant.attention_sources SET next_check_at=${now}::timestamptz+${wait}*interval '1 minute' WHERE id=${id}`; return 0; }
+        const lastLook = wait ? (await tx`SELECT max(created_at) AS at FROM assistant.attention_source_runs WHERE source_id=${id}`)[0]?.['at'] : null;
+        if (wait && lastLook && now.getTime() - new Date(String(lastLook)).getTime() < 120 * 60_000) {
+          await tx`UPDATE assistant.attention_sources SET next_check_at=${now}::timestamptz+interval '30 minutes' WHERE id=${id}`; return 0;
+        }
         await startLook(tx, s, now, false);
         await tx`UPDATE assistant.attention_sources SET next_check_at=${now}::timestamptz+interval_minutes*interval '1 minute' WHERE id=${id}`;
         return 1;
@@ -187,7 +192,7 @@ async function noteFailure(tx: Query, source: string, kind: string | null, error
   await tx`UPDATE assistant.attention_sources SET failure_count=failure_count+1,
     health=CASE WHEN ${userStep} THEN 'needs_user' WHEN failure_count+1>=3 THEN 'degraded' ELSE 'retrying' END,
     last_error=${error ?? kind},updated_at=now() WHERE id=${source}`;
-  await tx`UPDATE assistant.attention_sources SET next_check_at=now()+LEAST(240,15*power(2,LEAST(failure_count-1,5)))*interval '1 minute' WHERE id=${source} AND enabled`;
+  await tx`UPDATE assistant.attention_sources SET next_check_at=now()+LEAST(60,15*power(2,LEAST(failure_count-1,5)))*interval '1 minute' WHERE id=${source} AND enabled`;
 }
 
 /** The observation run reports what it saw. Accepted once, only from a live run of the current revision. */
@@ -538,7 +543,7 @@ export function replyObjective(item: { kind?: Kind; account: string; url: string
     `Thread: ${item.subject}${item.counterpart ? ` (from ${item.counterpart})` : ''}, id ${item.thread_key}${item.url ? `, ${item.url}` : ''}. Why: ${item.reason}${item.evidence ? `; they wrote: "${item.evidence}"` : ''}.`,
     SOURCE[item.kind ?? 'gmail'].reread,
     'If the account already replied after the asking message and no newer request is unanswered, reply exactly HANDLED: <reply sender>|<reply time> <short quote>. If no answer from the user is needed, reply exactly NOT_NEEDED: <why>.',
-    `Otherwise call ask_user once with a draft card (channel "${SOURCE[item.kind ?? 'gmail'].name}", target = the recipient (Slack: "#channel" or the person), title = ${item.kind === 'slack' ? 'null' : '"Re: <subject>"'}, body = the reply in the user's usual tone and language; do not invent facts or commitments, leave [ ] for what only the user knows) and question null.`,
+    `Otherwise call ask_user once with a draft card (channel "${SOURCE[item.kind ?? 'gmail'].name}", target = the recipient (Slack: "#channel" or the person), title = ${item.kind === 'slack' ? 'null' : '"Re: <subject>"'}, body = the reply in the user's usual tone and language; do not invent facts, dates or commitments; never leave blanks like [ ] — if the reply truly needs something only the user knows (e.g. by when), write it without that part when it still reads complete, otherwise do not draft: call ask_user with kind choice/question asking just that one thing instead) and question null.`,
     'Then end with one short line: what the draft answers. Never call notify_user.',
   ].join(' ');
 }
