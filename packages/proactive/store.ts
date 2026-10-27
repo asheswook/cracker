@@ -5,11 +5,12 @@ import { recordEvent } from "../../services/control/repository/common.ts";
 import { DomainError } from "../protocol/index.ts";
 import { ownedRun, records } from "./records.ts";
 import { applyMutation } from "./write.ts";
-import { CancelRequest, ListRequest, MutationResult, UpdateRequest } from "./schema.ts";
+import { CancelRequest, CompleteRequest, ListRequest, MutationResult, UpdateRequest } from "./schema.ts";
 
 export type Mutation =
   | { readonly kind: "update"; readonly body: z.infer<typeof UpdateRequest> }
-  | { readonly kind: "cancel"; readonly body: z.infer<typeof CancelRequest> };
+  | { readonly kind: "cancel"; readonly body: z.infer<typeof CancelRequest> }
+  | { readonly kind: "complete"; readonly body: z.infer<typeof CompleteRequest> };
 export async function listFutureWork(
   sql: Database,
   principal: Principal,
@@ -51,13 +52,15 @@ export async function mutateFutureWork(sql: Database, principal: Principal, muta
     if (!current) throw new DomainError("not_found", "Future work not found on this VM", 404);
     if (current.version !== target.expected_version)
       throw new DomainError("stale_version", "Future work changed; list again before editing", 409);
+    if (mutation.kind === "complete" && current.kind === "schedule")
+      throw new DomainError("invalid_request", "Only responsibilities can be completed", 400);
     if (!["active", "pending"].includes(current.state))
       throw new DomainError("inactive", "Future work is no longer active", 409);
     const result = await applyMutation(tx, { principal, current }, mutation);
     await tx`INSERT INTO assistant.proactive_mutations(workspace_id,client_action_id,vm_id,request_hash,result,request) VALUES(${principal.workspace_id},${body.client_action_id},${principal.vm_id},${requestHash},${JSON.stringify(result)}::text::jsonb,${JSON.stringify(mutation)}::text::jsonb)`;
     await recordEvent(tx, {
       workspace: principal.workspace_id,
-      kind: `${current.kind}.${mutation.kind === "update" ? "updated" : "cancelled"}`,
+      kind: `${current.kind}.${mutation.kind === "update" ? "updated" : mutation.kind === "complete" ? "completed" : "cancelled"}`,
       payload: JSON.stringify({ id: current.id, source_message_id: body.source_message_id }),
     });
     return result;

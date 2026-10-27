@@ -14,7 +14,7 @@ export async function dispatchActions(tx: Transaction, principal: Principal): Pr
       continue;
     }
     await tx`SELECT id FROM assistant.conversations WHERE id=${row.conversation_id} FOR UPDATE`;
-    if (row.trigger.kind !== "daily" && (await snapshot(tx, row)).context_hash !== row.action_context_hash) {
+    if (row.trigger.kind !== "daily" && (await snapshot(tx, row, row.action_context_hash)).context_hash !== row.action_context_hash) {
       await tx`UPDATE assistant.responsibility_actions SET state='cancelled' WHERE id=${row.action_id}`;
       continue;
     }

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { type AppEnv } from "../../services/control/auth.ts";
 import type { Database } from "../../services/control/db.ts";
-import { CancelRequest, ListRequest, UpdateRequest } from "./schema.ts";
+import { CancelRequest, CompleteRequest, ListRequest, UpdateRequest } from "./schema.ts";
 import { listFutureWork, mutateFutureWork } from "./store.ts";
 
 export function proactiveRoutes(sql: Database) {
@@ -24,6 +24,12 @@ export function proactiveRoutes(sql: Database) {
         body: CancelRequest.parse(await c.req.json()),
       }),
     ),
+  );
+  app.post("/complete", async (c) =>
+    c.json(await mutateFutureWork(sql, c.get("principal"), {
+      kind: "complete",
+      body: CompleteRequest.parse(await c.req.json()),
+    })),
   );
   return app;
 }

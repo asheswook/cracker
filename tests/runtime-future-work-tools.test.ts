@@ -9,7 +9,7 @@ import { ScheduleRequest } from "../services/control/repository/schedule-enrollm
 const scope = { runId: crypto.randomUUID(), actionId: "synthetic-run:edit-1" };
 const source = { source_message_id: crypto.randomUUID(), source_quote: "Update the existing routine." };
 const target = { kind: "responsibility", id: crypto.randomUUID(), expected_version: "a".repeat(64) } as const;
-const configuration = { title: "정오 알림", until_at: null, objective: "Include a submission reminder", trigger: { kind: "daily", hour: 12, minute: 0, timezone: "Asia/Seoul" }, notification_mode: "enabled", quiet_hours: null };
+const configuration = { title: "정오 알림", starts_at: null, until_at: null, objective: "Include a submission reminder", trigger: { kind: "daily", hour: 12, minute: 0, timezone: "Asia/Seoul" }, notification_mode: "enabled", quiet_hours: null };
 const updated = { work: { kind: "responsibility", id: target.id, version: "b".repeat(64), state: "active", conversation_id: crypto.randomUUID(), configuration, next_due_at: "2027-01-01T03:00:00.000Z", skill_id: null, skill_revision: null }, already_dispatched_task_ids: [] };
 
 test("work titles normalize blank values and enforce the display limit", () => {
@@ -24,6 +24,7 @@ test("work titles normalize blank values and enforce the display limit", () => {
 });
 
 test("future work parameter schemas describe strict objects including every trigger alternative", () => {
+  expect(futureWorkTools.filter(tool => tool.type === "function").map(tool => tool.name)).toEqual(expect.arrayContaining(["list_future_work", "update_future_work", "cancel_future_work", "complete_future_work"]));
   // Given all model-visible parameter definitions, including transformed timezone inputs.
   function inspect(value: unknown): void {
     if (!value || typeof value !== "object") return;
@@ -41,6 +42,19 @@ test("future work parameter schemas describe strict objects including every trig
   }
   // When / Then: the actual advertised schemas are recursively strict.
   for (const tool of futureWorkTools) if (tool.type === "function") inspect(tool.parameters);
+});
+
+test("complete tool forwards completion evidence and returns its receipt", async () => {
+  let path = "";
+  let body: unknown;
+  const server = Bun.serve({ port: 0, async fetch(request) { path = new URL(request.url).pathname; body = await request.json(); return Response.json({ ...updated, work: { ...updated.work, state: "complete" } }); } });
+  try {
+    const args = { ...source, target, evidence: "The awaited report arrived and was delivered." };
+    const result = JSON.parse(await runFutureWork(ky.create({ prefixUrl: server.url.href }), scope, { name: "complete_future_work", args: JSON.stringify(args), signal: AbortSignal.timeout(5000) }));
+    expect(path).toBe("/v1/daemon/proactive-work/complete");
+    expect(body).toMatchObject({ ...args, run_id: scope.runId });
+    expect(result.work.state).toBe("complete");
+  } finally { await server.stop(true); }
 });
 
 test("invalid mutation arguments never reach the control service", async () => {

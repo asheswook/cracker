@@ -10,7 +10,7 @@ import { hashToken } from "../../services/control/auth.ts";
 import { recordEvent } from "../../services/control/repository/common.ts";
 import { fenceRun } from '../../services/control/repository/daemon-session';
 import { QuietHours, Trigger, type ResponsibilitySnapshot, ResponsibilityInput, type EvaluationRequest, quietNow } from "./responsibility-schema.ts";
-export const ResponsibilityRow = z.object({ title: z.string().nullable().default(null), until_at: z.coerce.string().nullable().default(null), skill_id:z.uuid().nullable().default(null),skill_revision:z.number().int().positive().nullable().default(null), id: z.uuid(), workspace_id: z.uuid(), conversation_id: z.uuid(), vm_id: z.uuid(), client_responsibility_id: z.uuid(), source_message_id: z.uuid(), source_quote: z.string(), objective: z.string(), trigger: Trigger, notification_mode: z.enum(["enabled", "quiet"]), quiet_hours: QuietHours.nullable(), state: z.enum(["active", "complete", "cancelled"]), next_review_at: z.string() });
+export const ResponsibilityRow = z.object({ title: z.string().nullable().default(null), starts_at: z.coerce.string().nullable().default(null), until_at: z.coerce.string().nullable().default(null), skill_id:z.uuid().nullable().default(null),skill_revision:z.number().int().positive().nullable().default(null), id: z.uuid(), workspace_id: z.uuid(), conversation_id: z.uuid(), vm_id: z.uuid(), client_responsibility_id: z.uuid(), source_message_id: z.uuid(), source_quote: z.string(), objective: z.string(), trigger: Trigger, notification_mode: z.enum(["enabled", "quiet"]), quiet_hours: QuietHours.nullable(), state: z.enum(["active", "complete", "cancelled"]), next_review_at: z.string() });
 export async function createResponsibility(sql: Database, principal: Principal, input: ResponsibilityInput & { readonly run_id?: string }) {
   if (input.trigger.kind !== "daily" && input.trigger.kind !== "periodic" && (input.until_at != null || input.starts_at != null)) throw new DomainError("invalid_until", "Only daily/periodic routines accept start or end dates", 400);
   return sql.begin(async tx => {
@@ -29,26 +29,28 @@ export async function createResponsibility(sql: Database, principal: Principal, 
     const prior = await tx`SELECT * FROM assistant.responsibilities WHERE workspace_id=${principal.workspace_id} AND client_responsibility_id=${input.client_responsibility_id}`;
     if (prior[0]) {
       const existing = ResponsibilityRow.parse(prior[0]);
-      const identity = ResponsibilityInput.omit({ title: true, starts_at: true });
+      const identity = ResponsibilityInput.omit({ title: true });
       const normalized = (value: unknown) => {
         const parsed = identity.parse(value);
-        return { ...parsed, until_at: parsed.until_at === null ? null : new Date(parsed.until_at).toISOString() };
+        return { ...parsed, starts_at: parsed.starts_at === null ? null : new Date(parsed.starts_at).toISOString(), until_at: parsed.until_at === null ? null : new Date(parsed.until_at).toISOString() };
       };
       if (JSON.stringify(normalized(existing)) !== JSON.stringify(normalized(input))) throw new DomainError("idempotency_conflict", "Responsibility key reused", 409);
       return existing;
     }
     const after = new Date(Math.max(Date.now(), input.starts_at ? new Date(input.starts_at).getTime() : 0)).toISOString();
     const due = input.trigger.kind === "deadline" ? input.trigger.due_at : input.trigger.kind === "daily" ? await nextDailyAt(tx,input.trigger,after) : after;
-    const created = ResponsibilityRow.parse((await tx`INSERT INTO assistant.responsibilities(until_at,title,workspace_id,conversation_id,vm_id,client_responsibility_id,source_message_id,source_quote,objective,trigger,notification_mode,quiet_hours,next_review_at,skill_id,skill_revision) VALUES(${input.until_at ?? null},${input.title || null},${principal.workspace_id},${input.conversation_id},${input.vm_id},${input.client_responsibility_id},${input.source_message_id},${input.source_quote},${input.objective},${JSON.stringify(input.trigger)}::text::jsonb,${input.notification_mode},${JSON.stringify(input.quiet_hours)}::text::jsonb,${due},${input.skill_id},${input.skill_revision}) RETURNING *`)[0]);
+    const created = ResponsibilityRow.parse((await tx`INSERT INTO assistant.responsibilities(starts_at,until_at,title,workspace_id,conversation_id,vm_id,client_responsibility_id,source_message_id,source_quote,objective,trigger,notification_mode,quiet_hours,next_review_at,skill_id,skill_revision) VALUES(${input.starts_at ?? null},${input.until_at ?? null},${input.title || null},${principal.workspace_id},${input.conversation_id},${input.vm_id},${input.client_responsibility_id},${input.source_message_id},${input.source_quote},${input.objective},${JSON.stringify(input.trigger)}::text::jsonb,${input.notification_mode},${JSON.stringify(input.quiet_hours)}::text::jsonb,${due},${input.skill_id},${input.skill_revision}) RETURNING *`)[0]);
     await recordEvent(tx, { workspace: principal.workspace_id, kind: "responsibility.created", payload: JSON.stringify({ responsibility_id: created.id }) });
     return created;
   });
 }
-export async function snapshot(sql: Query, row: z.infer<typeof ResponsibilityRow>): Promise<ResponsibilitySnapshot> {
+export async function snapshot(sql: Query, row: z.infer<typeof ResponsibilityRow>, evaluationHash?: string): Promise<ResponsibilitySnapshot> {
   const messages = z.array(z.object({ id: z.uuid(), role: z.string(), content: z.string(), created_at: z.string() })).parse(await sql`SELECT m.id,m.role,m.content,m.created_at FROM assistant.messages m WHERE m.workspace_id=${row.workspace_id} AND m.conversation_id=${row.conversation_id} AND NOT EXISTS(SELECT 1 FROM assistant.responsibility_notifications n WHERE n.message_id=m.id) ORDER BY m.sequence DESC LIMIT 100`);
   const tasks = z.array(z.object({ id: z.uuid(), objective: z.string(), state: z.string(), reason: z.string().nullable() })).parse(await sql`SELECT id,objective,state,reason FROM assistant.tasks WHERE workspace_id=${row.workspace_id} AND conversation_id=${row.conversation_id} ORDER BY id FOR SHARE`);
-  // Periodic watches observe the outside world, which is not in the conversation: each interval is a new occurrence.
-  const occurrence = row.trigger.kind === "periodic" ? Math.floor(Date.now() / (row.trigger.interval_minutes * 60_000)) : null;
+  // Scheduled reviews are distinct occurrences; task-change watches remain evidence-driven.
+  const reviewed = evaluationHash ? (await sql`SELECT review_at FROM assistant.responsibility_evaluations WHERE responsibility_id=${row.id} AND context_hash=${evaluationHash}`)[0] : null;
+  const reviewAt = reviewed?.['review_at'] == null ? row.next_review_at : String(reviewed['review_at']);
+  const occurrence = row.trigger.kind === "periodic" || row.trigger.kind === "deadline" ? Math.floor(new Date(reviewAt).getTime() / 60_000) : null;
   const context_hash = await hashToken(JSON.stringify({ objective: row.objective, trigger: row.trigger, messages, tasks, ...(occurrence === null ? {} : { occurrence }) }));
   const history = z.array(z.object({ outcome: z.string(), reason: z.string() })).parse(await sql`SELECT outcome,reason FROM assistant.responsibility_evaluations WHERE responsibility_id=${row.id} ORDER BY created_at DESC LIMIT 5`);
   const notifications = z.array(z.object({ state: z.string(), content: z.string() })).parse(await sql`SELECT state,content FROM assistant.responsibility_notifications WHERE responsibility_id=${row.id} ORDER BY created_at DESC LIMIT 5`);
@@ -87,8 +89,11 @@ export async function recordEvaluation(sql: Database, principal: Principal, requ
     if (prior[0]) return;
     if (row.state !== "active" || (row.until_at && new Date(row.until_at).getTime() <= Date.now())) throw new DomainError("inactive", "Responsibility is inactive", 409);
     if ((await snapshot(tx, row)).context_hash !== request.context_hash) throw new DomainError("stale_evaluation", "Evidence changed during evaluation", 409);
-    const evaluation = request.evaluation;
-    await tx`INSERT INTO assistant.responsibility_evaluations(workspace_id,responsibility_id,context_hash,outcome,reason) VALUES(${principal.workspace_id},${row.id},${request.context_hash},${evaluation.outcome},${evaluation.reason})`;
+    let evaluation = request.evaluation;
+    if (evaluation.outcome === "notify" && (await tx`SELECT id FROM assistant.responsibility_notifications WHERE responsibility_id=${row.id} AND content=${evaluation.notification} AND state IN ('pending','delivered') AND created_at>now()-interval '24 hours' LIMIT 1`)[0]) {
+      evaluation = { ...evaluation, outcome: "quiet", notification: null };
+    }
+    await tx`INSERT INTO assistant.responsibility_evaluations(workspace_id,responsibility_id,context_hash,outcome,reason,review_at) VALUES(${principal.workspace_id},${row.id},${request.context_hash},${evaluation.outcome},${evaluation.reason},${row.next_review_at})`;
     await tx`UPDATE assistant.responsibilities SET state=${evaluation.outcome === "complete" ? "complete" : "active"},last_evaluated_at=now(),last_context_hash=${request.context_hash},next_review_at=now()+${evaluation.next_review_minutes}*interval '1 minute',failure_count=0,last_error=NULL WHERE id=${row.id}`;
     if (evaluation.outcome === "notify" && evaluation.notification) await tx`INSERT INTO assistant.responsibility_notifications(workspace_id,responsibility_id,context_hash,content) VALUES(${principal.workspace_id},${row.id},${request.context_hash},${evaluation.notification}) ON CONFLICT DO NOTHING`;
     if (evaluation.outcome === "action" && evaluation.action_objective) await tx`INSERT INTO assistant.responsibility_actions(workspace_id,responsibility_id,context_hash,objective) VALUES(${principal.workspace_id},${row.id},${request.context_hash},${evaluation.action_objective}) ON CONFLICT DO NOTHING`;
@@ -101,7 +106,7 @@ async function deliverNotifications(tx: Transaction, principal: Principal): Prom
   const rows = await tx`SELECT n.id AS notification_id,n.content,n.context_hash AS notification_context_hash,r.* FROM assistant.responsibility_notifications n JOIN assistant.responsibilities r ON r.id=n.responsibility_id WHERE r.workspace_id=${principal.workspace_id} AND r.vm_id=${principal.vm_id} AND r.state<>'cancelled' AND n.state='pending' ORDER BY n.created_at LIMIT 50 FOR UPDATE OF n`;
   for (const raw of rows) {
     const row = ResponsibilityRow.extend({ notification_id: z.uuid(), content: z.string(), notification_context_hash: z.string() }).parse(raw);
-    if ((await snapshot(tx, row)).context_hash !== row.notification_context_hash) {
+    if ((await snapshot(tx, row, row.notification_context_hash)).context_hash !== row.notification_context_hash) {
       await tx`UPDATE assistant.responsibility_notifications SET state='cancelled' WHERE id=${row.notification_id}`;
       await recordEvent(tx, { workspace: principal.workspace_id, kind: "responsibility.notification_superseded", payload: JSON.stringify({ notification_id: row.notification_id }) });
       continue;

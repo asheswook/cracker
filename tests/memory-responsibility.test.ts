@@ -42,6 +42,44 @@ test("quiet evaluation persists without a user notification", async () => {
   // Then
   expect(z.object({ count: z.coerce.number() }).parse((await sql`SELECT count(*) AS count FROM assistant.messages WHERE conversation_id=${conversation} AND role='assistant'`)[0]).count).toBe(0);
 });
+test("deadline and periodic quiet evaluations run again for the next scheduled review", async () => {
+  for (const trigger of [{ kind: "deadline", due_at: "2000-01-01T00:00:00Z", timezone: "UTC" } as const, { kind: "periodic", interval_minutes: 60 } as const]) {
+    const { input } = await fixture();
+    const row = await createResponsibility(sql, client, { ...input, client_responsibility_id: crypto.randomUUID(), trigger });
+    await sql`UPDATE assistant.responsibilities SET next_review_at='2000-01-01T00:00:00Z' WHERE id=${row.id}`;
+    const first = (await dueResponsibilities(sql, machine)).find(item => item.id === row.id);
+    if (!first) throw new Error("Missing first review");
+    await recordEvaluation(sql, machine, { responsibility_id: row.id, context_hash: first.context_hash, evaluation: { outcome: "quiet", reason: "Still waiting", notification: null, action_objective: null, next_review_minutes: 5 } });
+    expect((await sql`SELECT next_review_at>now()+interval '4 minutes' AS scheduled FROM assistant.responsibilities WHERE id=${row.id}`)[0]?.['scheduled']).toBe(true);
+    expect((await dueResponsibilities(sql, machine)).some(item => item.id === row.id)).toBe(false);
+    // Advance the persisted due occurrence without waiting on the wall clock.
+    await sql`UPDATE assistant.responsibilities SET next_review_at='2000-01-01T00:05:00Z' WHERE id=${row.id}`;
+    const second = (await dueResponsibilities(sql, machine)).find(item => item.id === row.id);
+    if (!second) throw new Error("Missing next review");
+    expect(second.context_hash).not.toBe(first.context_hash);
+    await recordEvaluation(sql, machine, { responsibility_id: row.id, context_hash: second.context_hash, evaluation: { outcome: "quiet", reason: "Still waiting", notification: null, action_objective: null, next_review_minutes: 5 } });
+    expect(await sql`SELECT id FROM assistant.responsibility_evaluations WHERE responsibility_id=${row.id}`).toHaveLength(2);
+  }
+});
+test("identical scheduled notifications within 24 hours are recorded as quiet", async () => {
+  const { input, conversation } = await fixture();
+  const row = await createResponsibility(sql, client, { ...input, client_responsibility_id: crypto.randomUUID(), trigger: { kind: "deadline", due_at: "2000-01-01T00:00:00Z", timezone: "UTC" } });
+  const first = await snapshot(sql, row);
+  await recordEvaluation(sql, machine, { responsibility_id: row.id, context_hash: first.context_hash, evaluation: notify });
+  await sql`UPDATE assistant.responsibilities SET next_review_at='2000-01-01T01:00:00Z' WHERE id=${row.id}`;
+  const second = (await dueResponsibilities(sql, machine)).find(item => item.id === row.id);
+  if (!second) throw new Error("Missing repeat review");
+  await recordEvaluation(sql, machine, { responsibility_id: row.id, context_hash: second.context_hash, evaluation: notify });
+  expect(await sql`SELECT outcome FROM assistant.responsibility_evaluations WHERE responsibility_id=${row.id} AND context_hash=${second.context_hash}`).toMatchObject([{ outcome: "quiet" }]);
+  expect(await sql`SELECT id FROM assistant.responsibility_notifications WHERE responsibility_id=${row.id}`).toHaveLength(1);
+  expect(await sql`SELECT id FROM assistant.messages WHERE conversation_id=${conversation} AND role='assistant'`).toHaveLength(1);
+  await sql`UPDATE assistant.responsibility_notifications SET created_at=now()-interval '25 hours' WHERE responsibility_id=${row.id}`;
+  await sql`UPDATE assistant.responsibilities SET next_review_at='2000-01-01T02:00:00Z' WHERE id=${row.id}`;
+  const third = (await dueResponsibilities(sql, machine)).find(item => item.id === row.id);
+  if (!third) throw new Error("Missing later review");
+  await recordEvaluation(sql, machine, { responsibility_id: row.id, context_hash: third.context_hash, evaluation: notify });
+  expect(await sql`SELECT id FROM assistant.messages WHERE conversation_id=${conversation} AND role='assistant'`).toHaveLength(2);
+});
 test("unchanged evidence skips model reevaluation regardless of review time", async () => {
   // Given
   const { row } = await fixture(), current = await snapshot(sql, row);
@@ -224,11 +262,14 @@ test("deadline and task-change reject routine start/end dates with invalid_until
   }
 });
 
-test("creation idempotency includes normalized until_at but not title", async () => {
+test("creation idempotency includes normalized start/end dates but not title", async () => {
   const { input } = await fixture();
-  const creation = { ...input, client_responsibility_id: crypto.randomUUID(), trigger: { kind: "periodic", interval_minutes: 60 } as const, until_at: "2099-01-01T09:00:00+09:00" };
+  const creation = { ...input, client_responsibility_id: crypto.randomUUID(), trigger: { kind: "periodic", interval_minutes: 60 } as const, starts_at: "2098-01-01T09:00:00+09:00", until_at: "2099-01-01T09:00:00+09:00" };
   const row = await createResponsibility(sql, client, creation);
-  expect((await createResponsibility(sql, client, { ...creation, title: "Another title", until_at: "2099-01-01T00:00:00.000Z" })).id).toBe(row.id);
+  expect(row.starts_at).toBe("2098-01-01T00:00:00.000Z");
+  expect((await createResponsibility(sql, client, { ...creation, title: "Another title", starts_at: "2098-01-01T00:00:00.000Z", until_at: "2099-01-01T00:00:00.000Z" })).id).toBe(row.id);
+  await expect(createResponsibility(sql, client, { ...creation, starts_at: null })).rejects.toMatchObject({ code: "idempotency_conflict" });
+  await expect(createResponsibility(sql, client, { ...creation, starts_at: "2098-01-02T00:00:00Z" })).rejects.toMatchObject({ code: "idempotency_conflict" });
   await expect(createResponsibility(sql, client, { ...creation, until_at: null })).rejects.toMatchObject({ code: "idempotency_conflict" });
   await expect(createResponsibility(sql, client, { ...creation, until_at: "2099-01-02T00:00:00Z" })).rejects.toMatchObject({ code: "idempotency_conflict" });
 });

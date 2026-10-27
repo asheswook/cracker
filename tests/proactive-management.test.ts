@@ -5,6 +5,7 @@ import { FutureWorkListResult,FutureWorkMutationResult,UpdateRequest } from "../
 import { dispatchDueSchedules } from "../services/control/repository/schedules.ts";
 import { dueResponsibilities,ResponsibilityRow,snapshot } from "../packages/memory/responsibility-store.ts";
 import { controlFixture } from "./control-fixture.ts";
+import { attention } from "../packages/attention/store.ts";
 
 const f=controlFixture();
 const base="/v1/daemon/proactive-work";
@@ -88,6 +89,7 @@ test("cancel routine clears pending actions and notifications and prevents futur
   await dueResponsibilities(f.sql,{role:"vm",workspace_id:f.workspace,vm_id:f.vm});
   expect(await f.sql`SELECT id FROM assistant.responsibility_actions WHERE responsibility_id=${routine.id} AND context_hash='queued' AND state<>'cancelled'`).toHaveLength(0);
   expect(await f.sql`SELECT id FROM assistant.responsibility_notifications WHERE responsibility_id=${routine.id} AND state<>'cancelled'`).toHaveLength(0);
+  expect((await attention(f.sql,f.workspace)).dismissed_offers).toContain("Cancellation test");
 });
 test("title-only routine edits preserve pending work and creation idempotency",async()=>{
   const current=await active();
@@ -108,6 +110,44 @@ test("title-only routine edits preserve pending work and creation idempotency",a
   expect(await f.sql`SELECT id FROM assistant.responsibility_notifications WHERE responsibility_id=${item.id} AND state='pending'`).toHaveLength(1);
   expect((await f.request("/v1/daemon/responsibilities",f.machine,creation)).status).toBe(201);
   expect((await list(current.run_id)).items.find(row=>row.id===item.id)?.configuration.title).toBe("바뀐 제목");
+});
+test("complete held work clears pending work without cancelling the responsibility",async()=>{
+  const current=await active();
+  await f.request("/v1/daemon/responsibilities",f.machine,{...current,vm_id:f.vm,client_responsibility_id:crypto.randomUUID(),objective:"Held report finished",trigger:{kind:"deadline",due_at:"2099-01-01T00:00:00Z",timezone:"UTC"}});
+  const item=(await list(current.run_id)).items.find(row=>row.configuration.objective==="Held report finished");
+  if(!item)throw new Error("Missing held work");
+  await f.sql`INSERT INTO assistant.responsibility_actions(workspace_id,responsibility_id,context_hash,objective) VALUES(${f.workspace},${item.id},'queued','Must not dispatch')`;
+  await f.sql`INSERT INTO assistant.responsibility_notifications(workspace_id,responsibility_id,context_hash,content) VALUES(${f.workspace},${item.id},'queued','Must not notify')`;
+  const body={...current,client_action_id:crypto.randomUUID(),target:{kind:item.kind,id:item.id,expected_version:item.version},evidence:"Awaited report received and final work delivered"};
+  const response=await f.request(`${base}/complete`,f.machine,body);
+  expect(response.status).toBe(200);
+  expect(FutureWorkMutationResult.parse(await response.json()).work.state).toBe("complete");
+  expect((await f.request(`${base}/complete`,f.machine,body)).status).toBe(200);
+  expect(await f.sql`SELECT state FROM assistant.responsibility_actions WHERE responsibility_id=${item.id}`).toMatchObject([{state:"cancelled"}]);
+  expect(await f.sql`SELECT state FROM assistant.responsibility_notifications WHERE responsibility_id=${item.id}`).toMatchObject([{state:"cancelled"}]);
+  expect(await f.sql`SELECT id FROM assistant.responsibilities WHERE id=${item.id} AND state='cancelled'`).toHaveLength(0);
+  expect((await attention(f.sql,f.workspace)).dismissed_offers).not.toContain("Held report finished");
+});
+test("starts_at persists, updates, and bounds the next daily run when retimed",async()=>{
+  const current=await active();
+  const creation={...current,vm_id:f.vm,client_responsibility_id:crypto.randomUUID(),objective:"Future start fixture",trigger:{kind:"daily",hour:9,minute:0,timezone:"UTC"},starts_at:"2099-01-01T00:00:00Z"};
+  expect((await f.request("/v1/daemon/responsibilities",f.machine,creation)).status).toBe(201);
+  const item=(await list(current.run_id)).items.find(row=>row.configuration.objective===creation.objective);
+  if(item?.kind!=="responsibility")throw new Error("Missing future start fixture");
+  expect(item.configuration.starts_at).toBe("2099-01-01T00:00:00.000Z");
+  const response=await f.request(`${base}/update`,f.machine,{...current,client_action_id:crypto.randomUUID(),work:{kind:item.kind,id:item.id,expected_version:item.version,configuration:{...item.configuration,trigger:{...creation.trigger,hour:12}}}});
+  expect(response.status).toBe(200);
+  const retimed=FutureWorkMutationResult.parse(await response.json()).work;
+  expect(retimed.next_due_at).toBe("2099-01-01T12:00:00.000Z");
+  if(retimed.kind!=="responsibility")throw new Error("Wrong kind");
+  const changed=await f.request(`${base}/update`,f.machine,{...current,client_action_id:crypto.randomUUID(),work:{kind:retimed.kind,id:retimed.id,expected_version:retimed.version,configuration:{...retimed.configuration,starts_at:"2099-02-01T00:00:00Z"}}});
+  expect(changed.status).toBe(200);
+  const saved=FutureWorkMutationResult.parse(await changed.json()).work;
+  expect(saved.next_due_at).toBe("2099-02-01T12:00:00.000Z");
+  const listed=(await list(current.run_id)).items.find(row=>row.id===saved.id);
+  if(listed?.kind!=="responsibility")throw new Error("Missing updated start fixture");
+  expect(listed.configuration.starts_at).toBe("2099-02-01T00:00:00.000Z");
+  expect(listed.version).not.toBe(retimed.version);
 });
 test("until-only edits are listed, change the version, and preserve pending actions until expiry",async()=>{
   const current=await active();
@@ -168,6 +208,9 @@ test("schedule updates preserve ID; invalid source and foreign VM cannot mutate;
   const current=await active();
   const schedule=(await list(current.run_id)).items.find(row=>row.kind==="schedule"&&row.configuration.objective==="Scheduled original");
   if(schedule?.kind!=="schedule")throw new Error("Missing schedule");
+  const completion=await f.request(`${base}/complete`,f.machine,{...current,client_action_id:crypto.randomUUID(),target:{kind:schedule.kind,id:schedule.id,expected_version:schedule.version},evidence:"Done"});
+  expect(completion.status).toBe(400);
+  expect(await completion.json()).toMatchObject({error:{code:"invalid_request"}});
   const mutation={...current,client_action_id:crypto.randomUUID(),work:{kind:"schedule",id:schedule.id,expected_version:schedule.version,configuration:{...schedule.configuration,title:"변경한 예약",objective:"Updated reminder",due_at:"2099-02-01T09:00:00Z"}}};
   expect((await f.request(`${base}/update`,f.machine,{...mutation,source_quote:"forged source"})).status).toBe(409);
   const update=await f.request(`${base}/update`,f.machine,mutation);

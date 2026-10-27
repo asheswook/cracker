@@ -2,6 +2,7 @@ import { HTTPError, type KyInstance } from "ky";
 import { z } from "zod";
 import {
   FutureWorkCancelInput,
+  FutureWorkCompleteInput,
   FutureWorkListInput,
   FutureWorkListResult,
   FutureWorkMutationResult,
@@ -10,7 +11,7 @@ import {
 import type { Tool } from "../../packages/provider/index.ts";
 import { proactiveActionKey, ProactiveError } from "./proactive.ts";
 
-const names = ["list_future_work", "update_future_work", "cancel_future_work"] as const;
+const names = ["list_future_work", "update_future_work", "cancel_future_work", "complete_future_work"] as const;
 type FutureWorkToolName = (typeof names)[number];
 function parameters(schema: z.ZodType): Record<string, unknown> {
   return z.toJSONSchema(schema, {
@@ -40,6 +41,11 @@ export const futureWorkTools: readonly Tool[] = [
     parameters: parameters(FutureWorkUpdateInput),
   },
   {
+    type: "function", name: "complete_future_work", strict: true,
+    description: "Use when the held work is finished (the awaited thing arrived and the work is done); cancel_future_work is only for the user calling it off. Only responsibilities support completion, not schedules. First list_future_work for its exact ID and latest version. Quote the current user message with source_message_id and give short evidence of completion. Pending actions and notifications are cancelled; already dispatched tasks are not stopped. Do not claim completion unless this tool confirms it.",
+    parameters: parameters(FutureWorkCompleteInput),
+  },
+  {
     type: "function", name: "cancel_future_work", strict: true,
     description: "Cancel future dispatch of an existing schedule or responsibility explicitly requested by the current user. First list_future_work for the exact ID and latest version, and quote the current user's request with its source_message_id. This does not stop already dispatched tasks; report any returned task IDs accurately. Do not claim cancellation unless this tool confirms it.",
     parameters: parameters(FutureWorkCancelInput),
@@ -62,6 +68,9 @@ export async function runFutureWork(http: KyInstance, scope: WorkScope, call: Wo
         break;
       case "cancel_future_work":
         request = { path: "cancel", json: { ...FutureWorkCancelInput.parse(args), run_id: scope.runId, client_action_id: proactiveActionKey(scope.actionId) } };
+        break;
+      case "complete_future_work":
+        request = { path: "complete", json: { ...FutureWorkCompleteInput.parse(args), run_id: scope.runId, client_action_id: proactiveActionKey(scope.actionId) } };
         break;
       default: return assertNever(call.name);
     }

@@ -18,6 +18,7 @@ export const ScheduleConfiguration = z.object({
 });
 export const ResponsibilityConfiguration = z.object({
   title: z.string().trim().max(60).nullable().transform(v => v || null),
+  starts_at: z.iso.datetime({ offset: true }).nullable().describe("For daily/periodic only: ISO start date, or null to start now."),
   until_at: z.iso.datetime({ offset: true }).nullable().describe("For daily/periodic only: ISO end date, or null for no end date."),
   objective: z.string().min(1).max(4000),
   trigger: Trigger,
@@ -42,6 +43,7 @@ export const FutureWorkUpdateInput = Source.extend({
   ]),
 });
 export const FutureWorkCancelInput = Source.extend({ target: Target });
+export const FutureWorkCompleteInput = FutureWorkCancelInput.extend({ evidence: z.string().trim().min(1).max(1000) });
 const Metadata = z.object({
   id: z.uuid(),
   version: z.string(),
@@ -73,6 +75,10 @@ export const UpdateRequest = FutureWorkUpdateInput.extend({
   client_action_id: z.uuid(),
 });
 export const CancelRequest = FutureWorkCancelInput.extend({
+  run_id: z.uuid(),
+  client_action_id: z.uuid(),
+});
+export const CompleteRequest = FutureWorkCompleteInput.extend({
   run_id: z.uuid(),
   client_action_id: z.uuid(),
 });

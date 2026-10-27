@@ -14,8 +14,11 @@ export async function applyMutation(
 ) {
   const { current, principal } = context;
   const workspace = principal.workspace_id;
-  let supersedesPending = mutation.kind === "cancel";
-  if (mutation.kind === "cancel") {
+  let supersedesPending = mutation.kind !== "update";
+  if (mutation.kind === "complete") {
+    if (current.kind !== "responsibility") throw new DomainError("invalid_request", "Only responsibilities can be completed", 400);
+    await tx`UPDATE assistant.responsibilities SET state='complete',management_revision=management_revision+1 WHERE id=${current.id}`;
+  } else if (mutation.kind === "cancel") {
     if (current.kind === "schedule")
       await tx`UPDATE assistant.schedules SET status='cancelled',management_revision=management_revision+1 WHERE id=${current.id}`;
     else await tx`UPDATE assistant.responsibilities SET state='cancelled',management_revision=management_revision+1 WHERE id=${current.id}`;
@@ -33,11 +36,12 @@ export async function applyMutation(
       await tx`UPDATE assistant.schedules SET title=${config.title},objective=${config.objective},due_at=${config.due_at},timezone=${config.timezone},management_revision=management_revision+1 WHERE id=${current.id}`;
     } else {
       const config = work.configuration;
-      if (config.until_at !== null && config.trigger.kind !== "daily" && config.trigger.kind !== "periodic") throw new DomainError("invalid_until", "Only daily/periodic routines accept end dates", 400);
+      if ((config.until_at !== null || config.starts_at !== null) && config.trigger.kind !== "daily" && config.trigger.kind !== "periodic") throw new DomainError("invalid_until", "Only daily/periodic routines accept start or end dates", 400);
       const expired = config.until_at !== null && new Date(config.until_at).getTime() <= Date.now();
       const previous = current.kind === "responsibility" ? current.configuration.trigger : null;
       const changed = JSON.stringify(previous) !== JSON.stringify(config.trigger);
-      supersedesPending = expired || changed || current.configuration.objective !== config.objective;
+      const startChanged = current.kind === "responsibility" && current.configuration.starts_at !== config.starts_at;
+      supersedesPending = expired || changed || startChanged || current.configuration.objective !== config.objective;
       if (
         config.trigger.kind === "task_change" &&
         !(
@@ -46,18 +50,19 @@ export async function applyMutation(
       )
         throw new DomainError("not_found", "Trigger task not found in target conversation", 404);
       let due = current.next_due_at;
-      if (changed) {
+      if (changed || startChanged) {
         const trigger = config.trigger;
+        const after = new Date(Math.max(Date.now(), config.starts_at ? new Date(config.starts_at).getTime() : 0)).toISOString();
         switch (trigger.kind) {
           case "deadline":
             due = trigger.due_at;
             break;
           case "daily":
-            due = await nextDailyAt(tx, trigger, new Date().toISOString());
+            due = await nextDailyAt(tx, trigger, after);
             break;
           case "periodic":
           case "task_change":
-            due = new Date().toISOString();
+            due = after;
             break;
           default: {
             const exhaustive: never = trigger;
@@ -65,7 +70,7 @@ export async function applyMutation(
           }
         }
       }
-      await tx`UPDATE assistant.responsibilities SET until_at=${config.until_at},state=${expired ? "complete" : current.state},title=${config.title},objective=${config.objective},trigger=${JSON.stringify(config.trigger)}::text::jsonb,notification_mode=${config.notification_mode},quiet_hours=${config.quiet_hours ? JSON.stringify(config.quiet_hours) : null}::text::jsonb,next_review_at=${due},management_revision=management_revision+1,failure_count=0,last_error=NULL WHERE id=${current.id}`;
+      await tx`UPDATE assistant.responsibilities SET starts_at=${config.starts_at},until_at=${config.until_at},state=${expired ? "complete" : current.state},title=${config.title},objective=${config.objective},trigger=${JSON.stringify(config.trigger)}::text::jsonb,notification_mode=${config.notification_mode},quiet_hours=${config.quiet_hours ? JSON.stringify(config.quiet_hours) : null}::text::jsonb,next_review_at=${due},management_revision=management_revision+1,failure_count=0,last_error=NULL WHERE id=${current.id}`;
     }
   }
   let dispatched: { task_id: string }[] = [];
