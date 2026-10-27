@@ -127,7 +127,7 @@ export async function applyEvent(sql: Query, principal: Principal, event: Daemon
       if(drafting?.register)await linkReplyDraft(sql,principal.workspace_id,run.task_id,inserted.id);
       if(event.blocks?.length)await resolveCardsForResult(sql,principal.workspace_id,run.task_id,inserted.id,event.blocks);
       if(brief?.push)await markBriefDelivered(sql,principal.workspace_id,run.task_id,inserted.id);
-      if(!hidden&&!drafting&&(brief===null||brief.push))await enqueueMessageNotification(sql, principal.workspace_id, { id: inserted.id, runId: run.id, progress });
+      if(!hidden&&!drafting&&(brief===null||brief.push))await enqueueMessageNotification(sql, principal.workspace_id, { id: inserted.id, runId: run.id, progress, ...(brief?.expiresAt ? { expiresAt: brief.expiresAt } : {}) });
       break;
     }
     case "state": {

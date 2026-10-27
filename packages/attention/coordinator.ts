@@ -14,7 +14,7 @@ import { createBackgroundTask } from '../../services/control/repository/common';
 import { attention, type Attention } from './store';
 import { markSourceItemsBriefed } from './sources';
 import { enqueueMessageNotification } from '../notifications/store.ts';
-import { publishMeetingPrep, tickMeetingPreps } from './meeting-prep';
+import { type BriefPublication, MEETING_PREP_PLANNING_OBJECTIVE, publishMeetingPrep, tickMeetingPreps } from './meeting-prep';
 
 const Settings = z.object({
   workspace_id: z.uuid(), timezone: z.string(), brief_enabled: z.boolean(), brief_at_minute: z.number().int().nullable(),
@@ -279,6 +279,25 @@ async function upcomingBrief(sql: Query, workspace: string, now: Date): Promise<
   const flight = (await sql`SELECT 1 FROM assistant.attention_briefs WHERE workspace_id=${workspace} AND state='dispatched' AND expires_at>${now}`)[0];
   return { at: await nextBriefAt(sql, workspace, now), inFlight: !!flight };
 }
+async function tickMeetingPrepPlanning(sql: Database, workspace: string, now: Date) {
+  return sql.begin(async tx => {
+    await tx`SELECT id FROM assistant.workspaces WHERE id=${workspace} FOR UPDATE`;
+    const row = (await tx`SELECT s.timezone,s.brief_at_minute,w.default_conversation_id AS conversation
+      FROM assistant.attention_settings s JOIN assistant.workspaces w ON w.id=s.workspace_id WHERE s.workspace_id=${workspace}`)[0];
+    if (!row?.['conversation']) return 0;
+    const timezone = String(row['timezone']), day = localDate(now, timezone), minute = localMinute(now, timezone);
+    const brief = (await tx`SELECT planned_minute FROM assistant.attention_briefs WHERE workspace_id=${workspace} AND local_date=${day}::date`)[0];
+    const morningMinute = Number(brief?.['planned_minute'] ?? row['brief_at_minute'] ?? 510);
+    const half = minute >= 780 ? 'afternoon' : 'morning';
+    if (half === 'morning' && minute < morningMinute) return 0;
+    if ((await tx`SELECT 1 FROM assistant.meeting_prep_runs WHERE workspace_id=${workspace} AND local_date=${day}::date AND half=${half}`)[0]) return 0;
+    const created = await createBackgroundTask(tx, { workspace, conversation: String(row['conversation']),
+      objective: MEETING_PREP_PLANNING_OBJECTIVE, origin: 'responsibility', title: '회의 준비 계획', clientId: crypto.randomUUID() });
+    await tx`INSERT INTO assistant.meeting_prep_runs(workspace_id,local_date,half,task_id) VALUES(${workspace},${day}::date,${half},${created.task.id})`;
+    return 1;
+  });
+}
+
 export async function tickAttention(sql: Database, now = new Date()): Promise<Record<string, number>> {
   await sql`INSERT INTO assistant.attention_settings(workspace_id) SELECT id FROM assistant.workspaces WHERE default_conversation_id IS NOT NULL ON CONFLICT DO NOTHING`;
   const workspaces = (await sql`SELECT workspace_id FROM assistant.attention_settings`).map(r => String(r['workspace_id']));
@@ -292,6 +311,8 @@ export async function tickAttention(sql: Database, now = new Date()): Promise<Re
       const preps = prepWorkspaces.has(workspace) ? await tickMeetingPreps(sql, workspace, now) : 0;
       if (preps) counts['meeting_preps'] = (counts['meeting_preps'] ?? 0) + preps;
       outcome = await tickWorkspace(sql, workspace, now);
+      const planning = await tickMeetingPrepPlanning(sql, workspace, now);
+      if (planning) counts['meeting_prep_planning'] = (counts['meeting_prep_planning'] ?? 0) + planning;
       // Only workspaces with an open item that has a due date (most have none).
       const dueSoon = (await sql`SELECT 1 FROM assistant.attention_source_items WHERE workspace_id=${workspace} AND state='open' AND due_at IS NOT NULL LIMIT 1`).length > 0
         || (await sql`SELECT 1 FROM assistant.attention_due_alerts WHERE workspace_id=${workspace} AND created_at>now()-interval '1 day' LIMIT 1`).length > 0;
@@ -313,7 +334,7 @@ export async function tickAttention(sql: Database, now = new Date()): Promise<Re
  * still dispatched and not expired, gets notify=true (a normal message, not folded into the run row) and one push.
  * Returns how the caller must store the message: { hidden, notify, push }.
  */
-export async function publishBriefMessage(sql: Query, workspace: string, task: string, message: { readonly final: boolean; readonly empty: boolean }) {
+export async function publishBriefMessage(sql: Query, workspace: string, task: string, message: { readonly final: boolean; readonly empty: boolean }): Promise<BriefPublication | null> {
   const prep = await publishMeetingPrep(sql, workspace, task, message);
   if (prep) return prep;
   if (!(await isBriefTask(sql, workspace, task))) return null;
@@ -334,7 +355,7 @@ export async function publishBriefMessage(sql: Query, workspace: string, task: s
   return { hidden: false, notify: true, push: true };
 }
 export async function markBriefDelivered(sql: Query, workspace: string, task: string, messageId: string) {
-  await sql`UPDATE assistant.meeting_preps SET state='done' WHERE workspace_id=${workspace} AND task_id=${task} AND state='dispatched'`;
+  await sql`UPDATE assistant.meeting_preps SET state='done',delivered=true,message_id=${messageId} WHERE workspace_id=${workspace} AND task_id=${task} AND state='dispatched'`;
   const rows = await sql`UPDATE assistant.attention_briefs SET state='delivered',message_id=${messageId},finished_at=now() WHERE workspace_id=${workspace} AND task_id=${task} AND state='dispatched' RETURNING snapshot`;
   // Exactly what the body was written from is no longer news.
   const snap = rows[0]?.['snapshot'] as { needs?: string[] } | null | undefined;
@@ -342,7 +363,9 @@ export async function markBriefDelivered(sql: Query, workspace: string, task: st
 }
 export async function isBriefTask(sql: Query, workspace: string, task: string) {
   return !!(await sql`SELECT 1 FROM assistant.attention_brief_runs WHERE workspace_id=${workspace} AND task_id=${task}
-    UNION ALL SELECT 1 FROM assistant.meeting_preps WHERE workspace_id=${workspace} AND task_id=${task} LIMIT 1`)[0];
+    UNION ALL SELECT 1 FROM assistant.meeting_preps WHERE workspace_id=${workspace} AND task_id=${task}
+    UNION ALL SELECT 1 FROM assistant.meeting_prep_tasks WHERE workspace_id=${workspace} AND task_id=${task}
+    UNION ALL SELECT 1 FROM assistant.meeting_prep_runs WHERE workspace_id=${workspace} AND task_id=${task} LIMIT 1`)[0];
 }
 async function cancelQueuedBrief(sql: Query, task: string) {
   await sql`UPDATE assistant.tasks SET state='cancelled',reason='Morning brief expired or superseded before it ran',updated_at=now() WHERE id=${task} AND state='queued' AND lane='background'`;

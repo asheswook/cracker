@@ -9,6 +9,7 @@ const created: string[] = [];
 afterAll(async () => {
   for (const workspace of created) {
     await sql`UPDATE assistant.workspaces SET default_conversation_id=NULL WHERE id=${workspace}`;
+    await sql`DELETE FROM assistant.meeting_prep_runs WHERE workspace_id=${workspace}`;
     await sql`DELETE FROM assistant.meeting_preps WHERE workspace_id=${workspace}`;
     await sql`DELETE FROM assistant.attention_brief_runs WHERE workspace_id=${workspace}`;
     await sql`DELETE FROM assistant.attention_briefs WHERE workspace_id=${workspace}`;
@@ -42,15 +43,16 @@ test('route plans; before the window nothing runs; concurrent/repeated ticks dis
   await tickAttention(sql, at('13:51'));
   const row = await f.row(), taskId = String(row?.['task_id']);
   expect(row?.['state']).toBe('dispatched');
-  expect((await sql`SELECT count(*)::int AS n FROM assistant.tasks WHERE workspace_id=${f.workspace} AND lane='background'`)[0]?.['n']).toBe(1);
+  expect((await sql`SELECT count(*)::int AS n FROM assistant.tasks t WHERE workspace_id=${f.workspace} AND lane='background'
+    AND NOT EXISTS(SELECT 1 FROM assistant.meeting_prep_runs p WHERE p.task_id=t.id)`)[0]?.['n']).toBe(1);
   const task = (await sql`SELECT title,objective FROM assistant.tasks WHERE id=${taskId}`)[0];
   expect(task?.['title']).toBe('회의 준비 · 출시 검토');
   expect(String(task?.['objective'])).toContain('If it moved, was cancelled, or cannot be verified, reply exactly NO_REPORT');
   expect(String(task?.['objective'])).toContain('Never invent');
   expect(await executionPolicy(sql, f.workspace, taskId)).toEqual({ run_policy: 'brief', calendar_servers: [] });
-  // Already dispatched meetings cannot be re-armed by another brief.
-  await f.plan([meeting({ title: '다시 계획', starts_at: at('15:00').toISOString() })]);
-  expect(new Date(String((await f.row())?.['starts_at'])).toISOString()).toBe(at('14:00').toISOString());
+  // Repeating the same calendar snapshot does not re-arm the existing attempt.
+  await f.plan([meeting()]);
+  expect((await f.row())?.['task_id']).toBe(taskId);
 });
 
 test('past meetings are skipped, and a meeting that has just started is never dispatched', async () => {
@@ -112,6 +114,10 @@ test('meeting prep reuses brief publication: only one normal message and one pus
   expect((await f.visible()).map(r => [r['content'], r['notify']])).toEqual([[content, true]]);
   expect((await f.pushes()).length).toBe(1);
   expect((await f.row())?.['state']).toBe('done');
+  expect((await f.row())?.['delivered']).toBe(true);
+  const expiry = (await sql`SELECT n.expires_at=p.starts_at AS matches FROM assistant.notification_intents n
+    JOIN assistant.meeting_preps p ON p.message_id=n.message_id WHERE p.workspace_id=${f.workspace}`)[0];
+  expect(expiry?.['matches']).toBe(true);
   expect((await sql`SELECT count(*)::int AS n FROM assistant.card_states WHERE workspace_id=${f.workspace}`)[0]?.['n']).toBe(0);
   expect((await executionPolicy(sql, f.workspace, f.task)).run_policy).toBe('brief');
 });
@@ -124,5 +130,71 @@ test('NO_REPORT (including moved/cancelled/no useful knowledge) stays silent; la
     expect((await f.visible()).length).toBe(0);
     expect((await f.pushes()).length).toBe(0);
     expect((await f.row())?.['state']).toBe('skipped');
+    expect((await f.row())?.['delivered']).toBe(false);
   }
+});
+
+test('quiet morning/afternoon planning runs without a brief and can never publish output', async () => {
+  const f = await planner();
+  await f.register();
+  // A genuine no-brief day: no attention changes and morning briefs disabled.
+  await sql`DELETE FROM assistant.attention_brief_runs WHERE task_id=${f.task}`;
+  await tickAttention(sql, at('08:29'));
+  expect((await sql`SELECT * FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`).length).toBe(0);
+  await tickAttention(sql, at('08:30'));
+  await tickAttention(sql, at('09:00'));
+  const morning = (await sql`SELECT task_id,half FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`)[0];
+  expect(morning?.['half']).toBe('morning');
+  expect((await sql`SELECT * FROM assistant.attention_briefs WHERE workspace_id=${f.workspace}`).length).toBe(0);
+  const task = String(morning?.['task_id']);
+  expect((await executionPolicy(sql, f.workspace, task)).run_policy).toBe('brief');
+  await sql`UPDATE assistant.tasks SET state='running' WHERE id=${task}`;
+  const run = crypto.randomUUID();
+  await sql`INSERT INTO assistant.runs(id,workspace_id,task_id,vm_id,state) VALUES(${run},${f.workspace},${task},${f.vm},'running')`;
+  const planned = await f.daemonPost(`/v1/daemon/context/${run}/meeting-prep`, { meetings: [meeting()] });
+  expect(planned.status).toBe(200);
+  for (const content of ['잘못 작성한 브리핑', 'NO_REPORT']) expect((await f.post({ kind: 'message', event_id: crypto.randomUUID(), run_id: run, content, phase: 'final_answer' })).status).toBe(200);
+  expect((await sql`SELECT * FROM assistant.messages WHERE task_id=${task} AND NOT hidden`).length).toBe(0);
+  expect((await sql`SELECT * FROM assistant.notification_intents WHERE workspace_id=${f.workspace}`).length).toBe(0);
+  // The planning task is also excluded from read_attention's task list (no self-generated news).
+  const { attention: readAttention } = await import('../packages/attention/store');
+  expect((await readAttention(sql, f.workspace)).in_progress.some(i => i.id === `task:${task}`)).toBe(false);
+  await tickAttention(sql, at('13:00'));
+  await tickAttention(sql, at('13:01'));
+  expect((await sql`SELECT * FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`).length).toBe(2);
+});
+
+test('moving an undelivered dispatched/skipped meeting re-arms it and hides the old attempt', async () => {
+  for (const state of ['dispatched', 'skipped']) {
+    const f = await publishingPrep();
+    await sql`UPDATE assistant.meeting_preps SET state=${state} WHERE workspace_id=${f.workspace}`;
+    const old = await f.row(), moved = new Date(new Date(String(old?.['starts_at'])).getTime() + 3_600_000);
+    expect((await f.plan([meeting({ event_key: 'publish-event', starts_at: moved.toISOString() })])).status).toBe(200);
+    expect((await f.row())?.['state']).toBe('planned');
+    expect((await f.row())?.['task_id']).toBeNull();
+    await f.say('이전 시각의 오래된 보고');
+    expect((await f.visible()).length).toBe(0);
+    expect((await executionPolicy(sql, f.workspace, f.task)).run_policy).toBe('brief');
+    await tickAttention(sql, new Date(moved.getTime() - 600_000));
+    expect((await f.row())?.['state']).toBe('dispatched');
+    expect((await f.row())?.['task_id']).not.toBe(f.task);
+  }
+});
+
+test('delivered meeting rows never re-arm; later objectives include already-said notes and 2–3 sentence guidance', async () => {
+  const f = await publishingPrep(), content = '민수와 출시 검토입니다. 오류율 기준을 확인하고 승인 자료를 가져가세요.';
+  await f.say(content);
+  const before = await f.row(), moved = new Date(new Date(String(before?.['starts_at'])).getTime() + 600_000);
+  await f.plan([meeting({ event_key: 'publish-event', starts_at: moved.toISOString() })]);
+  expect((await f.row())?.['state']).toBe('done');
+  expect((await f.row())?.['task_id']).toBe(f.task);
+  expect(String((await f.row())?.['starts_at'])).toBe(String(before?.['starts_at']));
+  const next = new Date(Date.now() + 660_000);
+  await f.plan([meeting({ event_key: 'different-meeting', starts_at: next.toISOString() })]);
+  await tickAttention(sql, new Date());
+  const task = (await sql`SELECT t.objective FROM assistant.meeting_preps p JOIN assistant.tasks t ON t.id=p.task_id
+    WHERE p.workspace_id=${f.workspace} AND p.event_key='different-meeting'`)[0];
+  expect(String(task?.['objective'])).toContain(content);
+  expect(String(task?.['objective'])).toContain('2–3 sentences');
+  expect(String(task?.['objective'])).toContain('Do not repeat');
 });

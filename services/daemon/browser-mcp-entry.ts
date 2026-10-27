@@ -25,6 +25,10 @@ if (process.argv[2] === "--record-demonstration") {
       void recorder.snapshot().then(result => {
         if (!sent && !stopping) process.stdout.write(JSON.stringify({ snapshot: true, ...result }) + "\n");
       });
+    } else if (line.trim() === "reset" && !stopping) {
+      void recorder.reset().then(() => {
+        if (!sent) process.stdout.write(JSON.stringify({ reset: true }) + "\n");
+      });
     } else if (line.trim() === "stop") { void stop(); }
   });
   input.once("close", () => { void stop(); });

@@ -12,8 +12,12 @@ const characters: Readonly<Record<string, string>> = {
   ':': 'colon', ';': 'semicolon', '<': 'less', '=': 'equal', '>': 'greater', '?': 'question',
   '@': 'at', '[': 'bracketleft', '\\': 'backslash', ']': 'bracketright', '^': 'asciicircum',
   '_': 'underscore', '`': 'grave', '{': 'braceleft', '|': 'bar', '}': 'braceright', '~': 'asciitilde',
-  '¥': 'yen',
 };
+const korean = /[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7ff]/;
+export function remoteText(event: Pick<KeyEvent, 'key'>): string | undefined {
+  return event.key?.length === 1 && /^[^\x00-\x7f]$/.test(event.key) && !korean.test(event.key)
+    ? event.key : undefined;
+}
 const codes: Readonly<Record<string, string>> = {
   Enter: 'Enter', Tab: 'Tab', Escape: 'Escape', Backspace: 'BackSpace', Delete: 'Delete',
   ArrowLeft: 'Left', ArrowRight: 'Right', ArrowUp: 'Up', ArrowDown: 'Down',
@@ -34,13 +38,15 @@ function macPlatform() {
 }
 export function remoteKeysym(event: KeyEvent): string | undefined {
   const { code, key } = event;
+  // Dead keys must remain local until the next keydown yields composed text.
+  if (key === 'Dead' || remoteText(event)) return undefined;
   if (code === 'CapsLock') return macPlatform() ? 'Hangul' : 'Caps_Lock';
   if (/^Numpad[0-9]$/.test(code)) return `KP_${code.slice(6)}`;
   // Modifiers, editing keys and the keypad have fixed meanings across layouts.
   if (codes[code] && !/^(Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Comma|Period|Slash|Backquote)$/.test(code)) return codes[code];
   if (/^F(?:[1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
   const ime = event.isComposing || event.nativeEvent?.isComposing || event.keyCode === 229 ||
-    event.nativeEvent?.keyCode === 229 || key === 'Process' || /[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7ff]/.test(key);
+    event.nativeEvent?.keyCode === 229 || key === 'Process' || korean.test(key);
   if (ime) {
     if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
     if (/^Digit[0-9]$/.test(code)) return code.slice(5);

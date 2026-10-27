@@ -96,7 +96,7 @@ export function readDemonstration(value: unknown, now = Date.now(), discard: () 
 }
 
 type DemonstrationJournal = { control(): "agent" | "user"; lastDemonstration(): string | null; setLastDemonstration(value: string): void; clearLastDemonstration(): void };
-type Recorder = { start(endpoint: string): Promise<void>; snapshot(): Promise<Recording>; stop(): Promise<Recording> };
+type Recorder = { start(endpoint: string): Promise<void>; snapshot(): Promise<Recording>; reset(): Promise<void>; stop(): Promise<Recording> };
 const DEMONSTRATION_IDLE_MS = 10 * 60 * 1000;
 type DemonstrationTiming = { now(): number; every(ms: number, run: () => void | Promise<void>): () => void };
 const demonstrationTiming: DemonstrationTiming = {
@@ -120,6 +120,7 @@ export class DemonstrationSession {
   private readonly cancelSweeper: () => void;
   private savedSteps = "";
   private checkpointBusy = false;
+  private resetPending: Promise<void> | undefined;
   constructor(private readonly journal: DemonstrationJournal, private readonly create: () => Recorder = () => new DemonstrationRecorder(), private readonly timing: DemonstrationTiming = demonstrationTiming) {
     const saved = this.readSaved(); // Also purge expired records at daemon startup.
     this.cancelSweeper = timing.every(DEMONSTRATION_IDLE_MS, () => this.sweepExpired());
@@ -130,6 +131,16 @@ export class DemonstrationSession {
     this.savedSteps = "";
     try { this.journal.clearLastDemonstration(); } catch { /* Never block ownership on a recording setting. */ }
   }
+  private expire(): void {
+    this.clear();
+    this.prefix = { steps: [] };
+    this.generation++; // In-flight snapshots from before the reset must never be persisted.
+    this.startedAt = this.timing.now();
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    const recorder = this.recorder;
+    this.resetPending = recorder?.reset().catch(() => {});
+    if (recorder) this.scheduleIdle(DEMONSTRATION_IDLE_MS);
+  }
   clearPrevious(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.cancelCheckpoint?.();
@@ -139,22 +150,27 @@ export class DemonstrationSession {
     const previous = this.recorder;
     this.recorder = undefined;
     this.prefix = { steps: [] };
+    this.resetPending = undefined;
     void previous?.stop().catch(() => {});
   }
   private readSaved(now = this.timing.now()): Demonstration | { none: true } {
-    try { return readDemonstration(this.last ?? this.journal.lastDemonstration(), now, () => this.clear()); }
+    try { return readDemonstration(this.last ?? this.journal.lastDemonstration(), now, () => this.expire()); }
     catch { return { none: true }; }
   }
   async read(now = this.timing.now()): Promise<Demonstration | { none: true }> {
+    const beforeExpiry = this.generation;
+    this.readSaved(now);
+    await this.resetPending;
+    if (beforeExpiry !== this.generation) return { none: true };
     const recorder = this.recorder, generation = this.generation;
     if (!recorder) return this.readSaved(now);
     try {
       const snapshot = await recorder.snapshot();
       if (generation !== this.generation || recorder !== this.recorder) return this.readSaved(now);
       const result = this.combine(snapshot);
-      this.saveSnapshot(result, now);
       const times = demonstrationTimes(result.steps);
-      if (times && now > Date.parse(times.expires_at)) { this.clear(); return { none: true }; }
+      if (times && now > Date.parse(times.expires_at)) { this.expire(); await this.resetPending; return { none: true }; }
+      this.saveSnapshot(result, now);
       return { ...result, ...times, finished_at: new Date(now).toISOString(), in_progress: true, ...(this.partial ? { partial: true } : {}) };
     } catch { return this.readSaved(now); }
   }
@@ -186,7 +202,7 @@ export class DemonstrationSession {
   private saveSnapshot(result: Recording, now: number, minimumSteps = 2): void {
     if (result.steps.length < minimumSteps) return;
     const times = demonstrationTimes(result.steps);
-    if (!times || now > Date.parse(times.expires_at)) { this.clear(); return; }
+    if (!times || now > Date.parse(times.expires_at)) { this.expire(); return; }
     const fingerprint = JSON.stringify(result.steps);
     if (fingerprint === this.savedSteps) return;
     this.last = { ...result, ...times, finished_at: new Date(now).toISOString(), partial: true };
@@ -197,18 +213,23 @@ export class DemonstrationSession {
   }
   /** Poll only while recording; write changed steps at most once per 60-second tick. */
   async checkpoint(): Promise<void> {
+    this.readSaved(this.timing.now());
+    await this.resetPending;
     const recorder = this.recorder, generation = this.generation;
     if (!recorder || this.checkpointBusy) return;
     this.checkpointBusy = true;
     try {
       const snapshot = await recorder.snapshot();
       if (generation === this.generation && recorder === this.recorder) this.saveSnapshot(this.combine(snapshot), this.timing.now(), 1);
+      await this.resetPending;
     } catch { /* A checkpoint cannot interfere with recording. */ }
     finally { this.checkpointBusy = false; }
   }
-  sweepExpired(): void { this.readSaved(this.timing.now()); }
+  async sweepExpired(): Promise<void> { this.readSaved(this.timing.now()); await this.resetPending; }
   /** Check at the last known idle deadline, then adjust it if a more recent step arrived. */
   async checkpointIdle(now = this.timing.now()): Promise<number> {
+    this.readSaved(now);
+    await this.resetPending;
     const recorder = this.recorder, generation = this.generation;
     if (!recorder) return DEMONSTRATION_IDLE_MS;
     try {
@@ -218,6 +239,7 @@ export class DemonstrationSession {
       const lastStep = Date.parse(result.steps.at(-1)?.timestamp ?? "");
       const idle = now - Math.max(this.startedAt, Number.isFinite(lastStep) ? lastStep : this.startedAt);
       if (idle >= DEMONSTRATION_IDLE_MS) this.saveSnapshot(result, now);
+      await this.resetPending;
       return idle >= DEMONSTRATION_IDLE_MS ? DEMONSTRATION_IDLE_MS : DEMONSTRATION_IDLE_MS - Math.max(0, idle);
     } catch { return DEMONSTRATION_IDLE_MS; }
   }
@@ -234,6 +256,9 @@ export class DemonstrationSession {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.cancelCheckpoint?.();
     this.cancelCheckpoint = undefined;
+    this.readSaved(this.timing.now());
+    await this.resetPending;
+    if (this.idleTimer) clearTimeout(this.idleTimer);
     const recorder = this.recorder, generation = this.generation, wasPartial = this.partial;
     this.recorder = undefined;
     if (!recorder) return;
@@ -243,7 +268,7 @@ export class DemonstrationSession {
       const result = this.combine(recording);
       if (result.steps.length < (partial || wasPartial ? 1 : 2)) return;
       const times = demonstrationTimes(result.steps);
-      if (!times || this.timing.now() > Date.parse(times.expires_at)) { this.clear(); return; }
+      if (!times || this.timing.now() > Date.parse(times.expires_at)) { this.expire(); return; }
       this.last = { ...result, ...times, finished_at: new Date(this.timing.now()).toISOString(), ...(partial || wasPartial ? { partial: true } : {}) };
       this.journal.setLastDemonstration(JSON.stringify(this.last));
       this.savedSteps = JSON.stringify(result.steps);
@@ -306,6 +331,9 @@ export class DemonstrationRecorder {
   private workerExited: Promise<void> | undefined;
   private workerClosed = false;
   private snapshotRequest: ReturnType<typeof Promise.withResolvers<Recording>> | undefined;
+  private resetRequest: ReturnType<typeof Promise.withResolvers<void>> | undefined;
+  private resetting: Promise<void> | undefined;
+  private dataGeneration = 0;
   private browser: Browser | undefined;
   private starting: Promise<void> | undefined;
   private stopped = true;
@@ -355,8 +383,10 @@ export class DemonstrationRecorder {
       while ((newline = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
         try {
-          const message = JSON.parse(line) as { ready?: boolean; snapshot?: boolean; steps?: Step[]; truncated?: boolean };
+          const message = JSON.parse(line) as { ready?: boolean; reset?: boolean; snapshot?: boolean; steps?: Step[]; truncated?: boolean };
           if (message.ready) ready.resolve();
+          if (message.reset) { this.resetRequest?.resolve(); this.resetRequest = undefined; continue; }
+          if (this.resetRequest) continue; // Discard replies already queued before reset acknowledgement.
           if (Array.isArray(message.steps)) {
             const recording: Recording = { steps: message.steps.slice(0, 300), ...(message.truncated ? { truncated: true } : {}) };
             this.steps = recording.steps;
@@ -372,6 +402,8 @@ export class DemonstrationRecorder {
     this.workerExited = exited.promise;
     const finish = () => {
       this.workerClosed = true;
+      this.resetRequest?.resolve();
+      this.resetRequest = undefined;
       this.snapshotRequest?.resolve(this.result());
       this.snapshotRequest = undefined;
       ready.resolve(); result.resolve(this.result()); exited.resolve();
@@ -383,10 +415,11 @@ export class DemonstrationRecorder {
   }
 
   async snapshot(): Promise<Recording> {
-    if (this.stopping) return this.stopping;
+    await this.resetting;
+    if (this.stopping) { await this.stopping; return this.result(); }
     if (!this.worker || this.workerClosed) return this.result();
     await this.starting;
-    if (this.stopping) return this.stopping;
+    if (this.stopping) { await this.stopping; return this.result(); }
     if (this.workerClosed) return this.result();
     if (this.snapshotRequest) return this.snapshotRequest.promise;
     const request = this.snapshotRequest = Promise.withResolvers<Recording>();
@@ -398,10 +431,36 @@ export class DemonstrationRecorder {
     finally { clearTimeout(timer); }
   }
 
+  reset(): Promise<void> {
+    this.steps = [];
+    this.truncated = false;
+    this.dataGeneration++;
+    this.snapshotRequest?.resolve({ steps: [] });
+    this.snapshotRequest = undefined;
+    if (this.resetting) return this.resetting;
+    const operation = (async () => {
+      if (this.worker && !this.workerClosed) {
+        const request = this.resetRequest = Promise.withResolvers<void>();
+        const timer = setTimeout(() => this.worker?.kill("SIGKILL"), 2000);
+        try {
+          this.worker.stdin.write("reset\n");
+          await request.promise;
+        } catch { this.worker.kill("SIGKILL"); }
+        finally { clearTimeout(timer); }
+      } else if (this.workerClosed) this.workerResult = Promise.resolve({ steps: [] });
+    })();
+    this.resetting = operation;
+    void operation.finally(() => { if (this.resetting === operation) this.resetting = undefined; });
+    return operation;
+  }
+
   private record(raw: unknown, url: string): void {
     if (this.stopped) return;
     try {
       const step = normalizeStep(raw, url);
+      // A new action after an unswept idle gap must not revive the previous buffer either.
+      const previous = this.steps.at(-1);
+      if (step && previous && Date.parse(step.timestamp) - Date.parse(previous.timestamp) > DEMONSTRATION_TTL_MS) this.steps = [];
       if (step) this.steps = appendDemonstrationStep(this.steps, step);
       if (this.steps.length === 300) {
         this.truncated = true;
@@ -435,7 +494,8 @@ export class DemonstrationRecorder {
       if (bound) void frame.evaluate(installDemonstrationListeners, { binding: this.binding, cleanup: this.cleanup }).catch(() => {});
       if (frame === page.mainFrame()) {
         const url = frame.url();
-        void page.title().then(title => this.record({ kind: "navigate", title }, url)).catch(() => {});
+        const generation = this.dataGeneration;
+        void page.title().then(title => { if (generation === this.dataGeneration) this.record({ kind: "navigate", title }, url); }).catch(() => {});
       }
     };
     const close = () => {
@@ -458,7 +518,7 @@ export class DemonstrationRecorder {
   }
 
   stop(): Promise<Recording> {
-    if (this.stopping) return this.stopping;
+    if (this.stopping) return this.stopping.then(() => this.result());
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.stopping = this.finish();
@@ -467,6 +527,7 @@ export class DemonstrationRecorder {
   }
 
   private async finish(): Promise<Recording> {
+    const generation = this.dataGeneration;
     try {
       if (this.worker) {
         this.worker.stdin.end("stop\n");
@@ -475,8 +536,10 @@ export class DemonstrationRecorder {
         try {
           await this.workerExited;
           const result = await this.workerResult;
-          this.steps = result?.steps ?? [];
-          this.truncated = result?.truncated === true;
+          if (generation === this.dataGeneration) {
+            this.steps = result?.steps ?? [];
+            this.truncated = result?.truncated === true;
+          }
         } finally { clearTimeout(timer); }
         return this.result();
       }

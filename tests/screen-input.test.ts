@@ -20,6 +20,17 @@ test("physical Korean composition keys reach xdotool as paired keys, never text"
   expect(calls).toEqual(keys.flatMap(key => [["keydown", key], ["keyup", key]]));
 });
 
+test("layout Unicode and dead-key results use the existing literal paste path", async () => {
+  const pasted: string[] = [];
+  const input = new ScreenInput({
+    owner: { control: () => "user" }, dimensions: { width: 800, height: 600 },
+    execute: async () => { throw new Error("Unicode must not become physical keys"); },
+    paste: async (text, beforeInput) => { beforeInput(); pasted.push(text); },
+  });
+  for (const text of ["é", "ü", "€", "ê"]) await input.receive(JSON.stringify({ type: "text", text }));
+  expect(pasted).toEqual(["é", "ü", "€", "ê"]);
+});
+
 test("keyup is queued even when the server input queue is full", async () => {
   const calls: string[][] = [];
   const gate = Promise.withResolvers<void>();

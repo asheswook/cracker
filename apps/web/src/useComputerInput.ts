@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { KeyboardEvent, PointerEvent, RefObject } from 'react';
 import { createComputerPointer, type ComputerPointerMode } from './computerPointer';
-import { remoteKeysym } from './computerKeys';
+import { remoteKeysym, remoteText } from './computerKeys';
 
 export function useComputerInput(
   video: RefObject<HTMLVideoElement | null>,
@@ -86,10 +86,16 @@ export function useComputerInput(
   };
   const keyboard = (event: KeyboardEvent<HTMLVideoElement>, action: 'down' | 'up') => {
     if (!enabled) return;
+    if (event.key === 'Dead') return;
     // Local ASCII layouts are preserved; Korean IME events use physical keys.
     event.preventDefault();
     const physicalKey = event.code;
     if (action === 'up' && !pressedKeys.current.has(physicalKey)) return;
+    const text = remoteText(event);
+    if (action === 'down' && text && !pressedKeys.current.has(physicalKey)) {
+      send({ type: 'text', text });
+      return;
+    }
     const key = pressedKeys.current.get(physicalKey) ?? remoteKeysym(event);
     if (!key) return;
     if (action === 'down') pressedKeys.current.set(physicalKey, key);

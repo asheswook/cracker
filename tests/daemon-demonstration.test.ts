@@ -140,7 +140,7 @@ test("session clears prior records, purges expired settings on startup/read, and
   const oldAt = new Date(Date.now() - 4 * 3600000).toISOString();
   const old = { finished_at: timestamp, started_at: oldAt, expires_at: new Date(Date.parse(oldAt) + 3 * 3600000).toISOString(), steps: steps.map(step => ({ ...step, timestamp: oldAt })) };
   let result: Recording = { steps }, starts = 0;
-  const create = () => ({ start: async () => { starts++; }, snapshot: async () => result, stop: async () => result });
+  const create = () => ({ start: async () => { starts++; }, snapshot: async () => result, reset: async () => {}, stop: async () => result });
   try {
     journal.setLastDemonstration(JSON.stringify(old));
     const session = new DemonstrationSession(journal, create);
@@ -174,7 +174,7 @@ test("live session reads and ten-minute idle checkpoints persist without returni
   const now = Date.now();
   const steps = [fake({ kind: "click", text: "Open" }, new Date(now).toISOString()), fake({ kind: "click", text: "Save" }, new Date(now).toISOString())];
   let result: Recording = { steps }, stops = 0;
-  const session = new DemonstrationSession(journal, () => ({ start: async () => {}, snapshot: async () => result, stop: async () => { stops++; return result; } }));
+  const session = new DemonstrationSession(journal, () => ({ start: async () => {}, snapshot: async () => result, reset: async () => {}, stop: async () => { stops++; return result; } }));
   try {
     session.start();
     const live = await session.read(now);
@@ -202,6 +202,7 @@ class SessionClock {
   private time = Date.now();
   private readonly timers = new Set<{ ms: number; next: number; run: () => void | Promise<void> }>();
   now = () => this.time;
+  jump(ms: number): void { this.time += ms; }
   every = (ms: number, run: () => void | Promise<void>) => {
     const timer = { ms, next: this.time + ms, run };
     this.timers.add(timer);
@@ -224,7 +225,7 @@ test("changed recordings checkpoint within 60 seconds without reads, and unchang
   const journal = new Journal(":memory:"), clock = new SessionClock();
   const first = clock.now();
   let result: Recording = { steps: [fake({ kind: "click", text: "Open" }, new Date(first).toISOString())] };
-  const session = new DemonstrationSession(journal, () => ({ start: async () => {}, snapshot: async () => result, stop: async () => result }), clock);
+  const session = new DemonstrationSession(journal, () => ({ start: async () => {}, snapshot: async () => result, reset: async () => {}, stop: async () => result }), clock);
   try {
     session.start();
     await clock.advance(59999);
@@ -251,7 +252,7 @@ test("idle checkpoints and repeated live reads never extend the last-step expiry
   const journal = new Journal(":memory:"), clock = new SessionClock();
   const first = clock.now();
   const result: Recording = { steps: [fake({ kind: "click", text: "Open" }, new Date(first).toISOString()), fake({ kind: "click", text: "Save" }, new Date(first).toISOString())] };
-  const session = new DemonstrationSession(journal, () => ({ start: async () => {}, snapshot: async () => result, stop: async () => result }), clock);
+  const session = new DemonstrationSession(journal, () => ({ start: async () => {}, snapshot: async () => result, reset: async () => {}, stop: async () => result }), clock);
   try {
     session.start();
     await clock.advance(60000);
@@ -278,6 +279,89 @@ test("daemon sweeper deletes an expired journal record without any read", async 
     await clock.advance(10 * 60000);
     expect(journal.lastDemonstration()).toBeNull();
   } finally { await session.close(); journal.close(); }
+});
+
+for (const expiry of ["sweeper", "read"] as const) test(`${expiry} expiry resets the live buffer and recovery prefix before the next click`, async () => {
+  const journal = new Journal(":memory:"), clock = new SessionClock();
+  const timestamp = new Date(clock.now()).toISOString();
+  const old = [fake({ kind: "click", text: "Old open" }, timestamp), fake({ kind: "click", text: "Old save" }, timestamp)];
+  journal.setLastDemonstration(JSON.stringify({ finished_at: timestamp, started_at: timestamp, expires_at: new Date(clock.now() + 3 * 3600000).toISOString(), steps: old, partial: true }));
+  journal.setControl("user");
+  let buffer: Recording = { steps: [...old] }, resets = 0, stops = 0;
+  const session = new DemonstrationSession(journal, () => ({
+    start: async () => {}, snapshot: async () => buffer,
+    reset: async () => { resets++; buffer = { steps: [] }; },
+    stop: async () => { stops++; return buffer; },
+  }), clock);
+  try {
+    clock.jump(3 * 3600000 + 1);
+    if (expiry === "sweeper") await session.sweepExpired();
+    else expect(await session.read()).toEqual({ none: true });
+    expect(journal.lastDemonstration()).toBeNull();
+    expect(buffer.steps).toEqual([]);
+    expect(resets).toBe(1);
+    expect(stops).toBe(0);
+    const fresh = fake({ kind: "click", text: "New click" }, new Date(clock.now()).toISOString());
+    buffer = { steps: [fresh] };
+    await session.checkpoint();
+    const saved = JSON.parse(journal.lastDemonstration()!);
+    expect(saved.steps).toEqual([fresh]);
+    expect(saved.started_at).toBe(fresh.timestamp);
+    expect((await session.read() as { steps: Step[] }).steps).toEqual([fresh]);
+  } finally { await session.close(); journal.close(); }
+});
+
+test("a snapshot already in flight at expiry cannot restore the expired steps", async () => {
+  const journal = new Journal(":memory:"), clock = new SessionClock();
+  const timestamp = new Date(clock.now()).toISOString();
+  const old = [fake({ kind: "click", text: "Old" }, timestamp)];
+  journal.setLastDemonstration(JSON.stringify({ finished_at: timestamp, expires_at: new Date(clock.now() + 3 * 3600000).toISOString(), steps: old, partial: true }));
+  journal.setControl("user");
+  const pending = Promise.withResolvers<Recording>();
+  let buffer: Recording = { steps: old };
+  const session = new DemonstrationSession(journal, () => ({ start: async () => {}, snapshot: () => pending.promise, reset: async () => { buffer = { steps: [] }; }, stop: async () => buffer }), clock);
+  try {
+    const reading = session.read();
+    await Promise.resolve();
+    clock.jump(4 * 3600000);
+    await session.sweepExpired();
+    pending.resolve({ steps: old });
+    expect(await reading).toEqual({ none: true });
+    expect(journal.lastDemonstration()).toBeNull();
+  } finally { pending.resolve({ steps: [] }); await session.close(); journal.close(); }
+});
+
+test("worker reset ignores an old queued snapshot, clears steps, and keeps recording", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "demonstration-reset-"));
+  const worker = join(directory, "worker.mjs");
+  const old = [fake({ kind: "click", text: "Old" })], fresh = [fake({ kind: "click", text: "New" })];
+  await Bun.write(worker, `
+    import {createInterface} from 'node:readline';
+    const old=${JSON.stringify(old)}, fresh=${JSON.stringify(fresh)};
+    let steps=old, reset=false, before=0, after=0;
+    process.stdout.write('{"ready":true}\\n');
+    const send=message=>process.stdout.write(JSON.stringify(message)+'\\n');
+    createInterface({input:process.stdin}).on('line',line=>{
+      if(line==='reset') { send({snapshot:true,steps:old}); steps=[]; reset=true; send({reset:true}); }
+      else if(line==='snapshot') {
+        if(!reset && ++before>1) return;
+        if(reset && after++>0) steps=fresh;
+        send({snapshot:true,steps});
+      } else if(line==='stop') process.stdout.write(JSON.stringify({steps})+'\\n',()=>process.exit(0));
+    });
+  `);
+  const recorder = new DemonstrationRecorder(worker);
+  try {
+    await recorder.start("http://fake");
+    expect(await recorder.snapshot()).toEqual({ steps: old });
+    const pending = recorder.snapshot();
+    await Promise.resolve(); await Promise.resolve();
+    await recorder.reset();
+    expect(await pending).toEqual({ steps: [] });
+    expect(await recorder.snapshot()).toEqual({ steps: [] });
+    expect(await recorder.snapshot()).toEqual({ steps: fresh });
+    expect(await recorder.stop()).toEqual({ steps: fresh });
+  } finally { await recorder.stop(); await rm(directory, { recursive: true, force: true }); }
 });
 
 class FakeElement {
@@ -345,6 +429,24 @@ test("in-process snapshot is a copy and later actions remain recorded", async ()
     expect(result.steps).toHaveLength(3);
     expect(result.steps[0]!.url).toBe("https://example.com/frame");
     expect(result.steps.at(-1)).toMatchObject({ text: "Next" });
+  } finally { await recorder.stop(); }
+});
+
+test("in-process reset drops old steps without disconnecting or removing listeners", async () => {
+  const page = new FakePage(), fixture = fakeBrowser(page);
+  const recorder = new DemonstrationRecorder(undefined, async () => fixture.browser);
+  try {
+    await recorder.start("http://fake");
+    const child = page.frames()[1]!;
+    child.click("Old");
+    await recorder.reset();
+    expect(await recorder.snapshot()).toEqual({ steps: [] });
+    expect(fixture.closes()).toBe(0);
+    expect(child.listeners.get("click")?.size).toBe(1);
+    child.click("New");
+    const result = await recorder.stop();
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0]).toMatchObject({ text: "New" });
   } finally { await recorder.stop(); }
 });
 

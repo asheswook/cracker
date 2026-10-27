@@ -213,7 +213,7 @@ test('desktop preserves ASCII layouts, international punctuation and keydown ide
   const input = inputModule.useComputerInput({ current: null }, true, (message: unknown) => sent.push(message));
   for (const [code, local, expected] of [
     ['KeyQ', 'a', 'a'], ['KeyY', 'z', 'z'], ['Digit2', '@', 'at'], ['KeyA', 'A', 'A'],
-    ['IntlBackslash', '<', 'less'], ['IntlYen', '¥', 'yen'], ['IntlRo', '_', 'underscore'],
+    ['IntlBackslash', '<', 'less'], ['IntlYen', '\\', 'backslash'], ['IntlRo', '_', 'underscore'],
     ['BracketLeft', '{', 'braceleft'], ['Backslash', '|', 'bar'], ['Quote', '"', 'quotedbl'],
   ]) {
     input.keyboard({ code, key: local, preventDefault() {} }, 'down');
@@ -235,6 +235,40 @@ test('desktop preserves ASCII layouts, international punctuation and keydown ide
     input.keyboard({ code: 'CapsLock', key: 'CapsLock', preventDefault() {} }, 'up');
     expect(sent.at(-1)).toEqual({ type: 'key', key: 'Hangul', action: 'up' });
   });
+  for (const message of sent) expect(Input.parse(message) as unknown).toEqual(message);
+});
+
+test('desktop sends non-Korean Unicode as text, including AltGr and dead-key results', () => {
+  slots.length = 0; cursor = 0; effects = [];
+  const sent: unknown[] = [];
+  const input = inputModule.useComputerInput({ current: null }, true, (message: unknown) => sent.push(message));
+  const press = (code: string, key: string, extras = {}) => {
+    for (const action of ['down', 'up']) {
+      const event = { code, key, defaultPrevented: false,
+        preventDefault() { this.defaultPrevented = true; }, ...extras };
+      input.keyboard(event, action);
+      expect(event.defaultPrevented).toBe(key !== 'Dead');
+    }
+  };
+  press('Digit2', 'é');
+  input.keyboard({ code: 'AltRight', key: 'AltGraph', preventDefault() {} }, 'down');
+  press('KeyE', '€', { altKey: true, ctrlKey: true });
+  expect(sent.slice(-1)).toEqual([{ type: 'text', text: '€' }]);
+  const count = sent.length;
+  press('BracketLeft', 'Dead'); // French dead circumflex (^).
+  expect(sent).toHaveLength(count);
+  press('KeyE', 'ê', { nativeEvent: { isComposing: true, keyCode: 229 } });
+  press('KeyU', 'ü');
+  press('IntlYen', '¥');
+  expect(sent.filter(message => Input.parse(message).type === 'text')).toEqual(
+    ['é', '€', 'ê', 'ü', '¥'].map(text => ({ type: 'text', text })),
+  );
+  press('KeyG', 'ㅎ', { nativeEvent: { isComposing: true, keyCode: 229 } });
+  expect(sent.slice(-2)).toEqual([
+    { type: 'key', key: 'g', action: 'down' }, { type: 'key', key: 'g', action: 'up' },
+  ]);
+  input.release();
+  expect(sent.at(-1)).toEqual({ type: 'key', key: 'ISO_Level3_Shift', action: 'up' });
   for (const message of sent) expect(Input.parse(message) as unknown).toEqual(message);
 });
 

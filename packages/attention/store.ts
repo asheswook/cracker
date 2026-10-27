@@ -81,6 +81,7 @@ export async function attention(sql: Query, workspace: string, options: { readon
         FROM assistant.tasks t WHERE t.workspace_id=${workspace}
         AND (t.state IN ('queued','running','waiting','pausing','paused','cancelling') OR (t.state IN ('failed','unknown') AND t.updated_at>now()-interval '7 days'))
         AND t.objective !~* '^\s*QA' AND NOT EXISTS(SELECT 1 FROM assistant.attention_brief_runs b WHERE b.task_id=t.id)
+        AND NOT EXISTS(SELECT 1 FROM assistant.meeting_prep_runs p WHERE p.task_id=t.id)
         AND NOT EXISTS(SELECT 1 FROM assistant.attention_source_runs o WHERE o.task_id=t.id) AND NOT EXISTS(SELECT 1 FROM assistant.attention_source_drafts o WHERE o.task_id=t.id)
         ORDER BY t.updated_at DESC LIMIT 80`,
     sql`SELECT r.id,r.conversation_id,r.objective,r.next_review_at,r.last_evaluated_at,r.source_message_id,r.created_at,
