@@ -24,6 +24,9 @@ export const Artifact = z.object({
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
   state: z.enum(["ready", "deleted"]),
   created_at: z.string(),
+  series_key: z.string().nullable().optional(),
+  previous_id: Id.nullable().optional(),
+  change_summary: z.string().max(200).nullable().optional(),
 });
 export const AssistantPhase = z.enum(["commentary", "final_answer"]);
 /**

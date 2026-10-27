@@ -27,6 +27,8 @@
   font-size: var(--t-subhead); font-weight: 600; line-height: 1.35;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.artifact-label { display: grid; gap: 2px; min-width: 0; }
+.artifact-summary { font-size: var(--t-caption); line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
 .artifact-sheet-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* Inline previews sit above the name row, separated by a hairline. */

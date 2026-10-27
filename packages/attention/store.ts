@@ -59,7 +59,8 @@ const firstLine = (s: string, max = 120) => { const line = s.split(/\r?\n/).map(
 /** options.doneSince: a brief asks for everything finished since it last reported, instead of the panel's 48 hours. */
 export async function attention(sql: Query, workspace: string, options: { readonly doneSince?: Date } = {}): Promise<Attention> {
   const since = options.doneSince ?? new Date(Date.now() - 48 * 3_600_000);
-  const [cards, tasks, responsibilities, schedules, results] = await Promise.all([
+  const resultSince = options.doneSince ?? new Date(Date.now() - 14 * 86_400_000);
+  const [cards, tasks, responsibilities, schedules, results, artifacts] = await Promise.all([
     // Open cards: no date window, so an old unanswered decision never silently disappears.
     sql`SELECT m.id,m.conversation_id,m.blocks,m.content,m.created_at,c.block_id,c.state AS card_state,c.snoozed_until,c.updated_at AS card_updated,c.task_id AS card_task,(SELECT ct.state FROM assistant.tasks ct WHERE ct.id=c.task_id) AS card_task_state,
           (SELECT n.title FROM assistant.messages u JOIN assistant.knowledge_node_members k ON k.workspace_id=u.workspace_id AND k.user_message_id=u.id AND k.role='owner'
@@ -91,8 +92,16 @@ export async function attention(sql: Query, workspace: string, options: { readon
     sql`SELECT s.id,s.conversation_id,s.objective,s.due_at,s.source_message_id FROM assistant.schedules s WHERE s.workspace_id=${workspace} AND s.status='pending' ORDER BY s.due_at LIMIT 20`,
     sql`SELECT m.id,m.conversation_id,m.blocks,m.content,m.created_at FROM assistant.messages m LEFT JOIN assistant.tasks t ON t.id=m.task_id
         -- What the assistant did: two weeks for the feed's 한 일 view (a brief asks only since it last reported).
-        WHERE m.workspace_id=${workspace} AND m.role='assistant' AND NOT m.hidden AND m.blocks @> '[{"kind":"result"}]' AND m.created_at>${options.doneSince ?? new Date(Date.now() - 14 * 86_400_000)}
-        AND coalesce(t.objective,'') !~* '^\s*QA' ORDER BY m.created_at DESC LIMIT 200`,
+         WHERE m.workspace_id=${workspace} AND m.role='assistant' AND NOT m.hidden AND m.blocks @> '[{"kind":"result"}]' AND m.created_at>${resultSince}
+         AND coalesce(t.objective,'') !~* '^\s*QA' ORDER BY m.created_at DESC LIMIT 200`,
+    // Pick the latest revision before filtering summaries: "변화 없음" must suppress older changes in the series.
+    sql`SELECT a.id,a.conversation_id,a.series_key,a.change_summary,a.created_at,
+          (SELECT m.id FROM assistant.message_artifacts ma JOIN assistant.messages m ON m.workspace_id=ma.workspace_id AND m.id=ma.message_id
+           WHERE ma.workspace_id=${workspace} AND ma.artifact_id=a.id AND NOT m.hidden ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS message_id
+        FROM (SELECT DISTINCT ON (series_key) id,conversation_id,series_key,change_summary,created_at,state
+              FROM assistant.artifacts WHERE workspace_id=${workspace} AND series_key IS NOT NULL AND state='ready'
+              ORDER BY series_key,created_at DESC,id DESC) a
+        WHERE a.state='ready' AND a.created_at>${resultSince} ORDER BY a.created_at DESC`,
   ]);
   const needs: AttentionItem[] = [], progress: AttentionItem[] = [], done: AttentionItem[] = [];
   const cardTasks = new Set<string>();
@@ -137,6 +146,13 @@ export async function attention(sql: Query, workspace: string, options: { readon
     // The headline names the channel already: the line under it is what it was about.
     done.push({ id: `result:${row['id']}`, kind: 'result', title: b.title ?? b.channel, detail: b.target, at: iso(row['created_at']), source: b.channel.replace(/\s*\(.*$/, ''), who: b.target ? b.target.replace(/\s*[<(].*$/, '').trim() : null,
       conversation_id: String(row['conversation_id']), message_id: String(row['id']), state: b.action, topic: null });
+  for (const row of artifacts) {
+    const summary = row['change_summary'] == null ? '' : String(row['change_summary']).trim();
+    if (!summary || summary === '변화 없음') continue;
+    done.push({ id: `artifact:${row['id']}`, kind: 'result', title: `결과물 · ${row['series_key']}: ${summary}`, detail: null,
+      at: iso(row['created_at']), conversation_id: String(row['conversation_id']), message_id: row['message_id'] ? String(row['message_id']) : null,
+      state: 'ready', topic: null });
+  }
   // Watched sources: open threads that need the user, and each watch with its freshness; a broken watch needs the user only when it cannot recover on its own.
   const watched = await sourceView(sql, workspace);
   // Mail the user must act on waits for them; waiting-for-others and plain notices are watched, not their job.

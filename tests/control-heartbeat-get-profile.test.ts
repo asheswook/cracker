@@ -93,6 +93,7 @@ test('every mounted daemon GET route has an exercised or explicitly listed profi
     {route:'/v1/daemon/extensions/skills/:id',path:`/v1/daemon/extensions/skills/${id}`,kind:'read',status:404},
     {route:'/v1/daemon/artifact-index/:id/content',path:`/v1/daemon/artifact-index/${id}/content`,kind:'read',status:400},
     {route:'/v1/daemon/artifacts/:id/content',path:`/v1/daemon/artifacts/${id}/content?run_id=${run.run_id}`,kind:'read',status:404},
+    {route:'/v1/daemon/artifacts/read',path:`/v1/daemon/artifacts/read?run_id=${run.run_id}&artifact_id=${id}`,kind:'read',status:404},
     {route:'/v1/daemon/responsibilities',path:'/v1/daemon/responsibilities',kind:'mutation',status:200},
   ] as const;
   expect(app.routes.filter(route=>route.method==='GET'&&route.path.startsWith('/v1/daemon/')).map(route=>route.path).sort()).toEqual(catalog.map(entry=>entry.route).sort());

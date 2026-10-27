@@ -30,6 +30,7 @@ export const BRIEF_OBJECTIVE = [
   'If nothing needs the user and nothing in since_last_brief is worth telling, reply exactly NO_REPORT.',
   'Otherwise reply with the brief as your final report. Its first line is a one-line count summary like "확인할 것 2개, 진행 중 3개" (real numbers; name the most important item in a few words if it fits); that line becomes the notification.',
   'Then one line per item, needs-the-user first, by topic. Refer to existing cards by what they ask; do not create a new card for a decision that already has one. Do not call notify_user.',
+  'For artifact results in since_last_brief, report what changed in one line per series; omit unchanged series and do not list earlier revisions separately.',
   'State freshness honestly: if a watched source was not checked today, say so instead of implying all is well.',
   'Do not offer to set up new checks or re-enable anything; never re-offer what the user cancelled or dismissed (dismissed_offers).',
 ].join(' ');

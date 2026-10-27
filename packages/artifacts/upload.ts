@@ -8,6 +8,7 @@ import { type ArtifactScope, reserveUpload, authorizeArtifactRun } from "./reser
 import { type ArtifactStore } from "./store";
 import { LEGACY_ARTIFACT_BYTES } from "./limits";
 import { streamingUpload } from "./streaming-upload";
+import { ArtifactSeries, ArtifactChangeSummary } from "./series";
 
 async function readUpload(request: Request) {
   const reader = request.body?.getReader();
@@ -47,6 +48,14 @@ export async function uploadArtifact(
   input: { readonly scope: ArtifactScope; readonly request: Request },
 ) {
   const id = Id.parse(input.request.headers.get("X-Artifact-Id"));
+  const decodedHeader = (name: string) => {
+    const value = input.request.headers.get(name);
+    if (value === null) return null;
+    try { return decodeURIComponent(value); }
+    catch { throw new DomainError("invalid_artifact_metadata", "Artifact metadata encoding invalid"); }
+  };
+  const series = ArtifactSeries.nullable().parse(decodedHeader("X-Artifact-Series"));
+  const changeSummary = ArtifactChangeSummary.nullable().parse(decodedHeader("X-Artifact-Change-Summary"));
   let decodedName: string;
   try {
     decodedName = decodeURIComponent(input.request.headers.get("X-Artifact-Name") ?? "");
@@ -87,7 +96,7 @@ export async function uploadArtifact(
   if (!data) throw new DomainError("artifact_body_missing", "File body missing", 400);
   const reserved = await reserveUpload(sql, {
     scope: input.scope,
-    metadata: { id, name, mediaType, bytes: data.bytes, sha256: data.sha256 },
+    metadata: { id, name, mediaType, bytes: data.bytes, sha256: data.sha256, series, changeSummary },
   }).catch(async (error: unknown) => { await data.body.cancel(error); throw error; });
   switch (reserved.kind) {
     case "existing":
@@ -109,7 +118,11 @@ export async function uploadArtifact(
       await sql.begin(async tx=>{
         await tx`SELECT id FROM assistant.workspaces WHERE id=${input.scope.principal.workspace_id} FOR UPDATE`;
         await authorizeArtifactRun(tx,input.scope,true);
-        return tx`UPDATE assistant.artifacts SET state='ready',search_text=${indexed.text},search_text_truncated=${indexed.truncated},search_indexed=${documentFormat(mediaType,name) === null} WHERE id=${id} AND state='uploading' AND lease_id=${reserved.leaseId} RETURNING *`;
+        // Publication order is version order, even if two uploads finish in reverse reservation order.
+        return tx`UPDATE assistant.artifacts SET state='ready',search_text=${indexed.text},search_text_truncated=${indexed.truncated},search_indexed=${documentFormat(mediaType,name) === null},
+          created_at=CASE WHEN series_key IS NOT NULL THEN clock_timestamp() ELSE created_at END,
+          previous_id=(SELECT a.id FROM assistant.artifacts a WHERE a.workspace_id=${input.scope.principal.workspace_id} AND a.series_key=${series} AND a.state='ready' AND a.id<>${id} ORDER BY a.created_at DESC,a.id DESC LIMIT 1)
+          WHERE id=${id} AND state='uploading' AND lease_id=${reserved.leaseId} RETURNING *`;
       });
     if (!ready[0])
       throw new DomainError(

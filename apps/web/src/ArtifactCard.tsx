@@ -15,6 +15,7 @@ const SHEET_ROWS = 1000;
 const PREVIEW_ERROR = '미리보기를 불러오지 못했어요';
 
 const contentPath = (artifact: Artifact) => `/v1/artifacts/${artifact.id}/content`;
+const artifactTitle = (artifact: Artifact) => artifact.previous_id && artifact.series_key ? artifact.series_key : artifact.name;
 
 type Load<T> = { status: 'idle' | 'loading' } | { status: 'ready'; value: T } | { status: 'error' };
 
@@ -198,7 +199,8 @@ function ArtifactSheet({ artifact, kind, onClose }: { artifact: Artifact; kind: 
       <header className="artifact-sheet-header">
         <span className="artifact-icon" data-kind={kind}><KindIcon kind={kind} /></span>
         <div className="artifact-sheet-title">
-          <h2 id={titleId}>{artifact.name}</h2>
+          <h2 id={titleId}>{artifactTitle(artifact)}</h2>
+          {artifact.previous_id && artifact.change_summary?.trim() && <span>{artifact.change_summary.trim()}</span>}
         </div>
         <a className="artifact-sheet-button" href={contentPath(artifact)} download={artifact.name} aria-label="다운로드" title="다운로드">
           <Download size={18} aria-hidden />
@@ -220,6 +222,8 @@ function ArtifactSheet({ artifact, kind, onClose }: { artifact: Artifact; kind: 
  */
 export function ArtifactCard({ artifact }: { artifact: Artifact }) {
   const kind = artifactKind(artifact.media_type, artifact.name);
+  const title = artifactTitle(artifact);
+  const summary = artifact.previous_id ? artifact.change_summary?.trim() : null;
   const [ref, near] = useNearViewport<HTMLDivElement>();
   const [open, setOpen] = useState(false);
   if (artifact.state === 'deleted')
@@ -230,9 +234,12 @@ export function ArtifactCard({ artifact }: { artifact: Artifact }) {
       <CardPreview artifact={artifact} kind={kind} enabled={near} />
       <span className="artifact-row">
         <span className="artifact-icon" data-kind={kind}><KindIcon kind={kind} /></span>
-        {canOpenInline(kind)
-          ? <button type="button" className="artifact-name artifact-open" title={artifact.name} onClick={() => setOpen(true)} aria-haspopup="dialog">{artifact.name}</button>
-          : <a className="artifact-name artifact-open" title={artifact.name} href={contentPath(artifact)} download={artifact.name}>{artifact.name}</a>}
+        <span className="artifact-label">
+          {canOpenInline(kind)
+            ? <button type="button" className="artifact-name artifact-open" title={artifact.name} onClick={() => setOpen(true)} aria-haspopup="dialog">{title}</button>
+            : <a className="artifact-name artifact-open" title={artifact.name} href={contentPath(artifact)} download={artifact.name}>{title}</a>}
+          {summary && <span className="artifact-summary">{summary}</span>}
+        </span>
       </span>
       {open && <ArtifactSheet artifact={artifact} kind={kind} onClose={() => setOpen(false)} />}
     </div>

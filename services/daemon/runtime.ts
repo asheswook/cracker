@@ -8,7 +8,7 @@ import { planResponse, ResponsePlanError, type ToolArgumentDiagnostic } from "..
 import type { Provider, ResponseInputItem, Tool } from "../../packages/provider/index.ts";
 import { DesktopError } from "./desktop-protocol.ts";
 import type { Journal } from "./journal.ts";
-import { ArtifactError, TaskArtifacts, documentFamily, publishArtifactTool } from "./artifacts.ts";
+import { ArtifactError, TaskArtifacts, documentFamily, publishArtifactTool, readArtifactTool } from "./artifacts.ts";
 import { enroll, proactiveTools, ProactiveError, notifyUser, notifyUserTool } from "./proactive.ts";
 import { applyPolicy, offered } from "./read-only.ts";
 import { askBlock, askUserTool, planMeetingPrepTool, readAttentionTool, reportObservationTool, resultBlock, setBriefTool, showResultTool, updateFeedItemTool, watchSourceTool } from "./result-card.ts";
@@ -737,7 +737,7 @@ export class Runtime {
         queueSemantic();
         await applyMailbox();
         if (semantic?.finalCursor !== undefined) { if (await completeTurn()) break; continue; }
-        const nativeRequest=()=>({runId:assignment.run_id,input,tools:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,readDemonstrationTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,updateFeedItemTool,setBriefTool,...(runPolicy==='brief'?[planMeetingPrepTool]:[]),watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]),signal,...(background?{budget:backgroundRetry}:{}),...(nativeState?{state:nativeState}:{})});
+        const nativeRequest=()=>({runId:assignment.run_id,input,tools:offerTools([...definitions,computerControlTool,publishArtifactTool,readArtifactTool,loadSkillTool,saveSkillTool,readDemonstrationTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,updateFeedItemTool,setBriefTool,...(runPolicy==='brief'?[planMeetingPrepTool]:[]),watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]),signal,...(background?{budget:backgroundRetry}:{}),...(nativeState?{state:nativeState}:{})});
         let nativeClock=native?utcInstruction():"";
         const measureNative=async():Promise<number>=>{
           if(!native)return 0;
@@ -762,7 +762,7 @@ export class Runtime {
         if(!explainOnly&&native&&nativeState&&!pendingShells()&&budget>=threshold&&budget>=lastCompactBudget+threshold/4){
           lastCompactBudget=budget;
           try {
-            const offeredTools=explainOnly?[]:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,readDemonstrationTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,updateFeedItemTool,setBriefTool,...(runPolicy==='brief'?[planMeetingPrepTool]:[]),watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]);
+            const offeredTools=explainOnly?[]:offerTools([...definitions,computerControlTool,publishArtifactTool,readArtifactTool,loadSkillTool,saveSkillTool,readDemonstrationTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,updateFeedItemTool,setBriefTool,...(runPolicy==='brief'?[planMeetingPrepTool]:[]),watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]);
             const compacted=await native.compact({runId:assignment.run_id,input,tools:offeredTools,state:nativeState,signal,...(background?{budget:backgroundRetry}:{})});
             signal.throwIfAborted();
             if(compacted)commitNative(compacted);
@@ -778,7 +778,7 @@ export class Runtime {
           await applyMailbox();
         }
         if(native&&nativeBudget>nativeLimit)throw new NativeContextError("input_budget_exceeded");
-        const offeredTools=explainOnly?[]:offerTools([...definitions,computerControlTool,publishArtifactTool,loadSkillTool,saveSkillTool,readDemonstrationTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,updateFeedItemTool,setBriefTool,...(runPolicy==='brief'?[planMeetingPrepTool]:[]),watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]);
+        const offeredTools=explainOnly?[]:offerTools([...definitions,computerControlTool,publishArtifactTool,readArtifactTool,loadSkillTool,saveSkillTool,readDemonstrationTool,priorWorkTool,...workSearchTools,...proactiveTools,notifyUserTool,showResultTool,askUserTool,readAttentionTool,updateFeedItemTool,setBriefTool,...(runPolicy==='brief'?[planMeetingPrepTool]:[]),watchSourceTool,...(background?[reportObservationTool]:[]),...futureWorkTools,...delegationTools]);
         await this.waitReceipts(assignment.run_id,signal);
         const composing=background?silentComposing():await observeComposing(this.http,assignment.run_id,input,signal,native?[...appliedInputIds]:undefined);
         const semanticContextId = semantic?.contextId;
@@ -890,7 +890,7 @@ export class Runtime {
           const latest = await this.readContext(assignment.run_id,cursor,signal);
           // New input steers the work instead of discarding it: read-only lookups already chosen still run and
           // their results stay usable; only actions with side effects wait until the model has read the new input.
-          const readOnly=this.config.tools.parallelRead(item.name)||item.name==='search_prior_work'||item.name==='retrieve_prior_work'||item.name==='read_attention'||item.name==='read_demonstration';
+          const readOnly=this.config.tools.parallelRead(item.name)||item.name==='search_prior_work'||item.name==='retrieve_prior_work'||item.name==='read_attention'||item.name==='read_demonstration'||item.name==='read_artifact';
           if (!readOnly && latest.messages.some(m => m.role !== "assistant" && m.sequence > cursor)) {
             return {result:{text:'Not run yet: the user sent a new message. Read it, then decide whether this action is still wanted.'}};
           }
@@ -915,6 +915,7 @@ export class Runtime {
           if(item.name === "load_skill") return {text:await this.extensions.load(item.arguments,signal,assignment)};
           if(item.name === "save_skill") return {text:await this.extensions.save(item.arguments,signal,assignment)};
           if(item.name === "read_demonstration") return {text:JSON.stringify(scope.lane !== 'foreground' ? {none:true} : await this.demonstrations.read())};
+            if(item.name === "read_artifact")return {text:await artifacts.read(item.arguments,signal)};
             if(item.name === "publish_artifact"){
               const artifact=await artifacts.publish(item.arguments,signal);
               const eventId = crypto.randomUUID(), messageId = semantic?.tracksDeliveryIds ? eventId : undefined;
@@ -989,7 +990,7 @@ export class Runtime {
           return {result,actionId};
           };
            if(item.name==='wait_agent'||item.name==='wait_for_desktop')return execute();
-           return scheduler.run(this.config.tools.parallelRead(item.name)||item.name==='search_prior_work'||item.name==='retrieve_prior_work'||item.name==='read_attention'||item.name==='read_demonstration'?'read':'exclusive',signal,execute);
+           return scheduler.run(this.config.tools.parallelRead(item.name)||item.name==='search_prior_work'||item.name==='retrieve_prior_work'||item.name==='read_attention'||item.name==='read_demonstration'||item.name==='read_artifact'?'read':'exclusive',signal,execute);
         },signal);
         for(const [index,item] of calls.entries()){
           const value=completed[index];if(!value)throw new TypeError('Missing tool result');

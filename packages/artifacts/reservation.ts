@@ -25,6 +25,8 @@ export type UploadMetadata = {
   readonly mediaType: string;
   readonly bytes: number;
   readonly sha256: string;
+  readonly series?: string | null;
+  readonly changeSummary?: string | null;
 };
 type Reservation =
   | { readonly kind: "existing"; readonly artifact: z.infer<typeof Artifact> }
@@ -59,7 +61,9 @@ export async function reserveUpload(
         row.sha256 !== metadata.sha256 ||
         row.bytes !== metadata.bytes ||
         row.name !== metadata.name ||
-        row.media_type !== metadata.mediaType
+        row.media_type !== metadata.mediaType ||
+        (row.series_key ?? null) !== (metadata.series ?? null) ||
+        (row.change_summary ?? null) !== (metadata.changeSummary ?? null)
       )
         throw new DomainError(
           "idempotency_conflict",
@@ -84,7 +88,7 @@ export async function reserveUpload(
       throw new DomainError("artifact_quota_exceeded", "Workspace file quota is 1 GB", 409);
     const objectKey = `${workspace}/${metadata.id}`,
       leaseId = crypto.randomUUID();
-    await tx`INSERT INTO assistant.artifacts(id,workspace_id,conversation_id,name,media_type,bytes,sha256,object_key,lease_id,lease_expires_at) VALUES(${metadata.id},${workspace},${input.scope.conversation},${metadata.name},${metadata.mediaType},${metadata.bytes},${metadata.sha256},${objectKey},${leaseId},now()+interval '15 minutes') ON CONFLICT(id) DO UPDATE SET state='uploading',lease_id=${leaseId},lease_expires_at=now()+interval '15 minutes',purged_at=NULL`;
+    await tx`INSERT INTO assistant.artifacts(id,workspace_id,conversation_id,name,media_type,bytes,sha256,object_key,lease_id,lease_expires_at,series_key,change_summary) VALUES(${metadata.id},${workspace},${input.scope.conversation},${metadata.name},${metadata.mediaType},${metadata.bytes},${metadata.sha256},${objectKey},${leaseId},now()+interval '15 minutes',${metadata.series ?? null},${metadata.changeSummary ?? null}) ON CONFLICT(id) DO UPDATE SET state='uploading',lease_id=${leaseId},lease_expires_at=now()+interval '15 minutes',purged_at=NULL`;
     return { kind: "reserved", objectKey, leaseId };
   });
 }

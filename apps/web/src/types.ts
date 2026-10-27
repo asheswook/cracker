@@ -14,6 +14,9 @@ export const Artifact = z.object({
   sha256: z.string(),
   state: z.enum(['ready', 'deleted']),
   created_at: z.string(),
+  series_key: z.string().nullable().optional(),
+  previous_id: Id.nullable().optional(),
+  change_summary: z.string().nullable().optional(),
 });
 export type Artifact = z.infer<typeof Artifact>;
 export const MessageReply = z.object({ message_id: Id, conversation_id: Id, sequence: z.coerce.number(),

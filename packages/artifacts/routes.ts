@@ -10,6 +10,8 @@ import type { ArtifactStore } from "./store";
 import { uploadArtifact } from "./upload";
 import { authorizeReferenceRun } from "../../services/control/repository/work-search.ts";
 import { documentIndexRoutes } from "./document-index-routes.ts";
+import { readArtifact } from "./read";
+import { executionPolicy } from "../../services/control/repository/execution-policy";
 export function artifactRoutes(sql: Database, store: ArtifactStore | undefined, daemon = false) {
   const app = new Hono<AppEnv>();
   if (daemon) app.route("/", documentIndexRoutes(sql, store));
@@ -18,6 +20,17 @@ export function artifactRoutes(sql: Database, store: ArtifactStore | undefined, 
       throw new DomainError("artifact_storage_unavailable", "File storage is not configured", 503);
     return store;
   };
+  if (daemon) app.get("/artifacts/read", async c => {
+    const principal = c.get("principal"), run = Id.parse(c.req.query("run_id"));
+    await authorizeReferenceRun(sql, principal, run);
+    const task = (await sql`SELECT task_id FROM assistant.runs WHERE id=${run} AND workspace_id=${principal.workspace_id}`)[0]!;
+    const policy = (await executionPolicy(sql, principal.workspace_id, String(task['task_id']))).run_policy;
+    if (policy === 'read_only' || policy === 'send_once')
+      throw new DomainError("tool_not_allowed", "This run cannot read artifacts", 403);
+    return c.json(await readArtifact(sql, store, principal.workspace_id, {
+      series: c.req.query("series"), artifact_id: c.req.query("artifact_id"),
+    }));
+  });
   app.post("/conversations/:id/artifacts", async (c) => {
     const conversation = Id.parse(c.req.param("id")),
       runId = Id.optional().parse(c.req.query("run_id"));
