@@ -75,6 +75,11 @@ export class ScreenPeer {
             void this.setVisible(this.visible).catch(() => this.terminate());
           }
         }
+        if (state === "closing" || state === "closed") {
+          // A data channel can close while the peer connection stays connected.
+          if (config.viewer) void config.viewer.lease.release(config.viewer.id).catch(() => this.terminate());
+          else void this.input.releaseInputs().catch(() => this.terminate());
+        }
       });
       channel.onMessage.subscribe((data) => {
         void this.receive(typeof data === "string" ? data : data.toString("utf8")).then(
@@ -97,7 +102,10 @@ export class ScreenPeer {
     });
     this.pc.connectionStateChange.subscribe((state) => {
       this.connected = state === "connected";
-      if (!this.connected && config.viewer) void config.viewer.lease.release(config.viewer.id).catch(() => this.terminate());
+      if (!this.connected) {
+        const release = config.viewer ? config.viewer.lease.release(config.viewer.id) : this.input.releaseInputs();
+        void release.catch(() => this.terminate());
+      }
       if (!this.closed) {
         void this.reconcileMedia().catch((error) => {
           if (!(error instanceof Error)) throw error;

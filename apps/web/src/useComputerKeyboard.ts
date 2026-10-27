@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { splitComputerText } from './computerText';
+import { forwardHardwareKey, remoteKeysym } from './computerKeys';
 
 const anchor = '\u200b';
 const editingKeys: Readonly<Record<string, string>> = {
@@ -62,6 +63,11 @@ export function useComputerKeyboard(enabled: boolean, send: (message: unknown) =
     let consumedValue = '';
     let resetPending = false;
     let disposed = false;
+    const held = new Map<string, string>();
+    const releaseHardware = () => {
+      for (const name of held.values()) send({ type: 'key', key: name, action: 'up' });
+      held.clear();
+    };
     const value = () => element.value.startsWith(anchor) ? element.value.slice(1) : element.value;
     const difference = (text: string, prefix: string) => text.startsWith(prefix) ? text.slice(prefix.length) : text;
     const resetField = () => {
@@ -136,8 +142,16 @@ export function useComputerKeyboard(enabled: boolean, send: (message: unknown) =
       }
     };
     const keyboard = (event: KeyboardEvent) => {
+      if (forwardHardwareKey(event)) {
+        const name = held.get(event.code) ?? remoteKeysym(event);
+        if (name) {
+          event.preventDefault(); flush();
+          held.set(event.code, name);
+          send({ type: 'key', key: name, action: 'down' });
+        }
+        return;
+      }
       if (composing.current || event.isComposing || event.keyCode === 229) return;
-      // The desktop input handler forwards modified keys as remote shortcuts.
       if (event.ctrlKey || event.altKey || event.metaKey) return;
       const name = editingKeys[event.key];
       if (name) {
@@ -146,8 +160,16 @@ export function useComputerKeyboard(enabled: boolean, send: (message: unknown) =
         resetField();
       }
     };
+    const keyup = (event: KeyboardEvent) => {
+      const name = held.get(event.code);
+      if (!name) return;
+      event.preventDefault();
+      held.delete(event.code);
+      send({ type: 'key', key: name, action: 'up' });
+    };
     const blur = () => {
       flush();
+      releaseHardware();
       composing.current = false;
       resetField();
     };
@@ -156,15 +178,18 @@ export function useComputerKeyboard(enabled: boolean, send: (message: unknown) =
     element.addEventListener('beforeinput', before);
     element.addEventListener('input', input);
     element.addEventListener('keydown', keyboard);
+    element.addEventListener('keyup', keyup);
     element.addEventListener('blur', blur);
     return () => {
       disposed = true;
+      releaseHardware();
       discard();
       element.removeEventListener('compositionstart', start);
       element.removeEventListener('compositionend', end);
       element.removeEventListener('beforeinput', before);
       element.removeEventListener('input', input);
       element.removeEventListener('keydown', keyboard);
+      element.removeEventListener('keyup', keyup);
       element.removeEventListener('blur', blur);
     };
   }, [enabled, send, reset, flush, key, discard]);

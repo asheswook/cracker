@@ -9,6 +9,7 @@ const Signal = z.object({ type: z.string(), version: z.number().optional(), view
 const ScreenMetadata = Dimensions.extend({ type: z.literal('screen'), control: z.enum(['agent', 'user']),
   unicode_input: z.enum(['utf8_clipboard', 'unavailable']).optional() });
 const transientScreenError = (code: string | undefined) => code === 'screen_connection_failed' || code === 'capture_failed' || code === 'ice_credentials_refresh';
+const releasesInput = (input: Input) => (input.type === 'key' || input.type === 'pointer_button' || input.type === 'pointer') && input.action === 'up';
 export type ScreenPhase = 'connecting' | 'waiting' | 'retrying' | 'error' | 'live';
 export type ScreenSnapshot = Readonly<{ state: string; phase: ScreenPhase; open: boolean; inputStatus: string;
   held: boolean; claiming: boolean; inputGeneration: number; protocol: 'pending' | 'v2' | 'legacy'; visible: boolean }>;
@@ -76,7 +77,8 @@ export class ScreenSession {
     this.value = next; for (const callback of this.listeners) callback();
   }
   private command(value: ViewerCommand) {
-    if (this.channel?.readyState !== 'open' || this.channel.bufferedAmount >= 65536) return false;
+    const release = value.type === 'input_release' || (value.type === 'input' && releasesInput(value.input));
+    if (this.channel?.readyState !== 'open' || (!release && this.channel.bufferedAmount >= 65536)) return false;
     this.channel.send(JSON.stringify(value)); return true;
   }
   private revoke(release = true, reason: 'authorization' | 'revoked' = 'revoked') {
@@ -304,7 +306,7 @@ export class ScreenSession {
     if (!this.foreground || !this.value.visible || !this.allowed || !this.value.held || this.value.phase !== 'live') return;
     const parsed = Input.safeParse(value); if (!parsed.success) return;
     if (this.value.protocol === 'v2') this.command({ type: 'input', epoch: this.leaseEpoch, input: parsed.data });
-    else if (this.channel?.readyState === 'open' && this.channel.bufferedAmount < 65536) this.channel.send(JSON.stringify(parsed.data));
+    else if (this.channel?.readyState === 'open' && (releasesInput(parsed.data) || this.channel.bufferedAmount < 65536)) this.channel.send(JSON.stringify(parsed.data));
   };
   private closePeer() {
     clearTimeout(this.handshakeDeadline); this.handshakeDeadline = undefined;

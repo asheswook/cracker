@@ -67,6 +67,24 @@ function claim(session: ScreenSession, channel: Channel, epoch = 1) {
   if (!request || typeof request !== 'object' || !('command_id' in request)) throw new Error('missing claim');
   channel.receive({ type: 'input_lease', epoch, held: true, command_id: request.command_id }); return request;
 }
+test('key and pointer releases bypass data-channel backpressure, including lease release', async () => {
+  const session = create(); const { peer } = await live(session); claim(session, peer.channel);
+  peer.channel.sent.length = 0;
+  session.send({ type: 'key', key: 'Control_L', action: 'down' });
+  peer.channel.bufferedAmount = 65536;
+  session.send({ type: 'key', key: 'a', action: 'down' });
+  session.send({ type: 'key', key: 'Control_L', action: 'up' });
+  session.send({ type: 'pointer_button', button: 0, action: 'up' });
+  session.send({ type: 'pointer', x: 0.5, y: 0.5, button: 0, action: 'up' });
+  session.release();
+  expect(peer.channel.sent.map(value => JSON.parse(value))).toEqual([
+    { type: 'input', epoch: 1, input: { type: 'key', key: 'Control_L', action: 'down' } },
+    { type: 'input', epoch: 1, input: { type: 'key', key: 'Control_L', action: 'up' } },
+    { type: 'input', epoch: 1, input: { type: 'pointer_button', button: 0, action: 'up' } },
+    { type: 'input', epoch: 1, input: { type: 'pointer', x: 0.5, y: 0.5, button: 0, action: 'up' } },
+    { type: 'input_release', epoch: 1 },
+  ]);
+});
 beforeEach(() => {
   now = 100000; serial = 0; iceRequests = 0; iceWait = undefined; offerWait = undefined; sockets.length = 0; peers.length = 0; sessions.length = 0; timers.clear();
   function timer(callback: () => void, delay = 0, interval = 0) { const id = ++serial; timers.set(id, { callback, at: now + delay, interval }); return id; }

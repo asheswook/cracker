@@ -1,31 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { KeyboardEvent, PointerEvent, RefObject } from 'react';
 import { createComputerPointer, type ComputerPointerMode } from './computerPointer';
-
-const keys: Readonly<Record<string, string>> = {
-  Enter: 'Enter',
-  Tab: 'Tab',
-  Escape: 'Escape',
-  Backspace: 'BackSpace',
-  Delete: 'Delete',
-  ArrowLeft: 'Left',
-  ArrowRight: 'Right',
-  ArrowUp: 'Up',
-  ArrowDown: 'Down',
-  Home: 'Home',
-  End: 'End',
-  PageUp: 'Page_Up',
-  PageDown: 'Page_Down',
-  Space: 'space',
-  Minus: 'minus', Equal: 'equal', BracketLeft: 'bracketleft', BracketRight: 'bracketright',
-  Backslash: 'backslash', Semicolon: 'semicolon', Quote: 'apostrophe',
-  Comma: 'comma', Period: 'period', Slash: 'slash', Backquote: 'grave',
-  ControlLeft: 'Control_L', ControlRight: 'Control_L',
-  ShiftLeft: 'Shift_L', ShiftRight: 'Shift_L',
-  AltLeft: 'Alt_L', AltRight: 'Alt_L',
-  MetaLeft: 'Super_L', MetaRight: 'Super_L',
-  CapsLock: 'Hangul', Lang1: 'Hangul', Lang2: 'Hangul', HangulMode: 'Hangul',
-};
+import { remoteKeysym } from './computerKeys';
 
 export function useComputerInput(
   video: RefObject<HTMLVideoElement | null>,
@@ -110,16 +86,11 @@ export function useComputerInput(
   };
   const keyboard = (event: KeyboardEvent<HTMLVideoElement>, action: 'down' | 'up') => {
     if (!enabled) return;
-    // Compose inside the VM: local layout, jamo and IME/229 flags are irrelevant.
+    // Local ASCII layouts are preserved; Korean IME events use physical keys.
     event.preventDefault();
     const physicalKey = event.code;
     if (action === 'up' && !pressedKeys.current.has(physicalKey)) return;
-    const key =
-      pressedKeys.current.get(physicalKey) ??
-      keys[physicalKey] ??
-      (/^F(?:[1-9]|1[0-9]|2[0-4])$/.test(physicalKey) ? physicalKey : null) ??
-      (/^Key[A-Z]$/.test(physicalKey) ? physicalKey.slice(3).toLowerCase() : null) ??
-      (/^Digit[0-9]$/.test(physicalKey) ? physicalKey.slice(5) : null);
+    const key = pressedKeys.current.get(physicalKey) ?? remoteKeysym(event);
     if (!key) return;
     if (action === 'down') pressedKeys.current.set(physicalKey, key);
     else pressedKeys.current.delete(physicalKey);

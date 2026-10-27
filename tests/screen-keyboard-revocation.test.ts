@@ -3,6 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, expect, test } from 'bun:test';
 import { Input } from '../packages/screen/protocol';
+function withPlatform(platform: string, run: () => void) {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { platform } });
+  try { run(); } finally {
+    if (original) Object.defineProperty(globalThis, 'navigator', original);
+    else Reflect.deleteProperty(globalThis, 'navigator');
+  }
+}
 const originalInputEvent = globalThis.InputEvent;
 class FieldInputEvent extends Event {
   data: string | null;
@@ -144,6 +152,7 @@ test('composition field diff, duplicate final input, English, paste and editing 
 });
 
 test('desktop sends physical g/k/s, space and Hangul regardless of the local IME', () => {
+  withPlatform('MacIntel', () => {
   slots.length = 0; cursor = 0; effects = [];
   const sent: unknown[] = [];
   const input = inputModule.useComputerInput({ current: null }, true, (message: unknown) => sent.push(message));
@@ -162,6 +171,7 @@ test('desktop sends physical g/k/s, space and Hangul regardless of the local IME
     { type: 'key', key, action: 'down' }, { type: 'key', key, action: 'up' },
   ]));
   for (const message of sent) expect(Input.parse(message) as unknown).toEqual(message);
+  });
 });
 
 test('desktop physical punctuation, modifiers, editing keys and IME toggles use allowed X keysyms', () => {
@@ -174,8 +184,10 @@ test('desktop physical punctuation, modifiers, editing keys and IME toggles use 
     Backslash: 'backslash', Semicolon: 'semicolon', Quote: 'apostrophe', Comma: 'comma',
     Period: 'period', Slash: 'slash', Backquote: 'grave',
     ShiftLeft: 'Shift_L', ShiftRight: 'Shift_L', ControlLeft: 'Control_L', ControlRight: 'Control_L',
-    AltLeft: 'Alt_L', AltRight: 'Alt_L', MetaLeft: 'Super_L', MetaRight: 'Super_L',
-    Lang1: 'Hangul', Lang2: 'Hangul', HangulMode: 'Hangul',
+    AltLeft: 'Alt_L', AltRight: 'ISO_Level3_Shift', MetaLeft: 'Super_L', MetaRight: 'Super_L',
+    Lang1: 'Hangul', Lang2: 'Hangul_Hanja', HangulMode: 'Hangul', HanjaMode: 'Hangul_Hanja',
+    Numpad0: 'KP_0', Numpad9: 'KP_9', NumpadAdd: 'KP_Add', NumpadSubtract: 'KP_Subtract',
+    NumpadMultiply: 'KP_Multiply', NumpadDivide: 'KP_Divide', NumpadDecimal: 'KP_Decimal', NumpadEnter: 'KP_Enter',
     Enter: 'Enter', Backspace: 'BackSpace', ArrowLeft: 'Left', F1: 'F1', F24: 'F24',
   };
   for (const [code, key] of Object.entries(mappings)) {
@@ -188,9 +200,68 @@ test('desktop physical punctuation, modifiers, editing keys and IME toggles use 
   const count = sent.length;
   input.keyboard({ code: 'Unidentified', key: '한', preventDefault() {} }, 'down');
   expect(sent).toHaveLength(count); // Never fall back to local text.
-  input.keyboard({ code: 'KeyG', preventDefault() {} }, 'down');
+  input.keyboard({ code: 'KeyG', key: 'Process', preventDefault() {} }, 'down');
   input.release();
   expect(sent.slice(-2)).toEqual([
     { type: 'key', key: 'g', action: 'down' }, { type: 'key', key: 'g', action: 'up' },
   ]);
+});
+
+test('desktop preserves ASCII layouts, international punctuation and keydown identity on keyup', () => {
+  slots.length = 0; cursor = 0; effects = [];
+  const sent: unknown[] = [];
+  const input = inputModule.useComputerInput({ current: null }, true, (message: unknown) => sent.push(message));
+  for (const [code, local, expected] of [
+    ['KeyQ', 'a', 'a'], ['KeyY', 'z', 'z'], ['Digit2', '@', 'at'], ['KeyA', 'A', 'A'],
+    ['IntlBackslash', '<', 'less'], ['IntlYen', '¥', 'yen'], ['IntlRo', '_', 'underscore'],
+    ['BracketLeft', '{', 'braceleft'], ['Backslash', '|', 'bar'], ['Quote', '"', 'quotedbl'],
+  ]) {
+    input.keyboard({ code, key: local, preventDefault() {} }, 'down');
+    input.keyboard({ code, key: 'changed after modifier release', preventDefault() {} }, 'up');
+    expect(sent.slice(-2)).toEqual([
+      { type: 'key', key: expected, action: 'down' }, { type: 'key', key: expected, action: 'up' },
+    ]);
+  }
+  withPlatform('Win32', () => {
+    input.keyboard({ code: 'CapsLock', key: 'CapsLock', preventDefault() {} }, 'down');
+    input.keyboard({ code: 'CapsLock', key: 'CapsLock', preventDefault() {} }, 'up');
+    expect(sent.slice(-2)).toEqual([
+      { type: 'key', key: 'Caps_Lock', action: 'down' }, { type: 'key', key: 'Caps_Lock', action: 'up' },
+    ]);
+  });
+  withPlatform('Linux', () => {
+    Object.assign(navigator, { userAgentData: { platform: 'macOS' } });
+    input.keyboard({ code: 'CapsLock', key: 'CapsLock', preventDefault() {} }, 'down');
+    input.keyboard({ code: 'CapsLock', key: 'CapsLock', preventDefault() {} }, 'up');
+    expect(sent.at(-1)).toEqual({ type: 'key', key: 'Hangul', action: 'up' });
+  });
+  for (const message of sent) expect(Input.parse(message) as unknown).toEqual(message);
+});
+
+test('touch textarea forwards hardware Ctrl+A and editing keys but keeps plain text and IME local', async () => {
+  const { field, sent, cleanup } = mountKeyboard();
+  const hardware = (type: string, code: string, key: string, ctrlKey = false) => {
+    const event = Object.assign(new Event(type, { cancelable: true }), {
+      code, key, ctrlKey, altKey: false, metaKey: false, isComposing: false, keyCode: 0,
+    });
+    field.dispatchEvent(event);
+    return event;
+  };
+  try {
+    for (const [code, key] of [['ControlLeft', 'Control'], ['KeyA', 'a'], ['ArrowLeft', 'ArrowLeft']] as const) {
+      expect(hardware('keydown', code, key, true).defaultPrevented).toBe(true);
+      expect(hardware('keyup', code, key).defaultPrevented).toBe(true);
+    }
+    expect(sent).toEqual(['Control_L', 'a', 'Left'].flatMap(key => [
+      { type: 'key', key, action: 'down' }, { type: 'key', key, action: 'up' },
+    ]));
+    expect(hardware('keydown', 'KeyQ', 'a').defaultPrevented).toBe(false);
+    field.value = '\u200ba'; field.input('a');
+    await Promise.resolve();
+    field.composition('compositionstart');
+    expect(hardware('keydown', 'KeyG', 'ㅎ').defaultPrevented).toBe(false);
+    field.value = '\u200b한'; field.composition('compositionend', '한');
+    await Bun.sleep(85);
+    expect(sent.slice(6)).toEqual([{ type: 'text', text: 'a한' }]);
+  } finally { cleanup(); }
 });

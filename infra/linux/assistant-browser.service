@@ -1,6 +1,7 @@
 [Unit]
 Description=Shared Assistant Chrome browser
 Requires=assistant-xvfb.service
+Wants=assistant-desktop.service
 After=assistant-xvfb.service assistant-desktop.service
 
 [Service]

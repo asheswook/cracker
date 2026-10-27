@@ -32,7 +32,8 @@ export class ScreenInput {
   async receive(data: string, permitted?: () => boolean): Promise<void> {
     if (data.length > 16384) throw new ScreenError("input_too_large");
     const input = Input.parse(JSON.parse(data));
-    if (this.pending >= 64) throw new ScreenError("input_queue_full");
+    const release = (input.type === "key" || input.type === "pointer_button" || input.type === "pointer") && input.action === "up";
+    if (this.pending >= 64 && !release) throw new ScreenError("input_queue_full");
     this.pending++;
     const next = this.tail.then(async () => {
       this.permitted = permitted;

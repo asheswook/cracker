@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { ScreenInput } from "../packages/screen/input";
+import { InputLease } from "../packages/screen/input-lease";
+import { ScreenPeer } from "../packages/screen/peer";
 
 test("physical Korean composition keys reach xdotool as paired keys, never text", async () => {
   const calls: string[][] = [];
@@ -9,11 +11,82 @@ test("physical Korean composition keys reach xdotool as paired keys, never text"
     paste: async () => { throw new Error("physical keys must not paste text"); },
   });
   const keys = ["Hangul", "g", "k", "s", "space", "Super_L", "minus", "equal", "bracketleft",
-    "bracketright", "backslash", "semicolon", "apostrophe", "comma", "period", "slash", "grave"];
+    "bracketright", "backslash", "semicolon", "apostrophe", "comma", "period", "slash", "grave",
+    "Caps_Lock", "Hangul_Hanja", "ISO_Level3_Shift", "KP_0", "KP_9", "KP_Add", "KP_Subtract",
+    "KP_Multiply", "KP_Divide", "KP_Decimal", "KP_Enter", "less", "yen", "underscore"];
   for (const key of keys) for (const action of ["down", "up"]) {
     await input.receive(JSON.stringify({ type: "key", key, action }));
   }
   expect(calls).toEqual(keys.flatMap(key => [["keydown", key], ["keyup", key]]));
+});
+
+test("keyup is queued even when the server input queue is full", async () => {
+  const calls: string[][] = [];
+  const gate = Promise.withResolvers<void>();
+  const input = new ScreenInput({
+    owner: { control: () => "user" }, dimensions: { width: 800, height: 600 },
+    execute: async args => { calls.push([...args]); await gate.promise; },
+  });
+  const queued = Array.from({ length: 64 }, () => input.receive(JSON.stringify({ type: "key", key: "a", action: "down" })));
+  queued.push(input.receive(JSON.stringify({ type: "key", key: "a", action: "up" })));
+  gate.resolve();
+  await Promise.all(queued);
+  expect(calls.at(-1)).toEqual(["keyup", "a"]);
+});
+
+for (const end of ["expire", "return", "disconnect"] as const) {
+  test(`lease ${end} releases real held keys server-side`, async () => {
+    let now = 1000;
+    let owner: "user" | "agent" = "user";
+    const journal = { control: () => owner };
+    const calls: string[][] = [];
+    const input = new ScreenInput({ owner: journal, dimensions: { width: 800, height: 600 },
+      execute: async args => { calls.push([...args]); } });
+    const lease = new InputLease(journal, () => now);
+    lease.register("viewer", { visible: () => true, changed: () => {}, release: () => input.releaseInputs() });
+    const epoch = await lease.claim("viewer");
+    await input.receive(JSON.stringify({ type: "key", key: "Control_L", action: "down" }), () => lease.permits("viewer", epoch));
+    if (end === "disconnect") await lease.unregister("viewer");
+    else {
+      if (end === "return") owner = "agent";
+      else now += 30001;
+      await lease.expire();
+    }
+    expect(calls).toEqual([["keydown", "Control_L"], ["keyup", "Control_L"]]);
+  });
+}
+
+test("peer disconnection releases held keys even without a viewer lease", async () => {
+  const calls: string[][] = [];
+  const peer = new ScreenPeer({ owner: { control: () => "user" }, dimensions: { width: 160, height: 120 },
+    iceServers: [], visible: false, signal: () => {}, execute: async args => { calls.push([...args]); },
+    capture: async () => async () => {} });
+  try {
+    await peer.input.receive(JSON.stringify({ type: "key", key: "Shift_L", action: "down" }));
+    peer.pc.connectionStateChange.execute("disconnected");
+    await Bun.sleep(0);
+    expect(calls).toEqual([["keydown", "Shift_L"], ["keyup", "Shift_L"]]);
+  } finally { await peer.close(); }
+});
+
+test("input-channel closure revokes the lease and releases keys while the peer stays connected", async () => {
+  const calls: string[][] = [];
+  const owner = { control: () => "user" as const };
+  const lease = new InputLease(owner);
+  const peer = new ScreenPeer({ owner, dimensions: { width: 160, height: 120 },
+    viewer: { id: "viewer", version: 2, lease }, iceServers: [], signal: () => {},
+    execute: async args => { calls.push([...args]); }, capture: async () => async () => {} });
+  try {
+    peer.pc.connectionStateChange.execute("connected");
+    const channel = peer.pc.createDataChannel("input");
+    peer.pc.onDataChannel.execute(channel);
+    const epoch = await lease.claim("viewer");
+    await peer.input.receive(JSON.stringify({ type: "key", key: "Alt_L", action: "down" }), () => lease.permits("viewer", epoch));
+    channel.stateChange.execute("closed");
+    await Bun.sleep(0);
+    expect(lease.permits("viewer", epoch)).toBe(false);
+    expect(calls).toEqual([["keydown", "Alt_L"], ["keyup", "Alt_L"]]);
+  } finally { await peer.close(); }
 });
 
 test("rejects viewer input while agent owns the VM", async () => {

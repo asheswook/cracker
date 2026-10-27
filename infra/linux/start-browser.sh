@@ -4,7 +4,7 @@ unset XDG_CONFIG_HOME XDG_CACHE_HOME
 export XMODIFIERS=@im=fcitx GTK_IM_MODULE=fcitx QT_IM_MODULE=fcitx
 # The browser is a separate systemd service, not a child of the desktop.
 # Join its DISPLAY/D-Bus session so GTK and XIM use the same fcitx instance.
-DBUS_SESSION_BUS_ADDRESS=$(python3 -c '
+if DBUS_SESSION_BUS_ADDRESS=$(python3 -c '
 import os, pathlib, time
 for attempt in range(100):
     for process in pathlib.Path("/proc").glob("[0-9]*"):
@@ -18,9 +18,13 @@ for attempt in range(100):
         except (OSError, ValueError):
             continue
     time.sleep(0.1)
-raise SystemExit("Assistant desktop D-Bus session unavailable")
-')
-export DBUS_SESSION_BUS_ADDRESS
+raise SystemExit(1)
+'); then
+  export DBUS_SESSION_BUS_ADDRESS
+else
+  printf '%s\n' 'Assistant desktop D-Bus session unavailable; starting Chrome without IME session.' >&2
+  unset DBUS_SESSION_BUS_ADDRESS
+fi
 profile_root="$HOME/.config/autonomous-assistant/chrome"
 profile=$(python3 -c '
 import json, pathlib, sys

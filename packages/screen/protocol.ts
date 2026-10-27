@@ -53,7 +53,7 @@ export const Input = z.discriminatedUnion("type", [
     key: z
       .string()
       .regex(
-        /^(?:[A-Za-z0-9]|F(?:[1-9]|1[0-9]|2[0-4])|Enter|Tab|Escape|BackSpace|Delete|Left|Right|Up|Down|Home|End|Page_Up|Page_Down|space|minus|equal|bracketleft|bracketright|backslash|semicolon|apostrophe|comma|period|slash|grave|Hangul|Control_L|Shift_L|Alt_L|Super_L)$/,
+        /^(?:[A-Za-z0-9]|F(?:[1-9]|1[0-9]|2[0-4])|KP_(?:[0-9]|Add|Subtract|Multiply|Divide|Decimal|Enter)|Enter|Tab|Escape|BackSpace|Delete|Left|Right|Up|Down|Home|End|Page_Up|Page_Down|space|minus|equal|bracketleft|bracketright|backslash|semicolon|apostrophe|comma|period|slash|grave|exclam|quotedbl|numbersign|dollar|percent|ampersand|parenleft|parenright|asterisk|plus|colon|less|greater|question|at|asciicircum|underscore|braceleft|bar|braceright|asciitilde|yen|Hangul|Hangul_Hanja|Caps_Lock|Control_L|Shift_L|Alt_L|ISO_Level3_Shift|Super_L)$/,
       ),
     action: z.enum(["down", "up"]),
   }),
