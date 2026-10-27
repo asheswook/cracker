@@ -17,7 +17,7 @@ fi
 case "${1:-}" in
   --install-deps)
     sudo apt-get update
-    sudo apt-get install -y --no-install-recommends ca-certificates curl openssl unzip git nodejs python3 poppler-utils ffmpeg xdotool xclip x11-utils xvfb xauth xfce4 xfce4-terminal thunar xfce4-panel xfce4-whiskermenu-plugin dbus-x11 x11-xserver-utils scrot fonts-noto-cjk mesa-utils
+    sudo apt-get install -y --no-install-recommends ca-certificates curl openssl unzip git nodejs python3 poppler-utils ffmpeg xdotool xclip x11-utils xvfb xauth xfce4 xfce4-terminal thunar xfce4-panel xfce4-whiskermenu-plugin dbus-x11 x11-xserver-utils scrot fonts-noto-cjk mesa-utils fcitx5 fcitx5-hangul fcitx5-frontend-gtk3
     sh "$(dirname -- "$0")/install-work-tools.sh"
     sudo apt-get install -y gir1.2-atspi-2.0 gir1.2-gtk-3.0 at-spi2-core python3-gi npm
     # Match autonomous-assistant.service's Node lookup; install the CLI on its PATH.

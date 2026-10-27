@@ -1,0 +1,7 @@
+[Hotkey/TriggerKeys]
+0=Hangul
+1=Shift+space
+2=Control+space
+
+[Behavior]
+ActiveByDefault=False

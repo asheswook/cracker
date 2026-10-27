@@ -143,60 +143,54 @@ test('composition field diff, duplicate final input, English, paste and editing 
   } finally { cleanup(); }
 });
 
-test('desktop video IME keydowns never send jamo; textarea sends the completed syllable', async () => {
-  const { field, sent, keyboard, cleanup } = mountKeyboard();
-  // The input hook's window/wheel effect is not needed for keyboard handlers.
-  const input = inputModule.useComputerInput({ current: null }, true, (message: typeof sent[number]) => sent.push(message), 'direct', {
-    field: keyboard.field, flush: keyboard.flush,
-  });
-  const keyEvent = (key: string, keyCode: number, currentTarget: unknown = {}, extras = {}) => ({
-    key, code: '', currentTarget, ctrlKey: false, altKey: false, metaKey: false,
-    defaultPrevented: false, nativeEvent: { isComposing: false, keyCode },
-    preventDefault() { this.defaultPrevented = true; }, ...extras,
-  });
-  try {
-    for (const [key, keyCode] of [['Process', 229], ['ㅎ', 229], ['ㅏ', 65], ['ㄴ', 78], ['한', 0]] as const) {
-      input.keyboard(keyEvent(key, keyCode), 'down');
-      input.keyboard(keyEvent(key, keyCode), 'up');
+test('desktop sends physical g/k/s, space and Hangul regardless of the local IME', () => {
+  slots.length = 0; cursor = 0; effects = [];
+  const sent: unknown[] = [];
+  const input = inputModule.useComputerInput({ current: null }, true, (message: unknown) => sent.push(message));
+  for (const code of ['KeyG', 'KeyK', 'KeyS', 'Space', 'CapsLock']) {
+    for (const action of ['down', 'up']) {
+      const event = {
+        code, key: 'ㅎ', keyCode: 229, isComposing: true,
+        nativeEvent: { keyCode: 229, isComposing: true }, defaultPrevented: false,
+        preventDefault() { this.defaultPrevented = true; },
+      };
+      input.keyboard(event, action);
+      expect(event.defaultPrevented).toBe(true);
     }
-    expect(field.focused).toBe(true);
-    expect(sent).toEqual([]);
-    field.composition('compositionstart');
-    for (const data of ['ㅎ', '하', '한']) {
-      field.value = `\u200b${data}`;
-      input.keyboard(keyEvent('Process', 229, field), 'down');
-      field.input(data, 'insertCompositionText', true);
+  }
+  expect(sent).toEqual(['g', 'k', 's', 'space', 'Hangul'].flatMap(key => [
+    { type: 'key', key, action: 'down' }, { type: 'key', key, action: 'up' },
+  ]));
+  for (const message of sent) expect(Input.parse(message) as unknown).toEqual(message);
+});
+
+test('desktop physical punctuation, modifiers, editing keys and IME toggles use allowed X keysyms', () => {
+  slots.length = 0; cursor = 0; effects = [];
+  const sent: unknown[] = [];
+  const input = inputModule.useComputerInput({ current: null }, true, (message: unknown) => sent.push(message));
+  const mappings = {
+    KeyA: 'a', KeyZ: 'z', Digit0: '0', Digit9: '9',
+    Minus: 'minus', Equal: 'equal', BracketLeft: 'bracketleft', BracketRight: 'bracketright',
+    Backslash: 'backslash', Semicolon: 'semicolon', Quote: 'apostrophe', Comma: 'comma',
+    Period: 'period', Slash: 'slash', Backquote: 'grave',
+    ShiftLeft: 'Shift_L', ShiftRight: 'Shift_L', ControlLeft: 'Control_L', ControlRight: 'Control_L',
+    AltLeft: 'Alt_L', AltRight: 'Alt_L', MetaLeft: 'Super_L', MetaRight: 'Super_L',
+    Lang1: 'Hangul', Lang2: 'Hangul', HangulMode: 'Hangul',
+    Enter: 'Enter', Backspace: 'BackSpace', ArrowLeft: 'Left', F1: 'F1', F24: 'F24',
+  };
+  for (const [code, key] of Object.entries(mappings)) {
+    for (const action of ['down', 'up']) {
+      input.keyboard({ code, key: 'Process', preventDefault() {} }, action);
+      expect(sent.at(-1)).toEqual({ type: 'key', key, action });
+      expect(Input.parse(sent.at(-1)) as unknown).toEqual(sent.at(-1));
     }
-    await Bun.sleep(85);
-    expect(sent).toEqual([]);
-    field.composition('compositionend', '한');
-    field.input('한', 'insertCompositionText', false);
-    await Bun.sleep(85);
-    expect(sent).toEqual([{ type: 'text', text: '한' }]);
-    // Plain ASCII also belongs to input events, not the old video keydown path.
-    input.keyboard(keyEvent('a', 65), 'down');
-    expect(sent).toEqual([{ type: 'text', text: '한' }]);
-    field.value = '\u200ba'; field.input('a');
-    // Shortcuts/function keys still use paired remote key events and flush text first.
-    for (const key of ['Control', 'c', 'v', 'a', 'F5']) {
-      input.keyboard(keyEvent(key, 0, field, { ctrlKey: true }), 'down');
-      input.keyboard(keyEvent(key, 0, field, { ctrlKey: true }), 'up');
-    }
-    expect(sent.slice(0, 2)).toEqual([{ type: 'text', text: '한' }, { type: 'text', text: 'a' }]);
-    expect(sent.slice(2)).toEqual(['Control_L', 'c', 'v', 'a', 'F5'].flatMap(key => [
-      { type: 'key', key, action: 'down' }, { type: 'key', key, action: 'up' },
-    ]));
-    for (const message of sent) expect(Input.parse(message) as unknown).toEqual(message);
-    // Native textarea keydown already handles editing keys; React must not duplicate them.
-    const event = Object.assign(new Event('keydown', { cancelable: true }), {
-      key: 'Backspace', isComposing: false, keyCode: 8,
-    });
-    field.dispatchEvent(event);
-    input.keyboard(keyEvent('Backspace', 8, field, { defaultPrevented: event.defaultPrevented }), 'down');
-    input.keyboard(keyEvent('Backspace', 8, field), 'up');
-    expect(sent.slice(-2)).toEqual([
-      { type: 'key', key: 'BackSpace', action: 'down' }, { type: 'key', key: 'BackSpace', action: 'up' },
-    ]);
-    expect(sent).toHaveLength(14);
-  } finally { cleanup(); }
+  }
+  const count = sent.length;
+  input.keyboard({ code: 'Unidentified', key: '한', preventDefault() {} }, 'down');
+  expect(sent).toHaveLength(count); // Never fall back to local text.
+  input.keyboard({ code: 'KeyG', preventDefault() {} }, 'down');
+  input.release();
+  expect(sent.slice(-2)).toEqual([
+    { type: 'key', key: 'g', action: 'down' }, { type: 'key', key: 'g', action: 'up' },
+  ]);
 });

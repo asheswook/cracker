@@ -95,11 +95,9 @@ export function Computer({ vms, connected }: { vms: Vm[]; connected: boolean }) 
     if (document.activeElement === trigger || document.activeElement === document.body)
       screen.video.current?.focus({ preventScroll: true });
   }, [enabled, receipt?.phase, screen.video]);
-  const keyboard = useComputerKeyboard(enabled && !panning, screen.send);
-  const input = useComputerInput(screen.video, enabled && !panning, screen.send, mode, {
-    field: keyboard.field, flush: keyboard.flush,
-  });
-  const remoteKeyDown = (event: KeyboardEvent<HTMLVideoElement | HTMLTextAreaElement>) => {
+  const keyboard = useComputerKeyboard(enabled && keyboardOpen && !desktopKeyboard && !panning, screen.send);
+  const input = useComputerInput(screen.video, enabled && !panning, screen.send, mode);
+  const remoteKeyDown = (event: KeyboardEvent<HTMLVideoElement>) => {
     if (enabled && event.key === 'Escape' && event.ctrlKey && event.altKey) {
       event.preventDefault();
       event.stopPropagation();
@@ -323,7 +321,7 @@ export function Computer({ vms, connected }: { vms: Vm[]; connected: boolean }) 
             >
               {mode === 'trackpad' ? <Hand size={17} /> : <MousePointer2 size={17} />}
             </IconButton>
-            <IconButton
+            {!desktopKeyboard && <IconButton
               label={keyboardOpen ? '키보드 닫기' : '키보드 열기'}
               disabled={!enabled}
               aria-pressed={keyboardOpen}
@@ -341,7 +339,7 @@ export function Computer({ vms, connected }: { vms: Vm[]; connected: boolean }) 
               }}
             >
               <Keyboard size={17} />
-            </IconButton>
+            </IconButton>}
             <IconButton label="화면 다시 연결" onClick={screen.reconnect}>
               <RotateCcw size={15} />
             </IconButton>
@@ -379,30 +377,12 @@ export function Computer({ vms, connected }: { vms: Vm[]; connected: boolean }) 
             onPointerCancel={input.releasePointer}
             onLostPointerCapture={(e) => input.lostPointer(e.pointerId)}
             onFocus={() => {
-              if (enabled && !panning && (desktopKeyboard || keyboardOpen))
+              if (enabled && !panning && !desktopKeyboard && keyboardOpen)
                 keyboard.field.current?.focus({ preventScroll: true });
             }}
             onBlur={input.release}
             onKeyDown={remoteKeyDown}
             onKeyUp={(e) => input.keyboard(e, 'up')}
-          />
-          <textarea
-            ref={keyboard.field}
-            className="computer-text-input"
-            onFocus={() => { if (!desktopKeyboard) setKeyboardOpen(true); }}
-            onBlur={() => { keyboard.flush(); input.release(); setKeyboardOpen(false); }}
-            onKeyDown={remoteKeyDown}
-            onKeyUp={(event) => input.keyboard(event, 'up')}
-            aria-label="컴퓨터 키보드 입력"
-            aria-describedby={enabled ? keyboardHelp : undefined}
-            aria-keyshortcuts={enabled ? 'Control+Alt+Escape' : undefined}
-            tabIndex={-1}
-            disabled={!enabled || panning}
-            rows={1}
-            autoCapitalize="none"
-            autoCorrect="off"
-            autoComplete="off"
-            spellCheck={false}
           />
           {enabled && (
             <span id={keyboardHelp} className="screen-keyboard-help">
@@ -449,6 +429,19 @@ export function Computer({ vms, connected }: { vms: Vm[]; connected: boolean }) 
       {(error || receipt?.error) && <ErrorNotice>{error || receipt?.error}</ErrorNotice>}
       {screen.phase === 'error' && <ErrorNotice>{screen.state}</ErrorNotice>}
       <div className="computer-keyboard" data-open={keyboardOpen} aria-hidden={!keyboardOpen}>
+        {!desktopKeyboard && <textarea
+          ref={keyboard.field}
+          onFocus={() => setKeyboardOpen(true)}
+          onBlur={() => { keyboard.flush(); setKeyboardOpen(false); }}
+          aria-label="컴퓨터 키보드 입력"
+          tabIndex={keyboardOpen ? 0 : -1}
+          disabled={!enabled || panning}
+          rows={1}
+          autoCapitalize="none"
+          autoCorrect="off"
+          autoComplete="off"
+          spellCheck={false}
+        />}
         {keyboardOpen && !compactKeyboard && (
           <div className="computer-keyboard-keys">
             {keyboardKeys}

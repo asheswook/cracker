@@ -1,6 +1,21 @@
 import { expect, test } from "bun:test";
 import { ScreenInput } from "../packages/screen/input";
 
+test("physical Korean composition keys reach xdotool as paired keys, never text", async () => {
+  const calls: string[][] = [];
+  const input = new ScreenInput({
+    owner: { control: () => "user" }, dimensions: { width: 800, height: 600 },
+    execute: async args => { calls.push([...args]); },
+    paste: async () => { throw new Error("physical keys must not paste text"); },
+  });
+  const keys = ["Hangul", "g", "k", "s", "space", "Super_L", "minus", "equal", "bracketleft",
+    "bracketright", "backslash", "semicolon", "apostrophe", "comma", "period", "slash", "grave"];
+  for (const key of keys) for (const action of ["down", "up"]) {
+    await input.receive(JSON.stringify({ type: "key", key, action }));
+  }
+  expect(calls).toEqual(keys.flatMap(key => [["keydown", key], ["keyup", key]]));
+});
+
 test("rejects viewer input while agent owns the VM", async () => {
   // Given agent ownership and a real input boundary.
   const calls: string[][] = [];
