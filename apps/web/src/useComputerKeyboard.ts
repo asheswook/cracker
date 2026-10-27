@@ -137,6 +137,8 @@ export function useComputerKeyboard(enabled: boolean, send: (message: unknown) =
     };
     const keyboard = (event: KeyboardEvent) => {
       if (composing.current || event.isComposing || event.keyCode === 229) return;
+      // The desktop input handler forwards modified keys as remote shortcuts.
+      if (event.ctrlKey || event.altKey || event.metaKey) return;
       const name = editingKeys[event.key];
       if (name) {
         event.preventDefault();

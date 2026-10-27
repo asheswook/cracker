@@ -28,6 +28,7 @@ export function useComputerInput(
   enabled: boolean,
   send: (message: unknown) => void,
   mode: ComputerPointerMode = 'direct',
+  textInput?: { field: RefObject<HTMLTextAreaElement | null>; flush: () => void },
 ) {
   const pressedKeys = useRef(new Map<string, string>());
   const controller = useMemo(() => createComputerPointer(send), [send]);
@@ -77,7 +78,10 @@ export function useComputerInput(
       height = element.videoHeight * scale;
     if (action === 'down') {
       event.preventDefault();
-      element.focus({ preventScroll: true });
+      // Do not bounce focus through the video while the IME field already owns
+      // it: that would end composition and release held shortcut modifiers.
+      if (element.ownerDocument.activeElement !== textInput?.field.current)
+        element.focus({ preventScroll: true });
       element.setPointerCapture(event.pointerId);
       captured.current.add(event.pointerId);
     }
@@ -104,12 +108,28 @@ export function useComputerInput(
       if (element.hasPointerCapture(event.pointerId)) element.releasePointerCapture(event.pointerId);
     }
   };
-  const keyboard = (event: KeyboardEvent<HTMLVideoElement>, action: 'down' | 'up') => {
-    if (!enabled || event.nativeEvent.isComposing) return;
+  const keyboard = (event: KeyboardEvent<HTMLVideoElement | HTMLTextAreaElement>, action: 'down' | 'up') => {
+    if (!enabled || event.defaultPrevented) return;
+    // A video cannot host an IME. Never send its provisional Korean key values.
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || event.key === 'Process' ||
+        /[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]/.test(event.key)) {
+      if (action === 'down' && event.currentTarget !== textInput?.field.current)
+        textInput?.field.current?.focus({ preventScroll: true });
+      return;
+    }
+    // Ordinary typing (including English/space) belongs to the textarea's input
+    // events; only shortcuts and non-text keys use physical remote key events.
+    if (textInput && event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      if (action === 'down' && event.currentTarget !== textInput.field.current)
+        textInput.field.current?.focus({ preventScroll: true });
+      return;
+    }
     const physicalKey = event.code || event.key;
+    if (action === 'up' && !pressedKeys.current.has(physicalKey)) return;
     const key =
       pressedKeys.current.get(physicalKey) ??
       keys[event.key] ??
+      (/^F(?:[1-9]|1[0-9]|2[0-4])$/.test(event.key) ? event.key : null) ??
       (/^[a-z0-9]$/i.test(event.key) ? event.key : null);
     if (!key) {
       if (action === 'down' && event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
@@ -119,6 +139,7 @@ export function useComputerInput(
       return;
     }
     event.preventDefault();
+    textInput?.flush();
     if (action === 'down') pressedKeys.current.set(physicalKey, key);
     else pressedKeys.current.delete(physicalKey);
     send({ type: 'key', key, action });

@@ -31,7 +31,7 @@
   pointer-events: none;
   opacity: 0;
 }
-.video-region video:focus-visible + .screen-keyboard-help {
+.video-region:focus-within .screen-keyboard-help {
   opacity: 1;
 }
 .screen-takeover,
@@ -235,13 +235,16 @@
   position: relative;
   flex-shrink: 0;
 }
-.computer-keyboard textarea {
+.computer-text-input {
   position: absolute;
+  top: 0;
+  left: 0;
   width: 1px;
   height: 1px;
   padding: 0;
   border: 0;
   opacity: 0;
+  pointer-events: none;
   font-size: var(--t-callout);
   resize: none;
 }

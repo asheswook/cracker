@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import {
   Monitor,
   Maximize2,
@@ -39,6 +39,7 @@ export function Computer({ vms, connected }: { vms: Vm[]; connected: boolean }) 
     matchMedia('(pointer: coarse)').matches ? 'trackpad' : 'direct',
   );
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const desktopKeyboard = !matchMedia('(pointer: coarse)').matches;
   const [expanded, setExpanded] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [zoomed, setZoomed] = useState(false);
@@ -94,8 +95,18 @@ export function Computer({ vms, connected }: { vms: Vm[]; connected: boolean }) 
     if (document.activeElement === trigger || document.activeElement === document.body)
       screen.video.current?.focus({ preventScroll: true });
   }, [enabled, receipt?.phase, screen.video]);
-  const input = useComputerInput(screen.video, enabled && !panning, screen.send, mode);
-  const keyboard = useComputerKeyboard(enabled && keyboardOpen, screen.send);
+  const keyboard = useComputerKeyboard(enabled && !panning, screen.send);
+  const input = useComputerInput(screen.video, enabled && !panning, screen.send, mode, {
+    field: keyboard.field, flush: keyboard.flush,
+  });
+  const remoteKeyDown = (event: KeyboardEvent<HTMLVideoElement | HTMLTextAreaElement>) => {
+    if (enabled && event.key === 'Escape' && event.ctrlKey && event.altKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      input.release();
+      frame.current?.querySelector<HTMLButtonElement>('.computer-control-action')?.focus();
+    } else input.keyboard(event, 'down');
+  };
   const compactKeyboard = keyboardOpen && (expanded || fullscreen);
   useEffect(() => {
     if ((!expanded && !fullscreen) || !screen.live) { setZoomed(false); setPanning(false); }
@@ -367,16 +378,31 @@ export function Computer({ vms, connected }: { vms: Vm[]; connected: boolean }) 
             onPointerUp={(e) => input.pointer(e, 'up')}
             onPointerCancel={input.releasePointer}
             onLostPointerCapture={(e) => input.lostPointer(e.pointerId)}
-            onBlur={input.release}
-            onKeyDown={(e) => {
-              if (enabled && e.key === 'Escape' && e.ctrlKey && e.altKey) {
-                e.preventDefault();
-                e.stopPropagation();
-                input.release();
-                frame.current?.querySelector<HTMLButtonElement>('.computer-control-action')?.focus();
-              } else input.keyboard(e, 'down');
+            onFocus={() => {
+              if (enabled && !panning && (desktopKeyboard || keyboardOpen))
+                keyboard.field.current?.focus({ preventScroll: true });
             }}
+            onBlur={input.release}
+            onKeyDown={remoteKeyDown}
             onKeyUp={(e) => input.keyboard(e, 'up')}
+          />
+          <textarea
+            ref={keyboard.field}
+            className="computer-text-input"
+            onFocus={() => { if (!desktopKeyboard) setKeyboardOpen(true); }}
+            onBlur={() => { keyboard.flush(); input.release(); setKeyboardOpen(false); }}
+            onKeyDown={remoteKeyDown}
+            onKeyUp={(event) => input.keyboard(event, 'up')}
+            aria-label="컴퓨터 키보드 입력"
+            aria-describedby={enabled ? keyboardHelp : undefined}
+            aria-keyshortcuts={enabled ? 'Control+Alt+Escape' : undefined}
+            tabIndex={-1}
+            disabled={!enabled || panning}
+            rows={1}
+            autoCapitalize="none"
+            autoCorrect="off"
+            autoComplete="off"
+            spellCheck={false}
           />
           {enabled && (
             <span id={keyboardHelp} className="screen-keyboard-help">
@@ -423,19 +449,6 @@ export function Computer({ vms, connected }: { vms: Vm[]; connected: boolean }) 
       {(error || receipt?.error) && <ErrorNotice>{error || receipt?.error}</ErrorNotice>}
       {screen.phase === 'error' && <ErrorNotice>{screen.state}</ErrorNotice>}
       <div className="computer-keyboard" data-open={keyboardOpen} aria-hidden={!keyboardOpen}>
-        <textarea
-          ref={keyboard.field}
-          onFocus={() => setKeyboardOpen(true)}
-          onBlur={() => { keyboard.flush(); setKeyboardOpen(false); }}
-          aria-label="컴퓨터 키보드 입력"
-          tabIndex={keyboardOpen ? 0 : -1}
-          disabled={!enabled}
-          rows={1}
-          autoCapitalize="none"
-          autoCorrect="off"
-          autoComplete="off"
-          spellCheck={false}
-        />
         {keyboardOpen && !compactKeyboard && (
           <div className="computer-keyboard-keys">
             {keyboardKeys}
