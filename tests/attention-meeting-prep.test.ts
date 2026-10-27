@@ -193,16 +193,50 @@ test('a failed quiet planner retries once, only after thirty minutes, and keeps 
   expect((await sql`SELECT * FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`).length).toBe(2);
 });
 
-test('a successful quiet planner completes its half-day without another attempt', async () => {
+test.each(['running', 'succeeded', 'failed'])('a successful quiet plan call completes its half-day even when the task is %s', async state => {
   const f = await planner();
   await sql`DELETE FROM assistant.attention_brief_runs WHERE task_id=${f.task}`;
   await tickAttention(sql, at('08:30'));
   const first = (await sql`SELECT task_id FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`)[0]?.['task_id'];
-  await sql`UPDATE assistant.tasks SET state='succeeded',updated_at=${at('08:35')} WHERE id=${first}`;
+  const run = crypto.randomUUID();
+  await sql`UPDATE assistant.tasks SET state='running' WHERE id=${first}`;
+  await sql`INSERT INTO assistant.runs(id,workspace_id,task_id,vm_id,state) VALUES(${run},${f.workspace},${first},${f.vm},'running')`;
+  expect((await f.daemonPost(`/v1/daemon/context/${run}/meeting-prep`, { meetings: [] })).status).toBe(200);
+  const planned = (await sql`SELECT payload FROM assistant.events WHERE workspace_id=${f.workspace} AND kind='meeting_prep.planned'`)[0];
+  expect(planned?.['payload']).toMatchObject({ task_id: first, local_date: '2026-10-27', half: 'morning' });
+  await sql`UPDATE assistant.tasks SET state=${state},updated_at=${at('08:35')} WHERE id=${first}`;
   await tickAttention(sql, at('09:05'));
   await tickAttention(sql, at('12:59'));
   expect((await sql`SELECT count(*)::int AS n FROM assistant.tasks WHERE workspace_id=${f.workspace}
     AND title='회의 준비 계획'`)[0]?.['n']).toBe(1);
+  await tickAttention(sql, at('13:00'));
+  expect((await sql`SELECT * FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`).length).toBe(2);
+});
+
+test('NO_REPORT task success without a plan retries once after thirty minutes', async () => {
+  const f = await planner();
+  await sql`DELETE FROM assistant.attention_brief_runs WHERE task_id=${f.task}`;
+  const attempt = async () => String((await sql`SELECT task_id FROM assistant.meeting_prep_runs
+    WHERE workspace_id=${f.workspace} AND local_date='2026-10-27' AND half='morning'`)[0]?.['task_id']);
+  await tickAttention(sql, at('08:30'));
+  const first = await attempt(), run = crypto.randomUUID();
+  await sql`UPDATE assistant.tasks SET state='running' WHERE id=${first}`;
+  await sql`INSERT INTO assistant.runs(id,workspace_id,task_id,vm_id,state) VALUES(${run},${f.workspace},${first},${f.vm},'running')`;
+  expect((await f.post({ kind: 'message', event_id: crypto.randomUUID(), run_id: run, content: 'NO_REPORT', phase: 'final_answer' })).status).toBe(200);
+  await sql`UPDATE assistant.tasks SET state='succeeded',updated_at=${at('08:35')} WHERE id=${first}`;
+  expect((await sql`SELECT * FROM assistant.events WHERE workspace_id=${f.workspace} AND kind='meeting_prep.planned'`).length).toBe(0);
+  await tickAttention(sql, at('09:04'));
+  expect(await attempt()).toBe(first);
+  await Promise.all([tickAttention(sql, at('09:05')), tickAttention(sql, at('09:05'))]);
+  const retry = await attempt();
+  expect(retry).not.toBe(first);
+  await sql`UPDATE assistant.tasks SET state='succeeded',updated_at=${at('09:10')} WHERE id=${retry}`;
+  await tickAttention(sql, at('09:40'));
+  await tickAttention(sql, at('12:59'));
+  expect(await attempt()).toBe(retry);
+  expect((await sql`SELECT count(*)::int AS n FROM assistant.tasks WHERE workspace_id=${f.workspace}
+    AND title='회의 준비 계획'`)[0]?.['n']).toBe(2);
+  expect((await sql`SELECT * FROM assistant.messages WHERE workspace_id=${f.workspace} AND task_id=${first} AND NOT hidden`).length).toBe(0);
 });
 
 test('only a successful plan call by the same half-day brief replaces quiet planning, including an empty plan', async () => {
@@ -228,6 +262,32 @@ test('a brief that never planned meetings does not consume quiet planning', asyn
   await sql`UPDATE assistant.tasks SET state='succeeded' WHERE id=${f.task}`;
   await tickAttention(sql, at('09:00'));
   expect((await sql`SELECT * FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`).length).toBe(1);
+});
+
+test.each(['morning', 'afternoon'])('an in-progress %s brief gets fifteen minutes to plan before quiet fallback', async half => {
+  const f = await planner(), start = at(half === 'morning' ? '08:30' : '13:00');
+  await sql`UPDATE assistant.attention_brief_runs SET created_at=${start} WHERE task_id=${f.task}`;
+  await tickAttention(sql, start);
+  await tickAttention(sql, new Date(start.getTime() + 15 * 60_000 - 1));
+  expect((await sql`SELECT * FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`).length).toBe(0);
+  await tickAttention(sql, new Date(start.getTime() + 15 * 60_000));
+  expect((await sql`SELECT half FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`)[0]?.['half']).toBe(half);
+});
+
+test('a brief can complete planning during its grace period without a quiet fallback', async () => {
+  const f = await planner();
+  await sql`UPDATE assistant.attention_brief_runs SET created_at=${at('08:30')} WHERE task_id=${f.task}`;
+  await tickAttention(sql, at('08:30'));
+  expect((await f.plan([])).status).toBe(200);
+  await tickAttention(sql, at('08:45'));
+  expect((await sql`SELECT * FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`).length).toBe(0);
+});
+
+test('a still-running morning brief does not delay afternoon quiet planning', async () => {
+  const f = await planner();
+  await sql`UPDATE assistant.attention_brief_runs SET created_at=${at('12:59')} WHERE task_id=${f.task}`;
+  await tickAttention(sql, at('13:00'));
+  expect((await sql`SELECT half FROM assistant.meeting_prep_runs WHERE workspace_id=${f.workspace}`)[0]?.['half']).toBe('afternoon');
 });
 
 test('moving an undelivered dispatched/skipped meeting re-arms it and hides the old attempt', async () => {

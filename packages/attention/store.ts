@@ -163,7 +163,7 @@ export async function attention(sql: Query, workspace: string, options: { readon
     done.push({ id: `result:${row['id']}`, kind: 'result', title: b.title ?? b.channel, detail: b.target, at: iso(row['created_at']), source: b.channel.replace(/\s*\(.*$/, ''), who: b.target ? b.target.replace(/\s*[<(].*$/, '').trim() : null,
       conversation_id: String(row['conversation_id']), message_id: String(row['id']), state: b.action, topic: null });
   for (const [series, { latest: row, summaries }] of seriesChanges) {
-    const summary = summaries.join(' · ').slice(0, 200);
+    const summary = summaries.reverse().join(' · ').slice(0, 200);
     done.push({ id: `artifact:${row['id']}`, kind: 'result', title: `결과물 · ${series}: ${summary}`, detail: null,
       at: iso(row['created_at']), conversation_id: String(row['conversation_id']), message_id: (row['message_ids'] as string[])[0] ?? null,
       state: 'ready', topic: null });

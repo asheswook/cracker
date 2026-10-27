@@ -11,6 +11,7 @@ export const RunCheckpoint = z.object({
   argumentRepairs:z.number().int().min(0).max(2).optional(),
   appliedInputIds:z.array(z.uuid()).max(100).optional(),
   appliedUserIds:z.array(z.uuid()).max(256).optional(),
+  requestProgress:z.array(z.object({ messageId:z.uuid(), toolRounds:z.number().int().min(0).max(2), attempted:z.boolean(), delivered:z.boolean() })).max(256).optional(),
   nativeContext: NativeContextState.optional(),
   semanticContext: SemanticCheckpoint.optional(),
   version: z.literal(1), assignment: Assignment, input: z.array(TranscriptItem), cursor: z.number().int().nonnegative(),

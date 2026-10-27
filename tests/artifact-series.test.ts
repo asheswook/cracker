@@ -92,7 +92,7 @@ test('read_artifact returns metadata only for oversized and non-text files', asy
   }
 });
 
-test('brief aggregates visible changes oldest to newest once per series and excludes unchanged, blank and already briefed versions', async () => {
+test('brief aggregates visible changes newest first once per series and excludes unchanged, blank and already briefed versions', async () => {
   const { context, publish, link } = await routine();
   const before = new Date(Date.now() - 60_000), now = new Date();
   const day = now.toISOString().slice(0, 10), yesterday = new Date(now.getTime() - 86_400_000).toISOString().slice(0, 10);
@@ -113,7 +113,7 @@ test('brief aggregates visible changes oldest to newest once per series and excl
   const view = await briefView(sql, context.workspace, day, now);
   const items = view.done.filter(item => item.id.startsWith('artifact:'));
   expect(items).toHaveLength(2);
-  expect(items.find(item => item.id === `artifact:${latest.id}`)).toMatchObject({ title: '결과물 · 경쟁사 가격표: 첫 버전 · A사 3,000원 인하', message_id: latestMessage });
+  expect(items.find(item => item.id === `artifact:${latest.id}`)).toMatchObject({ title: '결과물 · 경쟁사 가격표: A사 3,000원 인하 · 첫 버전', message_id: latestMessage });
   expect(items.find(item => item.id === `artifact:${earlier.id}`)?.title).toBe('결과물 · 변함없는 표: 이전 변경');
   expect(view.done.some(item => item.id === `result:${firstMessage}` || item.id === `result:${latestMessage}`)).toBe(false);
 });
@@ -160,7 +160,18 @@ test('brief requires visible assistant publication, ignores QA, and clips combin
   expect(items).toHaveLength(1);
   expect(view.done.some(item => item.id === `result:${qaMessage}`)).toBe(false);
   expect(items[0]).toMatchObject({ id: `artifact:${latest.id}`, message_id: message,
-    title: `결과물 · 정상: ${('가'.repeat(150) + ' · ' + '나'.repeat(100)).slice(0, 200)}` });
+    title: `결과물 · 정상: ${('나'.repeat(100) + ' · ' + '가'.repeat(150)).slice(0, 200)}` });
+});
+
+test('brief preserves the latest series change when older summaries exhaust the character budget', async () => {
+  const { context, publish, link } = await routine();
+  await link((await publish('누적 변경', '가'.repeat(200))).id);
+  await link((await publish('누적 변경', '나'.repeat(200))).id);
+  const latest = await publish('누적 변경', '최신 가격 인하와 신규 경쟁사 추가');
+  const message = await link(latest.id);
+  const view = await briefView(sql, context.workspace, new Date().toISOString().slice(0, 10));
+  expect(view.done.find(item => item.id === `artifact:${latest.id}`)).toMatchObject({ message_id: message,
+    title: `결과물 · 누적 변경: ${('최신 가격 인하와 신규 경쟁사 추가 · ' + '나'.repeat(200) + ' · ' + '가'.repeat(200)).slice(0, 200)}` });
 });
 
 test('series tools enforce bounded optional parameters and exclude observation/send policies', async () => {

@@ -291,16 +291,24 @@ async function tickMeetingPrepPlanning(sql: Database, workspace: string, now: Da
     const morningMinute = Number(brief?.['planned_minute'] ?? row['brief_at_minute'] ?? 510);
     const half = minute >= 780 ? 'afternoon' : 'morning';
     if (half === 'morning' && minute < morningMinute) return 0;
-    // A successful calendar-plan call by this half-day's brief already did the quiet planner's work.
+    // Only a successful calendar-plan call (from a brief or quiet planner) completes this half-day.
     if ((await tx`SELECT 1 FROM assistant.events WHERE workspace_id=${workspace} AND kind='meeting_prep.planned'
       AND payload->>'local_date'=${day} AND payload->>'half'=${half} LIMIT 1`)[0]) return 0;
-    // The row tracks an attempt, not completion: only a succeeded task consumes this half-day.
+    // Let an in-progress brief plan first, but do not let a stalled brief block quiet planning indefinitely.
+    if ((await tx`SELECT 1 FROM assistant.attention_brief_runs b JOIN assistant.tasks t ON t.id=b.task_id
+      LEFT JOIN assistant.attention_briefs a ON a.workspace_id=b.workspace_id AND a.task_id=b.task_id
+      WHERE b.workspace_id=${workspace} AND b.local_date=${day}::date AND t.objective<>${MEETING_PREP_PLANNING_OBJECTIVE}
+        AND t.state IN ('queued','running','waiting','pausing','paused','cancelling')
+        AND (CASE WHEN extract(hour FROM coalesce(a.dispatched_at,b.created_at) AT TIME ZONE ${timezone})>=13 THEN 'afternoon' ELSE 'morning' END)=${half}
+        AND coalesce(a.dispatched_at,b.created_at)<=${now}
+        AND coalesce(a.dispatched_at,b.created_at)>${now}::timestamptz-interval '15 minutes' LIMIT 1`)[0]) return 0;
+    // A terminal task without a successful plan is a failed attempt, even if it said NO_REPORT and succeeded.
     const previous = (await tx`SELECT t.state,t.updated_at FROM assistant.meeting_prep_runs p
       JOIN assistant.tasks t ON t.id=p.task_id
       WHERE p.workspace_id=${workspace} AND p.local_date=${day}::date AND p.half=${half}`)[0];
     const retryId = await briefClientId(workspace, `meeting-prep:${day}:${half}:retry`);
     if (previous) {
-      if (!['failed', 'cancelled'].includes(String(previous['state']))) return 0;
+      if (!['succeeded', 'failed', 'cancelled'].includes(String(previous['state']))) return 0;
       if (now.getTime() < new Date(String(previous['updated_at'])).getTime() + 30 * 60_000) return 0;
       // Preserve the one-retry budget even when that retry also fails.
       if ((await tx`SELECT 1 FROM assistant.messages WHERE workspace_id=${workspace} AND client_message_id=${retryId}`)[0]) return 0;

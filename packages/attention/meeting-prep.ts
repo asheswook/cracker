@@ -39,14 +39,15 @@ export async function planMeetingPrep(sql: Query, workspace: string, conversatio
       VALUES(${workspace},${m.event_key},${m.title},${m.starts_at},${JSON.stringify(m.attendees)}::text::jsonb,${m.note_hint},${conversation}) ON CONFLICT DO NOTHING`;
   }
   // Record only a successful call (including an empty calendar), never merely a dispatched brief.
-  // Quiet planners must finish successfully themselves; their attempts are also in attention_brief_runs.
+  // Quiet planners complete their assigned half-day by this call, not by the task's final state.
   if (task) await sql`INSERT INTO assistant.events(workspace_id,kind,payload)
-    SELECT ${workspace},'meeting_prep.planned',jsonb_build_object('task_id',b.task_id,'local_date',b.local_date::text,
-      'half',CASE WHEN extract(hour FROM coalesce(a.dispatched_at,b.created_at) AT TIME ZONE s.timezone)>=13 THEN 'afternoon' ELSE 'morning' END)
-    FROM assistant.attention_brief_runs b JOIN assistant.tasks t ON t.id=b.task_id
-      JOIN assistant.attention_settings s ON s.workspace_id=b.workspace_id
-      LEFT JOIN assistant.attention_briefs a ON a.workspace_id=b.workspace_id AND a.task_id=b.task_id
-    WHERE b.workspace_id=${workspace} AND b.task_id=${task} AND t.objective<>${MEETING_PREP_PLANNING_OBJECTIVE}`;
+    SELECT ${workspace},'meeting_prep.planned',jsonb_build_object('task_id',b.task_id,'local_date',coalesce(p.local_date,b.local_date)::text,
+      'half',coalesce(p.half,CASE WHEN extract(hour FROM coalesce(a.dispatched_at,b.created_at) AT TIME ZONE s.timezone)>=13 THEN 'afternoon' ELSE 'morning' END))
+    FROM assistant.attention_brief_runs b
+       JOIN assistant.attention_settings s ON s.workspace_id=b.workspace_id
+       LEFT JOIN assistant.attention_briefs a ON a.workspace_id=b.workspace_id AND a.task_id=b.task_id
+       LEFT JOIN assistant.meeting_prep_runs p ON p.workspace_id=b.workspace_id AND p.task_id=b.task_id
+    WHERE b.workspace_id=${workspace} AND b.task_id=${task}`;
   return { planned: plan.meetings.length };
 }
 

@@ -35,11 +35,16 @@ test("runtime edits and cancels the same responsibility through durable manageme
   const server = Bun.serve({ port: 0, fetch: f.app.fetch });
   const journal = new CompletedJournal(join(directory, "journal.sqlite"));
   let round = 0;
+  let openings = 0;
   let registeredId = "";
   let originalDue = "";
   let current: z.infer<typeof FutureWork> | undefined;
   const provider: Provider = {
     async respond(input, tools) {
+      if (!tools.length) {
+        openings++;
+        return response([{ type: 'message', id: 'opening', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: '요청한 루틴을 등록하고 수정한 뒤 취소하겠습니다.', annotations: [] }] }]);
+      }
       round++;
       const call = (name: string, args: unknown) => response([{ type: "function_call", call_id: `future-work-${round}`, name, arguments: JSON.stringify(args) }]);
       switch (round) {
@@ -77,6 +82,7 @@ test("runtime edits and cancels the same responsibility through durable manageme
     await journal.done.promise;
     await runtime.flush();
     expect(round).toBe(5);
+    expect(openings).toBe(1);
     expect(current).toMatchObject({ id: registeredId, state: "cancelled", configuration: { objective: "Synthetic noon routine, including submission reminders" } });
     const rows = await f.sql`SELECT id,state FROM assistant.responsibilities WHERE conversation_id=${conversation.id}`;
     expect(rows).toHaveLength(1);
