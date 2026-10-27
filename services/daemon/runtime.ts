@@ -914,7 +914,7 @@ export class Runtime {
             if(item.name === "search_prior_work"||item.name === "read_prior_source")return {text:await runWorkSearch(this.http,{runId:assignment.run_id,artifacts},{name:item.name,args:item.arguments,signal})};
           if(item.name === "load_skill") return {text:await this.extensions.load(item.arguments,signal,assignment)};
           if(item.name === "save_skill") return {text:await this.extensions.save(item.arguments,signal,assignment)};
-          if(item.name === "read_demonstration") return {text:JSON.stringify(scope.lane !== 'foreground' ? {none:true} : this.demonstrations.read())};
+          if(item.name === "read_demonstration") return {text:JSON.stringify(scope.lane !== 'foreground' ? {none:true} : await this.demonstrations.read())};
             if(item.name === "publish_artifact"){
               const artifact=await artifacts.publish(item.arguments,signal);
               const eventId = crypto.randomUUID(), messageId = semantic?.tracksDeliveryIds ? eventId : undefined;

@@ -102,36 +102,95 @@ test("worker stop waits for process exit, not merely its result line", async () 
   } finally { await recorder.stop(); await rm(directory, { recursive: true, force: true }); }
 });
 
+test("fake worker snapshots do not stop recording or resolve its final result", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "demonstration-snapshot-"));
+  const worker = join(directory, "worker.mjs");
+  const steps = [fake({ kind: "navigate", title: "Work" }), fake({ kind: "click", text: "Save" }), fake({ kind: "click", text: "Next" })];
+  await Bun.write(worker, `
+    import {createInterface} from 'node:readline';
+    const steps=${JSON.stringify(steps)}; let count=2;
+    process.stdout.write('{"ready":true}\\n');
+    createInterface({input:process.stdin}).on('line', line => {
+      if(line==='snapshot') {
+        process.stdout.write(JSON.stringify({snapshot:true,steps:steps.slice(0,count)})+'\\n');
+        count=3;
+      } else if(line==='stop') {
+        process.stdout.write(JSON.stringify({steps})+'\\n',()=>process.exit(0));
+      }
+    });
+  `);
+  const recorder = new DemonstrationRecorder(worker);
+  try {
+    await recorder.start("http://fake");
+    const [first, concurrent] = await Promise.all([recorder.snapshot(), recorder.snapshot()]);
+    expect(first).toEqual({ steps: steps.slice(0, 2) });
+    expect(concurrent).toEqual(first);
+    expect(await recorder.snapshot()).toEqual({ steps });
+    expect(await recorder.stop()).toEqual({ steps });
+    expect(await recorder.snapshot()).toEqual({ steps });
+  } finally { await recorder.stop(); await rm(directory, { recursive: true, force: true }); }
+});
+
 test("session clears prior records, purges expired settings on startup/read, and preserves partial/truncated flags", async () => {
   const journal = new Journal(":memory:");
   const steps = [fake({ kind: "navigate", title: "Work" }), fake({ kind: "click", text: "Save" })];
   const old = { finished_at: new Date(Date.now() - 4 * 3600000).toISOString(), steps };
   let result: Recording = { steps }, starts = 0;
-  const create = () => ({ start: async () => { starts++; }, stop: async () => result });
+  const create = () => ({ start: async () => { starts++; }, snapshot: async () => result, stop: async () => result });
   try {
     journal.setLastDemonstration(JSON.stringify(old));
     const session = new DemonstrationSession(journal, create);
     expect(journal.lastDemonstration()).toBeNull();
     session.start(); await session.finish();
-    const saved = session.read();
+    const saved = await session.read();
     expect(saved).toMatchObject({ steps });
-    session.read(Date.now() + 4 * 3600000);
+    await session.read(Date.now() + 4 * 3600000);
     expect(journal.lastDemonstration()).toBeNull();
     session.start(); await session.finish();
     session.start(); // Both the in-memory and persisted previous demonstration disappear now.
-    expect(journal.lastDemonstration()).toBeNull(); expect(session.read()).toEqual({ none: true });
-    result = { steps: [] }; await session.finish();
-    expect(session.read()).toEqual({ none: true });
+    result = { steps: [] };
+    expect(journal.lastDemonstration()).toBeNull(); expect(await session.read()).toMatchObject({ in_progress: true });
+    await session.finish();
+    expect(await session.read()).toEqual({ none: true });
     result = { steps, truncated: true }; session.start(); await session.finish(true);
-    expect(session.read()).toMatchObject({ partial: true, truncated: true, steps });
+    expect(await session.read()).toMatchObject({ partial: true, truncated: true, steps });
     journal.setControl("user");
     result = { steps: steps.slice(0, 1) };
     const resumed = new DemonstrationSession(journal, create);
-    expect(journal.lastDemonstration()).toBeNull();
+    expect(journal.lastDemonstration()).not.toBeNull();
     await resumed.finish();
-    expect(resumed.read()).toMatchObject({ partial: true, steps: steps.slice(0, 1) });
+    expect(await resumed.read()).toMatchObject({ partial: true, truncated: true });
+    expect((await resumed.read() as { steps: Step[] }).steps).toHaveLength(3);
     expect(starts).toBe(5);
   } finally { journal.close(); }
+});
+
+test("live session reads and ten-minute idle checkpoints persist without returning control", async () => {
+  const journal = new Journal(":memory:");
+  const now = Date.now();
+  const steps = [fake({ kind: "click", text: "Open" }, new Date(now).toISOString()), fake({ kind: "click", text: "Save" }, new Date(now).toISOString())];
+  let result: Recording = { steps }, stops = 0;
+  const session = new DemonstrationSession(journal, () => ({ start: async () => {}, snapshot: async () => result, stop: async () => { stops++; return result; } }));
+  try {
+    session.start();
+    const live = await session.read(now);
+    expect(live).toEqual({ steps, finished_at: new Date(now).toISOString(), in_progress: true });
+    expect(readDemonstration(journal.lastDemonstration(), now)).toEqual({ steps, finished_at: new Date(now).toISOString(), partial: true });
+    expect(stops).toBe(0);
+    session.clearPrevious(); session.start(); // Test the idle-only path, without a tool read.
+    await session.checkpointIdle(now + 9 * 60000);
+    expect(journal.lastDemonstration()).toBeNull();
+    await session.checkpointIdle(now + 11 * 60000);
+    expect(readDemonstration(journal.lastDemonstration(), now + 11 * 60000)).toMatchObject({ steps, partial: true });
+    const before = stops;
+    result = { steps: [...steps, fake({ kind: "click", text: "Next" }, new Date(now + 11 * 60000).toISOString())] };
+    const nextDeadline = await session.checkpointIdle(now + 15 * 60000);
+    expect(nextDeadline).toBe(6 * 60000);
+    expect(stops).toBe(before);
+    expect((await session.read(now + 15 * 60000) as { steps: Step[] }).steps).toHaveLength(3);
+    await session.finish();
+    expect((await session.read() as { steps: Step[] }).steps).toHaveLength(3);
+  } finally { await session.finish(); journal.close(); }
 });
 
 class FakeElement {
@@ -181,6 +240,26 @@ function fakeBrowser(page: FakePage) {
   const browser = { contexts: () => [context], close: async () => { closes++; } } as unknown as Browser;
   return { browser, context, closes: () => closes };
 }
+
+test("in-process snapshot is a copy and later actions remain recorded", async () => {
+  const page = new FakePage(), fixture = fakeBrowser(page);
+  const recorder = new DemonstrationRecorder(undefined, async () => fixture.browser);
+  try {
+    await recorder.start("http://fake");
+    const child = page.frames()[1]!;
+    child.click("Open"); child.click("Save");
+    const snapshot = await recorder.snapshot();
+    expect(snapshot.steps).toHaveLength(2);
+    expect(fixture.closes()).toBe(0);
+    snapshot.steps[0]!.url = "changed";
+    snapshot.steps.pop();
+    child.click("Next");
+    const result = await recorder.stop();
+    expect(result.steps).toHaveLength(3);
+    expect(result.steps[0]!.url).toBe("https://example.com/frame");
+    expect(result.steps.at(-1)).toMatchObject({ text: "Next" });
+  } finally { await recorder.stop(); }
+});
 
 test("existing/navigated frames install once, synthetic events are ignored, and all frames clean up", async () => {
   const page = new FakePage(), fixture = fakeBrowser(page);

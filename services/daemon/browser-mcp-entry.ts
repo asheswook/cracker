@@ -1,6 +1,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { browserServer } from "./browser-mcp";
 import { DemonstrationRecorder, type Recording } from "./demonstration.ts";
+import { createInterface } from "node:readline";
 
 if (process.argv[2] === "--record-demonstration") {
   const recorder = new DemonstrationRecorder();
@@ -18,8 +19,15 @@ if (process.argv[2] === "--record-demonstration") {
     stopping = true;
     send(await recorder.stop());
   };
-  process.stdin.once("data", () => { void stop(); });
-  process.stdin.once("end", () => { void stop(); });
+  const input = createInterface({ input: process.stdin });
+  input.on("line", line => {
+    if (line.trim() === "snapshot" && !stopping) {
+      void recorder.snapshot().then(result => {
+        if (!sent && !stopping) process.stdout.write(JSON.stringify({ snapshot: true, ...result }) + "\n");
+      });
+    } else if (line.trim() === "stop") { void stop(); }
+  });
+  input.once("close", () => { void stop(); });
   process.once("SIGTERM", () => { void stop(); });
   await starting;
   process.stdout.write(JSON.stringify({ ready: true }) + "\n");
