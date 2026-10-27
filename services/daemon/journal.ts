@@ -113,6 +113,7 @@ export class Journal {
   setControl(value: "agent" | "user"): void { this.db.query("INSERT OR REPLACE INTO settings VALUES('control',?)").run(value); }
   lastDemonstration(): string | null { return (this.db.query("SELECT value FROM settings WHERE key='last_demonstration'").get() as { value: string } | null)?.value ?? null; }
   setLastDemonstration(value: string): void { this.db.query("INSERT OR REPLACE INTO settings VALUES('last_demonstration',?)").run(value); }
+  clearLastDemonstration(): void { this.db.query("DELETE FROM settings WHERE key='last_demonstration'").run(); }
   commandApplied(id: string): boolean { return this.db.query("SELECT id FROM commands WHERE id=?").get(id) !== null; }
   recordCommand(id: string): void { this.db.query("INSERT OR IGNORE INTO commands VALUES(?)").run(id); }
   completeTurn(event: Extract<z.infer<typeof DaemonEvent>, { kind: "state" }>): void {

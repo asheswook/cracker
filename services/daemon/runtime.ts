@@ -44,7 +44,7 @@ import { rejectedRequest, rejectedRequestFeedback, stripRecentImages } from './r
 import { interruptedContinuation } from './inference-continuation';
 import type { ContinuationReader, ProviderContinuation } from '../../packages/provider/continuation';
 import type { ProviderResponseObserver } from '../../packages/provider/stream';
-import { DemonstrationRecorder, readDemonstration, readDemonstrationTool, type Demonstration } from './demonstration.ts';
+import { DemonstrationSession, readDemonstrationTool } from './demonstration.ts';
 
 const Context = z.object({ messages: z.array(Message) });
 type ActivityCategory=Extract<DaemonEvent,{kind:"activity"}>["activity"];
@@ -96,12 +96,12 @@ export class Runtime {
   private readonly inputFlights = new Map<string,{readonly cursor:number;readonly abort:AbortController;readonly signal:AbortSignal}>();
   private flushing: Promise<Map<string,unknown>> | undefined;
   private control: "agent" | "user" = "agent";
-  private demonstrationRecorder: DemonstrationRecorder | undefined;
-  private lastDemonstration: Demonstration | undefined;
+  private readonly demonstrations: DemonstrationSession;
   private readonly controlWaiters = new Set<() => void>();
   constructor(private readonly config: RuntimeConfig & {readonly sessionProtocol?:boolean;readonly sessionId?:string;readonly toolConcurrency?:number;readonly agentConcurrency?:number;readonly semanticReferenceCombinedMaxBytes?:number;readonly knowledgeTreeAuxTimeoutMs?:number}) {
     this.sessionId=config.sessionId??crypto.randomUUID();
     this.control = config.journal.control();
+    this.demonstrations = new DemonstrationSession(config.journal);
     config.tools.setDesktopOwner(this.control);
     this.http = ky.create({ prefixUrl: config.controlUrl, headers: { authorization: `Bearer ${config.token}`,...(config.sessionProtocol?{'x-daemon-session':this.sessionId}:{}) }, retry: 0, timeout: 15000 });
     this.extensions = new ExtensionManager(this.http,config.tools);
@@ -459,31 +459,19 @@ export class Runtime {
         break;
       }
       case "takeover": {
+        this.demonstrations.clearPrevious();
         this.control = "user";
         await this.config.tools.revokeDesktopInputs();
         await this.inputBarrier();
         this.config.tools.desktopInputsReleased();
         this.config.journal.setControl("user");
-        if (!this.demonstrationRecorder) {
-          const recorder = this.demonstrationRecorder = new DemonstrationRecorder();
-          void recorder.start('http://127.0.0.1:9222').catch(() => {});
-        }
+        this.demonstrations.start();
         break;
       }
       case "return_control": {
         resumeSafe=this.config.journal.suspended().some(run=>this.config.journal.recoverable(run)!==null);
         await this.config.releaseInput?.();
-        const recorder = this.demonstrationRecorder;
-        this.demonstrationRecorder = undefined;
-        if (recorder) {
-          try {
-            const steps = await recorder.stop();
-            if (steps.length >= 2) {
-              this.lastDemonstration = { finished_at: new Date().toISOString(), steps };
-              this.config.journal.setLastDemonstration(JSON.stringify(this.lastDemonstration));
-            }
-          } catch { /* Recording must never affect computer ownership. */ }
-        }
+        await this.demonstrations.finish();
         this.control = "agent"; this.config.journal.setControl("agent");
         this.config.tools.setDesktopOwner('agent');
         break;
@@ -926,7 +914,7 @@ export class Runtime {
             if(item.name === "search_prior_work"||item.name === "read_prior_source")return {text:await runWorkSearch(this.http,{runId:assignment.run_id,artifacts},{name:item.name,args:item.arguments,signal})};
           if(item.name === "load_skill") return {text:await this.extensions.load(item.arguments,signal,assignment)};
           if(item.name === "save_skill") return {text:await this.extensions.save(item.arguments,signal,assignment)};
-          if(item.name === "read_demonstration") return {text:JSON.stringify(scope.lane !== 'foreground' ? {none:true} : readDemonstration(this.lastDemonstration ?? this.config.journal.lastDemonstration()))};
+          if(item.name === "read_demonstration") return {text:JSON.stringify(scope.lane !== 'foreground' ? {none:true} : this.demonstrations.read())};
             if(item.name === "publish_artifact"){
               const artifact=await artifacts.publish(item.arguments,signal);
               const eventId = crypto.randomUUID(), messageId = semantic?.tracksDeliveryIds ? eventId : undefined;
@@ -1089,8 +1077,7 @@ export class Runtime {
   }
   async stop(): Promise<void> {
     for(const run of this.runs.values())run.abort.abort();
-    await this.demonstrationRecorder?.stop().catch(() => {});
-    this.demonstrationRecorder = undefined;
+    await this.demonstrations.finish(true);
     const draining = await Promise.allSettled([this.config.releaseInput?.(), this.memoryQueue.stop(), this.semanticQueue.stop(), this.structureQueue.stop(), ...[...this.runs.values()].map(run=>run.done)]);
     const closing = await Promise.allSettled([this.config.tools.close(), this.flush()]);
     const failures = [...draining, ...closing].flatMap(result => result.status === "rejected" ? [result.reason] : []);

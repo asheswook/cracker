@@ -3,7 +3,10 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendDemonstrationStep, DemonstrationRecorder, demonstrationUrl, normalizeStep, readDemonstration, type Step } from "../services/daemon/demonstration.ts";
+import { EventEmitter } from "node:events";
+import { createContext, runInContext, type Context } from "node:vm";
+import type { Browser } from "playwright-core";
+import { appendDemonstrationStep, DemonstrationRecorder, DemonstrationSession, demonstrationUrl, minimizeText, normalizeStep, readDemonstration, type Recording, type Step } from "../services/daemon/demonstration.ts";
 import { Journal } from "../services/daemon/journal.ts";
 
 const url = "https://example.com/work?token=secret#private";
@@ -16,7 +19,7 @@ const fake = (raw: unknown, timestamp = at): Step => {
 
 test("normalizer allows only step fields and strips URL queries, fragments and credentials", () => {
   expect(fake({ kind: "navigate", title: "  Work   page ", secret: "discard" })).toEqual({ kind: "navigate", title: "Work page", timestamp: at, url: "https://example.com/work" });
-  expect(fake({ kind: "click", role: "link", tag: "a", text: "x".repeat(100), href: "https://user:pw@example.org/next?code=secret#token" })).toMatchObject({ text: "x".repeat(80), href: "https://example.org/next" });
+  expect(fake({ kind: "click", role: "link", tag: "a", text: "x".repeat(100), href: "https://user:pw@example.org/next?code=secret#token" })).toMatchObject({ text: "(…)", href: "https://example.org/next" });
   expect(fake({ kind: "submit", action: "https://example.org:8443/send?secret=yes" })).toMatchObject({ host: "example.org:8443" });
   expect(fake({ kind: "keydown", key: "Enter" })).toMatchObject({ key: "Enter" });
   expect(normalizeStep({ kind: "keydown", key: "a" }, url)).toBeNull();
@@ -26,12 +29,23 @@ test("normalizer allows only step fields and strips URL queries, fragments and c
 });
 
 test("changes redact password types and all sensitive field metadata before truncation", () => {
-  for (const metadata of [{ type: "password" }, { name: "password" }, { id: "otp" }, { autocomplete: "one-time-code" }, { label: "인증번호" }, { label: "비밀번호" }, { name: "cardNumber" }, { id: "카드" }, { label: "CVC" }, { name: "ssn" }, { label: "주민등록번호" }, { name: "pw" }, { label: "x".repeat(100) + "password" }]) {
+  for (const metadata of [{ type: "password" }, { type: "email" }, { type: "tel" }, ...["token", "key", "secret", "api", "이메일", "email", "전화", "phone", "계좌", "account"].map(label => ({ label })), { name: "password" }, { id: "otp" }, { autocomplete: "one-time-code" }, { label: "인증번호" }, { label: "비밀번호" }, { name: "cardNumber" }, { id: "카드" }, { label: "CVC" }, { name: "ssn" }, { label: "주민등록번호" }, { name: "pw" }, { label: "x".repeat(100) + "password" }]) {
     const step = fake({ kind: "change", label: "Field", value: "typed-secret", ...metadata });
     expect(step).toMatchObject({ value: "(입력함)" });
     expect(JSON.stringify(step)).not.toContain("typed-secret");
   }
-  expect(fake({ kind: "change", label: " Search  query ", value: "a".repeat(100) })).toMatchObject({ label: "Search query", value: "a".repeat(80) });
+  expect(fake({ kind: "change", label: " Search  query ", value: "a".repeat(100) })).toMatchObject({ label: "Search query", value: "(…)" });
+});
+
+test("all stored text and URL paths minimize personal data and identifiers before truncation", () => {
+  for (const sensitive of ["person@example.com", "010-1234-5678", "+82 10 1234 5678", "02-123-4567", "031 1234 5678", "1588-1234", "123456", "AbCdEf0123456789_-XYZ", "YWJjZGVmZ2hpamtsbW5vcHFycw==", "550e8400-e29b-41d4-a716-446655440000", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature"]) {
+    expect(minimizeText(`Open ${sensitive} profile`)).toBe("Open (…) profile");
+    expect(fake({ kind: "navigate", title: sensitive })).toMatchObject({ title: "(…)" });
+    expect(fake({ kind: "click", text: sensitive, role: sensitive, tag: sensitive })).toMatchObject({ text: "(…)", role: "(…)", tag: "(…)" });
+    expect(fake({ kind: "change", label: sensitive, value: sensitive })).toMatchObject({ label: "(…)" });
+    expect(demonstrationUrl(`https://example.com/users/${encodeURIComponent(sensitive)}/edit`)).toBe("https://example.com/users/:id/edit");
+  }
+  expect(demonstrationUrl("https://example.com/orders/42/a9bcdef0/view?q=secret")).toBe("https://example.com/orders/:id/:id/view");
 });
 
 test("consecutive duplicates collapse regardless of timestamp and recording caps at 300", () => {
@@ -68,12 +82,147 @@ test("recorder start/stop exchanges steps with a fake Node worker and tolerates 
   const recorder = new DemonstrationRecorder(worker);
   try {
     await recorder.start("http://fake-browser");
-    expect(await recorder.stop()).toEqual(steps);
-    expect(await recorder.stop()).toEqual(steps);
+    expect(await recorder.stop()).toEqual({ steps });
+    expect(await recorder.stop()).toEqual({ steps });
   } finally {
     await recorder.stop();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("worker stop waits for process exit, not merely its result line", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "demonstration-exit-"));
+  const worker = join(directory, "worker.mjs"), marker = join(directory, "exited");
+  await Bun.write(worker, `import {writeFileSync} from 'node:fs'; process.stdout.write('{"ready":true}\\n'); process.stdin.once('data', () => { process.stdout.write('{"steps":[],"truncated":true}\\n'); setTimeout(() => {writeFileSync(${JSON.stringify(marker)},'yes'); process.exit(0);},100); });`);
+  const recorder = new DemonstrationRecorder(worker);
+  try {
+    await recorder.start("http://fake");
+    expect(await recorder.stop()).toEqual({ steps: [], truncated: true });
+    expect(existsSync(marker)).toBe(true);
+  } finally { await recorder.stop(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("session clears prior records, purges expired settings on startup/read, and preserves partial/truncated flags", async () => {
+  const journal = new Journal(":memory:");
+  const steps = [fake({ kind: "navigate", title: "Work" }), fake({ kind: "click", text: "Save" })];
+  const old = { finished_at: new Date(Date.now() - 4 * 3600000).toISOString(), steps };
+  let result: Recording = { steps }, starts = 0;
+  const create = () => ({ start: async () => { starts++; }, stop: async () => result });
+  try {
+    journal.setLastDemonstration(JSON.stringify(old));
+    const session = new DemonstrationSession(journal, create);
+    expect(journal.lastDemonstration()).toBeNull();
+    session.start(); await session.finish();
+    const saved = session.read();
+    expect(saved).toMatchObject({ steps });
+    session.read(Date.now() + 4 * 3600000);
+    expect(journal.lastDemonstration()).toBeNull();
+    session.start(); await session.finish();
+    session.start(); // Both the in-memory and persisted previous demonstration disappear now.
+    expect(journal.lastDemonstration()).toBeNull(); expect(session.read()).toEqual({ none: true });
+    result = { steps: [] }; await session.finish();
+    expect(session.read()).toEqual({ none: true });
+    result = { steps, truncated: true }; session.start(); await session.finish(true);
+    expect(session.read()).toMatchObject({ partial: true, truncated: true, steps });
+    journal.setControl("user");
+    result = { steps: steps.slice(0, 1) };
+    const resumed = new DemonstrationSession(journal, create);
+    expect(journal.lastDemonstration()).toBeNull();
+    await resumed.finish();
+    expect(resumed.read()).toMatchObject({ partial: true, steps: steps.slice(0, 1) });
+    expect(starts).toBe(5);
+  } finally { journal.close(); }
+});
+
+class FakeElement {
+  constructor(readonly innerText = "Save") {}
+  readonly tagName = "BUTTON";
+  closest(selector: string) { return selector === "a" ? null : this; }
+  getAttribute() { return null; }
+}
+class FakeFrame {
+  readonly listeners = new Map<string, Set<(event: object) => void>>();
+  readonly world: Context;
+  evaluations = 0;
+  constructor(private readonly address = "https://example.com/frame") {
+    this.world = createContext({ window: {}, location: { href: address }, Element: FakeElement, HTMLElement: FakeElement,
+      HTMLInputElement: class {}, HTMLSelectElement: class {}, HTMLTextAreaElement: class {}, HTMLFormElement: class {},
+      document: {
+        addEventListener: (name: string, handler: (event: object) => void) => { const set = this.listeners.get(name) ?? new Set(); set.add(handler); this.listeners.set(name, set); },
+        removeEventListener: (name: string, handler: (event: object) => void) => this.listeners.get(name)?.delete(handler),
+      },
+    });
+  }
+  url() { return this.address; }
+  async evaluate(fn: Function, args: unknown) {
+    this.evaluations++;
+    this.world["__args"] = args;
+    return runInContext(`(${fn.toString()})(__args)`, this.world);
+  }
+  click(text: string, trusted = true) {
+    for (const handler of this.listeners.get("click") ?? []) handler({ type: "click", target: new FakeElement(text), isTrusted: trusted });
+  }
+}
+class FakePage extends EventEmitter {
+  readonly frameList = [new FakeFrame("https://example.com/main"), new FakeFrame()];
+  closed = false;
+  isClosed() { return this.closed; }
+  frames() { return this.frameList; }
+  mainFrame() { return this.frameList[0]!; }
+  async title() { return "Work"; }
+  async addInitScript() {}
+  async exposeBinding(name: string, callback: (source: { frame: FakeFrame }, raw: unknown) => void) {
+    for (const frame of this.frames()) frame.world["window"][name] = async (raw: unknown) => callback({ frame }, raw);
+  }
+}
+function fakeBrowser(page: FakePage) {
+  const context = Object.assign(new EventEmitter(), { pages: () => page.closed ? [] : [page] });
+  let closes = 0;
+  const browser = { contexts: () => [context], close: async () => { closes++; } } as unknown as Browser;
+  return { browser, context, closes: () => closes };
+}
+
+test("existing/navigated frames install once, synthetic events are ignored, and all frames clean up", async () => {
+  const page = new FakePage(), fixture = fakeBrowser(page);
+  const recorder = new DemonstrationRecorder(undefined, async () => fixture.browser);
+  await recorder.start("http://fake");
+  for (const frame of page.frames()) expect(frame.listeners.get("click")?.size).toBe(1);
+  const child = page.frames()[1]!;
+  page.emit("framenavigated", child); page.emit("framenavigated", child);
+  await Promise.resolve();
+  expect(child.listeners.get("click")?.size).toBe(1);
+  child.click("Synthetic", false); child.click("Trusted");
+  const result = await recorder.stop();
+  expect(result.steps).toHaveLength(1);
+  expect(result.steps[0]).toMatchObject({ kind: "click", text: "Trusted", url: "https://example.com/frame" });
+  for (const frame of page.frames()) expect(frame.listeners.get("click")?.size).toBe(0);
+  expect(fixture.closes()).toBe(1);
+  const next = new DemonstrationRecorder(undefined, async () => fixture.browser);
+  await next.start("http://fake");
+  for (const frame of page.frames()) expect(frame.listeners.get("click")?.size).toBe(1);
+  await next.stop();
+});
+
+test("300-step cap detaches every listener/CDP and closed pages are no longer tracked", async () => {
+  const page = new FakePage(), fixture = fakeBrowser(page);
+  const recorder = new DemonstrationRecorder(undefined, async () => fixture.browser);
+  await recorder.start("http://fake");
+  const child = page.frames()[1]!;
+  for (let index = 0; index < 320; index++) child.click(`Action ${index}`);
+  expect((await recorder.finished).truncated).toBe(true);
+  const result = await recorder.stop();
+  expect(result.steps).toHaveLength(300);
+  expect(fixture.closes()).toBe(1);
+  expect(page.listenerCount("framenavigated")).toBe(0);
+  expect(fixture.context.listenerCount("page")).toBe(0);
+  expect(child.listeners.get("click")?.size).toBe(0);
+  const next = new DemonstrationRecorder(undefined, async () => fixture.browser);
+  await next.start("http://fake");
+  page.closed = true; page.emit("close");
+  expect(page.listenerCount("framenavigated")).toBe(0);
+  const before = child.evaluations;
+  await next.stop();
+  expect(child.evaluations).toBe(before);
 });
 
 const chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -120,14 +269,15 @@ test.skipIf(!existsSync(chrome) || !process.env["DEMONSTRATION_CHROME"])("option
       await page.locator('input[name="search"]').focus();
       await new Promise(resolve => setTimeout(resolve, 100));
     `);
-    const steps = await recorder.stop();
+    const result = await recorder.stop();
+    const { steps } = result;
     expect(steps.some(step => step.kind === "navigate" && step.url === "data:")).toBe(true);
     expect(steps.some(step => step.kind === "click" && step.text === "Save")).toBe(true);
     expect(steps.some(step => step.kind === "change" && step.value === "(입력함)")).toBe(true);
     expect(JSON.stringify(steps)).not.toContain("never-record-this-password");
     // Reconnect verifies that stop only disconnected and that the page still works.
     expect(await automate(`console.log(await page.title()); await page.getByRole('button', {name:'Save'}).click();`)).toBe("Demo");
-    expect(await recorder.stop()).toEqual(steps);
+    expect(await recorder.stop()).toEqual(result);
   } catch (error) {
     child.kill();
     await child.exited;
