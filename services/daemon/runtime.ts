@@ -58,6 +58,8 @@ export function activityCategory(name:string,mcpCategory:ReturnType<ToolExecutor
 export function desktopCapture(name:string):boolean{return name==="computer"||name==="computer_exec"||name==="desktop_get_app_state"||name.startsWith("desktop_")&&!desktopReadOnly(name);}
 function utcInstruction():string{return `Current UTC time: ${new Date().toISOString()}. Resolve relative future scheduling from this current time unless the user explicitly specifies a source-time anchor. Use the user timezone if known; otherwise ask when local wall-clock interpretation matters.`;}
 const START_MESSAGE_NOTE = "Before continuing, tell the user in one short sentence what you are about to do (no status words, no 'working on it'). Do not answer yet.";
+const SILENCE_MESSAGE_NOTE = "It has been a few minutes. In one short sentence, tell the user what you have found so far or what you are checking now — a real finding, not 'still working'. Do not answer yet.";
+const SILENCE_MESSAGE_MS = 3 * 60_000;
 export type ControlTiming={readonly phase:"tick"|"extensions"|"preflush"|"poll"|"command"|"local_barrier"|"event_delivery"|"postflush";readonly command_id?:string;readonly event_kind?:DaemonEvent["kind"];readonly started_at:string;readonly duration_ms:number;readonly outcome:"completed"|"failed"};
 export type RuntimeTiming = { readonly kind:"provider"|"tool"|"semantic_select"|"structure_reference"|"knowledge_tree"; readonly run_id:string; readonly tool_name?:string; readonly input_image_count?:number; readonly output_count?:number; readonly duration_ms:number; readonly outcome:"completed"|"failed" };
 const DesktopFailureCode=z.enum(["desktop_busy","desktop_session_unbound","desktop_linux_required","desktop_session_closed","desktop_output_limit","desktop_protocol_invalid","desktop_worker_failed","desktop_worker_exited","desktop_worker_missing","desktop_write_failed","desktop_aborted","desktop_timeout","desktop_cleanup_failed","desktop_termination_failed","desktop_termination_unconfirmed","desktop_input_release_failed","desktop_directory_cleanup_failed","desktop_input_barrier_failed","desktop_guardian_failed","desktop_guardian_start_timeout","desktop_guardian_protocol_invalid","desktop_guardian_cleanup_timeout","desktop_guardian_termination_failed"]);
@@ -75,7 +77,7 @@ export function runtimeFailure(runId:string,error:unknown):RuntimeFailure{
   if(infrastructure)return {event:'runtime.failure',run_id:runId,type:'runtime',...infrastructure};
   return {event:"runtime.failure",run_id:runId,type:error instanceof Error?"runtime":"unexpected",code:"runtime_failure"};
 }
-export type RuntimeConfig = { readonly models?: RunModelResolver; readonly compactThreshold?: number; readonly controlUrl: string; readonly token: string; readonly journal: Journal; readonly provider: Provider; readonly tools: ToolExecutor; readonly releaseInput?: () => Promise<void>; readonly inputBarrier?:()=>Promise<void>; readonly artifactRoot?: string; readonly onControlTiming?:(event:ControlTiming)=>void; readonly onFailure?:(event:RuntimeFailure)=>void; readonly onTiming?: (event:RuntimeTiming)=>void };
+export type RuntimeConfig = { readonly now?:()=>number; readonly models?: RunModelResolver; readonly compactThreshold?: number; readonly controlUrl: string; readonly token: string; readonly journal: Journal; readonly provider: Provider; readonly tools: ToolExecutor; readonly releaseInput?: () => Promise<void>; readonly inputBarrier?:()=>Promise<void>; readonly artifactRoot?: string; readonly onControlTiming?:(event:ControlTiming)=>void; readonly onFailure?:(event:RuntimeFailure)=>void; readonly onTiming?: (event:RuntimeTiming)=>void };
 export class Runtime {
   private readonly http;
   private readonly memoryQueue: MemoryQueue;
@@ -535,19 +537,36 @@ export class Runtime {
     const userTexts=new Map<string,string>();
     const appliedInputIds=new Set(checkpoint?.appliedInputIds??sourceInputIds(input));
     const attribution=new ResponseAttribution(checkpoint?.appliedUserIds);
+    const now=()=>this.config.now?.()??Date.now();
     const requestProgress=new Map((checkpoint?.requestProgress??[]).map(state=>[state.messageId,{...state}]));
+    const visibleMessageIds=new Set(checkpoint?.visibleMessageIds??[]);
+    const rememberVisible=(id:string)=>{
+      const fresh=!visibleMessageIds.has(id);visibleMessageIds.add(id);
+      while(visibleMessageIds.size>256){const oldest=visibleMessageIds.values().next().value;if(oldest)visibleMessageIds.delete(oldest);}
+      return fresh;
+    };
     const progressFor=(messageId:string)=>{
       let state=requestProgress.get(messageId);
       if(!state){state={messageId,toolRounds:0,attempted:false,delivered:false};requestProgress.set(messageId,state);}
       while(requestProgress.size>256){const oldest=requestProgress.keys().next().value;if(oldest)requestProgress.delete(oldest);}
       return state;
     };
+    const markVisible=(request:string,at=now())=>{
+      const progress=progressFor(request);
+      progress.delivered=true;
+      progress.lastVisibleAt=Math.max(progress.lastVisibleAt??0,Number.isFinite(at)?at:now());
+    };
+    const visibleReceipts=new Map<string,string>();
+    const acknowledgeVisible=()=>{
+      for(const [eventId,request] of visibleReceipts)if(!this.config.journal.wasRejected(eventId)&&rememberVisible(eventId))markVisible(request);
+      visibleReceipts.clear();
+    };
     // Canonical visible messages also cover checkpoints from before this gate existed.
     let priorRequest:string|undefined;
     for(const message of assignment.messages){
       if(message.task_id&&message.task_id!==assignment.task.id)continue;
       if(message.role==='user'&&!message.synthetic)priorRequest=message.id;
-      else if(priorRequest&&message.role==='assistant'&&!message.hidden&&(message.content.trim()||message.attachments?.length||message.blocks?.length))progressFor(priorRequest).delivered=true;
+      else if(priorRequest&&message.role==='assistant'&&!message.hidden&&(message.content.trim()||message.attachments?.length||message.blocks?.length)){rememberVisible(message.id);markVisible(priorRequest,Date.parse(message.created_at));}
     }
     if(checkpoint&&!checkpoint.appliedUserIds)for(const message of assignment.messages)if(message.sequence<=checkpoint.cursor&&message.task_id===assignment.task.id)attribution.apply(message);
     const rememberInput=(id:string)=>{appliedInputIds.add(id);while(appliedInputIds.size>100){const oldest=appliedInputIds.values().next().value;if(oldest)appliedInputIds.delete(oldest);}};
@@ -592,7 +611,7 @@ export class Runtime {
       }
       const artifactScope = { http: this.http, runId: assignment.run_id, conversationId: assignment.task.conversation_id, taskCreatedAt: assignment.task.created_at, documentFamily: documentFamily(assignment.model_binding?.selection), ...(this.config.artifactRoot ? { root: this.config.artifactRoot } : {}) };
       const artifacts=checkpoint?await TaskArtifacts.resume(artifactScope,checkpoint.artifacts):await TaskArtifacts.create(artifactScope);
-      const checkpointValue=():RunCheckpoint=>({version:1,assignment,input,cursor,seenCallIds:[...seenCallIds],toolImageIndexes:toolImages.map(item=>input.indexOf(item)),artifacts:artifacts.checkpoint(),inputTokens,argumentRepairs,pendingSemanticSourceIds:[...pendingSemanticSourceIds],appliedUserIds:attribution.checkpoint(),requestProgress:[...requestProgress.values()],...(nativeState?{nativeContext:nativeState}:{}),...(native?{appliedInputIds:[...appliedInputIds]}:{}),...(semantic?{semanticContext:semantic.checkpoint()}:{})});
+      const checkpointValue=():RunCheckpoint=>({version:1,assignment,input,cursor,seenCallIds:[...seenCallIds],toolImageIndexes:toolImages.map(item=>input.indexOf(item)),artifacts:artifacts.checkpoint(),inputTokens,argumentRepairs,pendingSemanticSourceIds:[...pendingSemanticSourceIds],appliedUserIds:attribution.checkpoint(),requestProgress:[...requestProgress.values()],visibleMessageIds:[...visibleMessageIds],...(nativeState?{nativeContext:nativeState}:{}),...(native?{appliedInputIds:[...appliedInputIds]}:{}),...(semantic?{semanticContext:semantic.checkpoint()}:{})});
       const scope={runId:assignment.run_id,lane:assignment.lane??assignment.task.lane??'foreground',workspace:artifacts.outputDirectory};
       const runPolicy=assignment.run_policy;
       const offerTools=(tools:readonly Tool[]):Tool[]=>tools.filter(tool=>!('name' in tool)||tool.name!=='source_gmail_send_reply').filter(tool=>!('name' in tool)||tool.name!=='read_demonstration'||scope.lane==='foreground'&&!runPolicy).filter(tool=>!('name' in tool)||tool.name!=='plan_meeting_prep'||runPolicy==='brief').filter(tool=>!runPolicy||!('name' in tool)||offered(runPolicy,String(tool.name),{server:this.config.tools.mcpServer(String(tool.name)),method:this.config.tools.mcpMethod(String(tool.name))},assignment.calendar_servers));
@@ -703,7 +722,7 @@ export class Runtime {
           if (message.sequence <= cursor) continue;
           if (message.role === "assistant") {
             const request=attribution.snapshot().response_to_message_id;
-            if(request&&(!message.task_id||message.task_id===assignment.task.id)&&!message.hidden&&(message.content.trim()||message.attachments?.length||message.blocks?.length))progressFor(request).delivered=true;
+            if(request&&(!message.task_id||message.task_id===assignment.task.id)&&!message.hidden&&(message.content.trim()||message.attachments?.length||message.blocks?.length)){rememberVisible(message.id);markVisible(request,Date.parse(message.created_at));}
             cursor=message.sequence;continue;
           }
           attribution.apply(message);
@@ -892,14 +911,14 @@ export class Runtime {
           const messageId = semantic?.tracksDeliveryIds ? eventId : undefined;
           const phase=item.phase??(background?(plan.kind==='final'?'final_answer':'commentary'):undefined);
           this.event({kind:"message",event_id:eventId,...(legacyCommentary?{}:{message_id:eventId,...responseAttribution}),run_id:assignment.run_id,content,...semanticEvent,...(phase == null ? {output_kind:plan.kind==='final'?'answer':'progress'} : {phase})});
+          if(!background&&responseAttribution.response_to_message_id)visibleReceipts.set(eventId,responseAttribution.response_to_message_id);
           if(!background||(phase==='final_answer'&&content.trim()!=='NO_REPORT'))semantic?.delivered(semanticContextId, messageId);
           firstReply??=eventId;
         }
         if (semantic && plan.kind === "final") { semantic.final(cursor); save(); }
         if(firstReply){
           await composing.deliver(firstReply);await this.waitReceipts(assignment.run_id,signal);
-          const request=responseAttribution.response_to_message_id;
-          if(request&&!background&&!this.config.journal.wasRejected(firstReply))progressFor(request).delivered=true;
+          acknowledgeVisible();
         }
         await composing.close();
         let captureSlots=0,unseenImages=0;
@@ -917,22 +936,27 @@ export class Runtime {
           };
           const readOnly=(name:string)=>this.config.tools.parallelRead(name)||['search_prior_work','retrieve_prior_work','read_attention','read_demonstration','load_skill'].includes(name);
           const gate=!progress.delivered&&!progress.attempted&&(progress.toolRounds>=2||calls.some(call=>!readOnly(call.name)));
+          // Older checkpoints know an opening was delivered, but not when. Start their silence clock now.
+          if(progress.delivered)progress.lastVisibleAt??=now();
+          const nudge=!gate&&progress.delivered&&(progress.nudgeCount??0)<3&&now()-Math.max(progress.lastVisibleAt??now(),progress.lastNudgeAt??0)>=SILENCE_MESSAGE_MS;
           if(gate)progress.attempted=true;
+          // Reserve the interval and attempt budget before inference, including failed/empty generations.
+          if(nudge){progress.lastNudgeAt=now();progress.nudgeCount=(progress.nudgeCount??0)+1;}
           persistProgress();
-          if(gate){
+          if(gate||nudge){
             let content='';
             try{
-              const opening=await provider.respond([...prefix,{role:'system',content:START_MESSAGE_NOTE}],[],signal);
+              const opening=await provider.respond([...prefix,{role:'system',content:nudge?SILENCE_MESSAGE_NOTE:START_MESSAGE_NOTE}],[],signal);
               if(opening.status==='completed'&&!opening.error)content=opening.output.flatMap(item=>item.type==='message'?item.content.flatMap(part=>part.type==='output_text'?[part.text]:[]):[]).join('\n').trim();
             }catch{signal.throwIfAborted();}
             if(content){
-              const digest=new Bun.CryptoHasher('sha256').update(JSON.stringify([assignment.run_id,'start-message',requestId])).digest('hex');
+              const digest=new Bun.CryptoHasher('sha256').update(JSON.stringify(nudge?[assignment.run_id,'silence-message',requestId,progress.nudgeCount]:[assignment.run_id,'start-message',requestId])).digest('hex');
               const eventId=`${digest.slice(0,8)}-${digest.slice(8,12)}-8${digest.slice(13,16)}-a${digest.slice(17,20)}-${digest.slice(20,32)}`;
               const opening:ResponseInputItem={type:'message',id:eventId,role:'assistant',status:'completed',phase:'commentary',content:[{type:'output_text',text:content,annotations:[]}]};
               this.event({kind:'message',event_id:eventId,message_id:eventId,run_id:assignment.run_id,content,phase:'commentary',...semanticEvent,...responseAttribution});
               input.push(opening);
               await this.waitReceipts(assignment.run_id,signal);
-              if(!this.config.journal.wasRejected(eventId)){progress.delivered=true;semantic?.delivered(semanticContextId,semantic.tracksDeliveryIds?eventId:undefined);}
+              if(!this.config.journal.wasRejected(eventId)){if(rememberVisible(eventId))markVisible(requestId);semantic?.delivered(semanticContextId,semantic.tracksDeliveryIds?eventId:undefined);}
               persistProgress([opening]);
             }
           }
@@ -976,7 +1000,8 @@ export class Runtime {
             if(item.name === "publish_artifact"){
               const artifact=await artifacts.publish(item.arguments,signal);
               const eventId = crypto.randomUUID(), messageId = semantic?.tracksDeliveryIds ? eventId : undefined;
-              this.event({kind:"message",event_id:eventId,message_id:eventId,run_id:assignment.run_id,content:"",attachment_ids:[artifact.id],...semanticEvent,...responseAttribution,output_kind:'artifact'});
+               this.event({kind:"message",event_id:eventId,message_id:eventId,run_id:assignment.run_id,content:"",attachment_ids:[artifact.id],...semanticEvent,...responseAttribution,output_kind:'artifact'});
+               if(!background&&requestId)visibleReceipts.set(eventId,requestId);
               if(!background)semantic?.delivered(semanticContextId, messageId);
               return {text:JSON.stringify({artifact})};
             }
@@ -992,10 +1017,15 @@ export class Runtime {
               // Deterministic per call so a resumed run does not post the same card twice.
               const digest=new Bun.CryptoHasher("sha256").update(JSON.stringify([assignment.run_id,"result",item.call_id])).digest("hex");
               const eventId=`${digest.slice(0,8)}-${digest.slice(8,12)}-8${digest.slice(13,16)}-a${digest.slice(17,20)}-${digest.slice(20,32)}`;
-              this.event({kind:"message",event_id:eventId,message_id:eventId,run_id:assignment.run_id,content:summary,blocks:[block],...semanticEvent,...responseAttribution,...(background?{phase:'final_answer' as const}:{output_kind:'progress' as const})});
+               this.event({kind:"message",event_id:eventId,message_id:eventId,run_id:assignment.run_id,content:summary,blocks:[block],...semanticEvent,...responseAttribution,...(background?{phase:'final_answer' as const}:{output_kind:'progress' as const})});
+               if(!background&&requestId)visibleReceipts.set(eventId,requestId);
               return {text:JSON.stringify(item.name==="ask_user"?{shown:true,instruction:"The card is in front of the user. End this turn now with at most one short sentence; do not act on it until their answer arrives as a reply to the card."}:{shown:true})};
             }
-            if(item.name === "notify_user")return {text:await notifyUser(this.http,{runId:assignment.run_id,conversationId:assignment.task.conversation_id,actionId},item.arguments,signal)};
+            if(item.name === "notify_user"){
+              const text=await notifyUser(this.http,{runId:assignment.run_id,conversationId:assignment.task.conversation_id,actionId},item.arguments,signal);
+              if(!background&&requestId)markVisible(requestId);
+              return {text};
+            }
             if(isFutureWorkTool(item.name))return {text:await runFutureWork(this.http,{runId:assignment.run_id,actionId},{name:item.name,args:item.arguments,signal})};
             const ran=await this.config.tools.run(item.name,callArgs,signal,toolScope);
             // A look's list coverage goes to the control plane from here, not from the model's report.
@@ -1074,6 +1104,7 @@ export class Runtime {
         for(let index=toolImages.length-1;index>=0;index--){const image=toolImages[index];if(image&&!input.includes(image))toolImages.splice(index,1);}
         save();
         await this.waitReceipts(assignment.run_id,signal);
+        if(visibleReceipts.size){acknowledgeVisible();save();}
         queueSemantic(true);
         if (plan.kind === "final") {
           if (await completeTurn()) break;
