@@ -9,7 +9,8 @@
  * and moved at most 30 minutes a day. An explicit time the user asked for wins, including over quiet hours.
  */
 import { z } from 'zod';
-import type { Database, Query } from '../../services/control/db';
+import type { Database, Query, Transaction } from '../../services/control/db';
+import { briefFailureFields, type BriefDiagnostics } from './brief-diagnostics';
 import { createBackgroundTask } from '../../services/control/repository/common';
 import { attention, type Attention } from './store';
 import { markSourceItemsBriefed } from './sources';
@@ -107,7 +108,8 @@ const worthBriefing = (c: ReturnType<typeof briefChanges>) => c.needs_you > 0 ||
 /** News is kept until a brief delivers it: done items since the last delivered brief (at most 7 days), not a 48h window. */
 async function doneSince(sql: Query, workspace: string, before: string, now: Date): Promise<Date> {
   // From the last delivered brief's input cut-off (what it read), not its publication time.
-  const row = (await sql`SELECT coalesce(snapshot_at,finished_at) AS at FROM assistant.attention_briefs WHERE workspace_id=${workspace} AND local_date<${before}::date AND state='delivered' ORDER BY local_date DESC LIMIT 1`)[0];
+  // A fallback without a previous baseline has no snapshot and must not move this cut-off.
+  const row = (await sql`SELECT coalesce(snapshot_at,finished_at) AS at FROM assistant.attention_briefs WHERE workspace_id=${workspace} AND local_date<${before}::date AND state='delivered' AND snapshot IS NOT NULL ORDER BY local_date DESC LIMIT 1`)[0];
   const floor = new Date(now.getTime() - 7 * 86_400_000);
   if (!row?.['at']) return new Date(now.getTime() - 2 * 86_400_000);
   const at = new Date(String(row['at']));
@@ -126,19 +128,47 @@ async function lastSnapshot(sql: Query, workspace: string, before: string): Prom
  * read_attention for a brief run: the view (news since the last delivered brief, without brief runs) plus what is new.
  * What the run read is recorded as the brief's snapshot, so "delivered" means exactly what the body was written from.
  */
-export async function briefContext(sql: Query, workspace: string, task: string) {
-  const brief = (await sql`SELECT local_date::text AS day,state FROM assistant.attention_briefs WHERE workspace_id=${workspace} AND task_id=${task}`)[0];
-  if (!brief) return null;
-  const view = await briefView(sql, workspace, String(brief['day']));
-  if (brief['state'] === 'dispatched') await sql`UPDATE assistant.attention_briefs SET snapshot=${JSON.stringify(briefSnapshot(view))}::text::jsonb,snapshot_at=now() WHERE workspace_id=${workspace} AND task_id=${task} AND state='dispatched'`;
-  const current = briefSnapshot(view), last = await lastSnapshot(sql, workspace, String(brief['day']));
-  const lastWork = new Set(last?.work ?? []), lastDone = new Set(last?.done ?? []), lastNeeds = new Set(last?.needs ?? []);
-  return { view, since_last_brief: {
-    first_brief: last === null,
-    new_needs_you: view.needs_you.filter(i => !lastNeeds.has(`${i.id}:${i.state ?? ''}${i.version ? `@${i.version}` : ''}`)).map(i => i.id),
-    new_in_progress: view.in_progress.filter(i => (i.kind === 'card' || i.kind === 'task' || i.kind === 'mail') && !lastWork.has(`${i.id}:${i.state ?? ''}${i.version ? `@${i.version}` : ''}`)).map(i => i.id),
-    new_done: view.done.filter(i => !lastDone.has(i.id)).map(i => i.id),
-  } };
+export async function briefContext(sql: Transaction, workspace: string, task: string, diagnostics: BriefDiagnostics = { step: 'brief', ms_by_step: {}, run: null, task }) {
+  const timed = async <T>(step: string, work: () => Promise<T>): Promise<T> => {
+    diagnostics.step = step;
+    const started = performance.now();
+    try { return await work(); }
+    finally { diagnostics.ms_by_step[step] = Math.round(performance.now() - started); }
+  };
+  try {
+    const brief = await timed('brief', async () => (await sql`SELECT local_date::text AS day,state FROM assistant.attention_briefs WHERE workspace_id=${workspace} AND task_id=${task}`)[0]);
+    if (!brief) return null;
+    const view = await timed('briefView', async () => {
+      const since = await timed('doneSince', () => doneSince(sql, workspace, String(brief['day']), new Date()));
+      return timed('attention', () => attention(sql, workspace, { doneSince: since }));
+    });
+    let fallback = false;
+    if (brief['state'] === 'dispatched') {
+      try {
+        await timed('snapshot_update', () => sql.savepoint(async sp => {
+          const previous = (await sp`SHOW lock_timeout`)[0]?.['lock_timeout'];
+          await sp`SET LOCAL lock_timeout = '3s'`;
+          await sp`UPDATE assistant.attention_briefs SET snapshot=${JSON.stringify(briefSnapshot(view))}::text::jsonb,snapshot_at=clock_timestamp() WHERE workspace_id=${workspace} AND task_id=${task} AND state='dispatched'`;
+          await sp`SELECT set_config('lock_timeout',${String(previous ?? '0')},true)`;
+        }));
+      } catch (error) {
+        if (briefFailureFields(error, diagnostics).code !== '55P03') throw error;
+        console.error(JSON.stringify({ event: 'attention.brief_view_failed', ...briefFailureFields(error, diagnostics) }));
+        fallback = true;
+      }
+    }
+    const last = await timed('lastSnapshot', () => lastSnapshot(sql, workspace, String(brief['day'])));
+    const lastWork = new Set(last?.work ?? []), lastDone = new Set(last?.done ?? []), lastNeeds = new Set(last?.needs ?? []);
+    return { view, ...(fallback ? { brief_view: 'fallback' as const } : {}), since_last_brief: {
+      first_brief: last === null,
+      new_needs_you: view.needs_you.filter(i => !lastNeeds.has(`${i.id}:${i.state ?? ''}${i.version ? `@${i.version}` : ''}`)).map(i => i.id),
+      new_in_progress: view.in_progress.filter(i => (i.kind === 'card' || i.kind === 'task' || i.kind === 'mail') && !lastWork.has(`${i.id}:${i.state ?? ''}${i.version ? `@${i.version}` : ''}`)).map(i => i.id),
+      new_done: view.done.filter(i => !lastDone.has(i.id)).map(i => i.id),
+    } };
+  } catch (error) {
+    console.error(JSON.stringify({ event: 'attention.brief_view_failed', ...briefFailureFields(error, diagnostics) }));
+    throw error;
+  }
 }
 
 async function tickWorkspace(sql: Database, workspace: string, now: Date) {
@@ -383,10 +413,17 @@ export async function publishBriefMessage(sql: Query, workspace: string, task: s
 }
 export async function markBriefDelivered(sql: Query, workspace: string, task: string, messageId: string) {
   await sql`UPDATE assistant.meeting_preps SET state='done',delivered=true,message_id=${messageId} WHERE workspace_id=${workspace} AND task_id=${task} AND state='dispatched'`;
-  const rows = await sql`UPDATE assistant.attention_briefs SET state='delivered',message_id=${messageId},finished_at=now() WHERE workspace_id=${workspace} AND task_id=${task} AND state='dispatched' RETURNING snapshot`;
+  // Dispatch's candidate snapshot is not proof of a successful read. Carry the previous delivered baseline
+  // (including its input cut-off) forward when this run never refreshed it, without marking source versions.
+  const rows = await sql`UPDATE assistant.attention_briefs b SET state='delivered',message_id=${messageId},finished_at=now(),
+    snapshot=CASE WHEN snapshot_at>=dispatched_at THEN snapshot ELSE
+      (SELECT p.snapshot FROM assistant.attention_briefs p WHERE p.workspace_id=b.workspace_id AND p.local_date<b.local_date AND p.state='delivered' AND p.snapshot IS NOT NULL ORDER BY p.local_date DESC LIMIT 1) END,
+    snapshot_at=CASE WHEN snapshot_at>=dispatched_at THEN snapshot_at ELSE
+      (SELECT coalesce(p.snapshot_at,p.finished_at) FROM assistant.attention_briefs p WHERE p.workspace_id=b.workspace_id AND p.local_date<b.local_date AND p.state='delivered' AND p.snapshot IS NOT NULL ORDER BY p.local_date DESC LIMIT 1) END
+    WHERE workspace_id=${workspace} AND task_id=${task} AND state='dispatched' RETURNING snapshot,snapshot_at>=dispatched_at AS refreshed`;
   // Exactly what the body was written from is no longer news.
   const snap = rows[0]?.['snapshot'] as { needs?: string[] } | null | undefined;
-  if (snap?.needs) await markSourceItemsBriefed(sql, workspace, snap.needs);
+  if (rows[0]?.['refreshed'] && snap?.needs) await markSourceItemsBriefed(sql, workspace, snap.needs);
 }
 export async function isBriefTask(sql: Query, workspace: string, task: string) {
   return !!(await sql`SELECT 1 FROM assistant.attention_brief_runs WHERE workspace_id=${workspace} AND task_id=${task}

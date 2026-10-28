@@ -43,17 +43,28 @@ export function topicRoutes(sql: Database) {
     const principal = c.get('principal');
     const run = z.uuid().parse(c.req.param('run'));
     await authorizeReferenceRun(sql, principal, run);
+    // This GET records what the brief read: daemon-profile.ts lists it as a writing GET (not a read-only transaction).
     return c.json(await sql.begin(async tx => {
-      const task = String((await tx`SELECT task_id FROM assistant.runs WHERE id=${run}`)[0]?.['task_id']);
+      const row = (await tx`SELECT task_id FROM assistant.runs WHERE id=${run} AND workspace_id=${principal.workspace_id}`)[0];
+      if (!row) throw new DomainError('not_found', 'Run not found', 404);
+      const task = z.uuid().parse(row['task_id']);
+      const diagnostics = c.get('attention_diagnostics') ?? { step: 'brief', ms_by_step: {}, run, task };
+      diagnostics.task = task;
+      c.set('attention_diagnostics', diagnostics);
       // The brief's own view; if it cannot be built, the brief still gets the plain feed rather than nothing.
-      const brief = await tx.savepoint(sp => briefContext(sp, principal.workspace_id, task)).catch((error: unknown) => {
-        console.error(JSON.stringify({ event: 'attention.brief_view_failed', message: error instanceof Error ? error.message.slice(0, 300) : String(error) }));
+      let fallback = false;
+      const brief = await tx.savepoint(sp => briefContext(sp, principal.workspace_id, task, diagnostics)).catch(() => {
+        fallback = true;
         return null;
       });
-      if (brief) return { ...brief.view, since_last_brief: brief.since_last_brief };
-      const full = await attention(tx, principal.workspace_id);
-      // The run reading the view is not news to itself.
-      return { ...full, in_progress: full.in_progress.filter(i => i.id !== `task:${task}`) };
+      if (brief) return { ...brief.view, since_last_brief: brief.since_last_brief, ...(brief.brief_view ? { brief_view: brief.brief_view } : {}) };
+      diagnostics.step = 'attention_fallback';
+      const started = performance.now();
+      try {
+        const full = await attention(tx, principal.workspace_id);
+        // The run reading the view is not news to itself.
+        return { ...full, in_progress: full.in_progress.filter(i => i.id !== `task:${task}`), ...(fallback ? { brief_view: 'fallback' } : {}) };
+      } finally { diagnostics.ms_by_step['attention_fallback'] = Math.round(performance.now() - started); }
     }));
   });
   app.post('/context/:run/meeting-prep', async c => {

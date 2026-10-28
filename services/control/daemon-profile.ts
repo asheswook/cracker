@@ -9,7 +9,8 @@ export function daemonProfile(method:string,path:string,body:unknown,view?:strin
   // Audited GET exceptions: responsibility dispatch writes rows; the local login
   // callback owns/locks its VM before reading bound ciphertext. HEAD uses the
   // same handler/profile where the router supports it.
-  const lockingGet=/^\/v1\/daemon\/(responsibilities|model-account\/callback)\/?$/.test(path);
+  // The brief's read_attention records the snapshot it reported from (a write), so it is not a read-only GET.
+  const lockingGet=/^\/v1\/daemon\/(responsibilities|model-account\/callback)\/?$/.test(path)||/^\/v1\/daemon\/context\/[^/]+\/attention$/.test(path);
   const read=(method==='GET'||method==='HEAD'||protectedRead||path.endsWith('/prior-work'))&&!lockingGet;
   const kind=session?'session':poll?'poll':read?'read':'mutation';
   const workspaceUpdate=!read&&/\/(schedules|responsibilities|memory|proactive-work|extensions|artifact-index)(\/|$)|\/conversations\/[^/]+\/artifacts$|\/context\/[^/]+\/(semantic|claims|structure)(\/|$)/.test(path);

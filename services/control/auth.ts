@@ -6,7 +6,7 @@ export const Principal = z.object({
   workspace_id: z.uuid(), role: z.enum(["client", "vm"]), vm_id: z.uuid().nullable(), credential_hash: z.string().optional(), session_hash: z.string().optional(), daemon_session_id:z.uuid().optional()
 });
 export type Principal = z.infer<typeof Principal>;
-export type AppEnv = { Variables: { principal: Principal } };
+export type AppEnv = { Variables: { principal: Principal; attention_diagnostics?: import('../../packages/attention/brief-diagnostics').BriefDiagnostics; attention_started_at?: number } };
 export const SESSION_DAYS = 30;
 const SESSION_LIFETIME = `${SESSION_DAYS} days`, SESSION_RENEW_BELOW = `${SESSION_DAYS / 2} days`;
 export async function hashToken(token: string): Promise<string> {

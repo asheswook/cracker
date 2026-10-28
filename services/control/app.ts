@@ -34,6 +34,7 @@ import type { SemanticClassifier, SemanticRetriever } from "../../packages/conte
 import { fenceSession } from './repository/daemon-session';
 import { daemonDatabase, daemonRequest } from './daemon-db';
 import { daemonProfile } from './daemon-profile';
+import { briefFailureFields } from '../../packages/attention/brief-diagnostics';
 export function createApp(
   sql: Database,
   options: {
@@ -59,6 +60,14 @@ export function createApp(
       throw new TypeError("Only explicit loopback development origins are supported");
   }
   const app = new Hono<AppEnv>();
+  app.use('/v1/daemon/context/*', async (c, next) => {
+    const match = /^\/v1\/daemon\/context\/([^/]+)\/attention$/.exec(c.req.path);
+    if (match) {
+      c.set('attention_started_at', performance.now());
+      c.set('attention_diagnostics', { step: 'request', ms_by_step: {}, run: match[1] ?? null, task: null });
+    }
+    await next();
+  });
   const daemonSql=daemonDatabase(sql);
   if (allowedOrigins.length > 0)
     app.use(
@@ -174,6 +183,10 @@ export function createApp(
         // Postgres errors carry a short routine name and message; no row data is included.
         ...("routine" in error && typeof error.routine === "string" ? { routine: error.routine } : {}),
         ...(c.req.path.startsWith("/v1/daemon/") && (c.req.path.includes("/tree/") || c.req.path.startsWith("/v1/daemon/knowledge-tree/") || c.req.path.endsWith("/attention")) ? { message: error.message.slice(0, 200) } : {}),
+        ...(c.get('attention_diagnostics') ? {
+          ...briefFailureFields(error, c.get('attention_diagnostics')!),
+          elapsed_ms: Math.round(performance.now() - (c.get('attention_started_at') ?? performance.now())),
+        } : {}),
       }),
     );
     return c.json({ error: { code: "internal_error", message: "Request failed" } }, 500);
