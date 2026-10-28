@@ -45,7 +45,11 @@ export function topicRoutes(sql: Database) {
     await authorizeReferenceRun(sql, principal, run);
     return c.json(await sql.begin(async tx => {
       const task = String((await tx`SELECT task_id FROM assistant.runs WHERE id=${run}`)[0]?.['task_id']);
-      const brief = await briefContext(tx, principal.workspace_id, task);
+      // The brief's own view; if it cannot be built, the brief still gets the plain feed rather than nothing.
+      const brief = await tx.savepoint(sp => briefContext(sp, principal.workspace_id, task)).catch((error: unknown) => {
+        console.error(JSON.stringify({ event: 'attention.brief_view_failed', message: error instanceof Error ? error.message.slice(0, 300) : String(error) }));
+        return null;
+      });
       if (brief) return { ...brief.view, since_last_brief: brief.since_last_brief };
       const full = await attention(tx, principal.workspace_id);
       // The run reading the view is not news to itself.

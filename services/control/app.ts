@@ -173,7 +173,7 @@ export function createApp(
         path: c.req.path,
         // Postgres errors carry a short routine name and message; no row data is included.
         ...("routine" in error && typeof error.routine === "string" ? { routine: error.routine } : {}),
-        ...(c.req.path.startsWith("/v1/daemon/") && (c.req.path.includes("/tree/") || c.req.path.startsWith("/v1/daemon/knowledge-tree/")) ? { message: error.message.slice(0, 200) } : {}),
+        ...(c.req.path.startsWith("/v1/daemon/") && (c.req.path.includes("/tree/") || c.req.path.startsWith("/v1/daemon/knowledge-tree/") || c.req.path.endsWith("/attention")) ? { message: error.message.slice(0, 200) } : {}),
       }),
     );
     return c.json({ error: { code: "internal_error", message: "Request failed" } }, 500);
