@@ -58,10 +58,10 @@ export function activityCategory(name:string,mcpCategory:ReturnType<ToolExecutor
 export function desktopCapture(name:string):boolean{return name==="computer"||name==="computer_exec"||name==="desktop_get_app_state"||name.startsWith("desktop_")&&!desktopReadOnly(name);}
 function utcInstruction():string{return `Current UTC time: ${new Date().toISOString()}. Resolve relative future scheduling from this current time unless the user explicitly specifies a source-time anchor. Use the user timezone if known; otherwise ask when local wall-clock interpretation matters.`;}
 const START_MESSAGE_NOTE = "Before continuing, tell the user in one short sentence what you are about to do (no status words, no 'working on it'). Do not answer yet.";
-const SILENCE_MESSAGE_NOTE = "It has been a few minutes. In one short sentence, tell the user what you have found so far or what you are checking now — a real finding, not 'still working'. Do not answer yet.";
+const SILENCE_MESSAGE_NOTE = "If you have a finding the user has not heard yet, say it in one short sentence. If not, reply with nothing.";
 const SILENCE_MESSAGE_MS = 3 * 60_000;
 export type ControlTiming={readonly phase:"tick"|"extensions"|"preflush"|"poll"|"command"|"local_barrier"|"event_delivery"|"postflush";readonly command_id?:string;readonly event_kind?:DaemonEvent["kind"];readonly started_at:string;readonly duration_ms:number;readonly outcome:"completed"|"failed"};
-export type RuntimeTiming = { readonly kind:"provider"|"tool"|"semantic_select"|"structure_reference"|"knowledge_tree"; readonly run_id:string; readonly tool_name?:string; readonly input_image_count?:number; readonly output_count?:number; readonly duration_ms:number; readonly outcome:"completed"|"failed" };
+export type RuntimeTiming = { readonly kind:"provider"|"provider_start_message"|"provider_mid_message"|"tool"|"semantic_select"|"structure_reference"|"knowledge_tree"; readonly run_id:string; readonly tool_name?:string; readonly input_image_count?:number; readonly output_count?:number; readonly input_tokens?:number; readonly output_tokens?:number; readonly duration_ms:number; readonly outcome:"completed"|"failed" };
 const DesktopFailureCode=z.enum(["desktop_busy","desktop_session_unbound","desktop_linux_required","desktop_session_closed","desktop_output_limit","desktop_protocol_invalid","desktop_worker_failed","desktop_worker_exited","desktop_worker_missing","desktop_write_failed","desktop_aborted","desktop_timeout","desktop_cleanup_failed","desktop_termination_failed","desktop_termination_unconfirmed","desktop_input_release_failed","desktop_directory_cleanup_failed","desktop_input_barrier_failed","desktop_guardian_failed","desktop_guardian_start_timeout","desktop_guardian_protocol_invalid","desktop_guardian_cleanup_timeout","desktop_guardian_termination_failed"]);
 export type RuntimeFailure=Partial<InfrastructureFailure>&{readonly event:"runtime.failure";readonly run_id:string;readonly type:"desktop"|"validation"|"syntax"|"runtime"|"unexpected";readonly code:string;readonly validation?:ToolArgumentDiagnostic;readonly repair?:{readonly attempt:number;readonly outcome:"regenerating"|"exhausted";readonly removed_images?:number}};
 export function runtimeFailure(runId:string,error:unknown):RuntimeFailure{
@@ -121,8 +121,8 @@ export class Runtime {
     }
     catch(error){this.barrierFailed=true;throw error;}
   }
-  private async measured<T>(context:Omit<RuntimeTiming,"duration_ms"|"outcome">,operation:()=>Promise<T>,summarize?:(value:T)=>Pick<RuntimeTiming,"output_count">):Promise<T>{
-    const started=performance.now();let completed=false;let output:Pick<RuntimeTiming,"output_count">={};
+  private async measured<T>(context:Omit<RuntimeTiming,"duration_ms"|"outcome">,operation:()=>Promise<T>,summarize?:(value:T)=>Pick<RuntimeTiming,"output_count"|"input_tokens"|"output_tokens">):Promise<T>{
+    const started=performance.now();let completed=false;let output:Pick<RuntimeTiming,"output_count"|"input_tokens"|"output_tokens">={};
     try{const result=await operation();completed=true;output=summarize?.(result)??{};return result;}
     finally{this.config.onTiming?.({...context,...output,duration_ms:Math.round(performance.now()-started),outcome:completed?"completed":"failed"});}
   }
@@ -838,12 +838,13 @@ export class Runtime {
         };
         try{
         const precedingNativeState=nativeState;
+        const precedingInputTokens=inputTokens;
         let proposedNativeState:NativeContextState|undefined;
         const response = await this.measured({kind:"provider",run_id:assignment.run_id,input_image_count:inputImageCount(native&&nativeState?input.slice(nativeState.compactedThrough):input)},async()=>{
             const clock=native?nativeClock:utcInstruction();
             if(native){const result=await native.respond({runId:assignment.run_id,input,tools:offeredTools,signal:flight.signal,clock,...(background?{budget:backgroundRetry}:{}),...(nativeState?{state:nativeState}:{}),observer});signal.throwIfAborted();proposedNativeState=result.state;return result.response;}
             return await provider.respond([...input, { role: "system", content: clock }], offeredTools, flight.signal,observer,background?backgroundRetry:undefined);
-        },response=>({output_count:Array.isArray(response?.output)?response.output.length:0}));
+        },response=>({output_count:Array.isArray(response?.output)?response.output.length:0,...(response.usage?{input_tokens:response.usage.input_tokens,output_tokens:response.usage.output_tokens}:{})}));
         signal.throwIfAborted();
         const latest=await this.readContext(assignment.run_id,cursor,signal);
         if(flight.abort.signal.aborted||latest.messages.some(message=>message.role!=="assistant"&&message.sequence>cursor)){
@@ -924,6 +925,7 @@ export class Runtime {
         let captureSlots=0,unseenImages=0;
         const calls=response.output.filter(item=>item.type==='function_call');
         const requestId=responseAttribution.response_to_message_id;
+        let heldForProgress=false;
         if(calls.length&&requestId&&!explainOnly&&scope.lane==='foreground'&&!runPolicy&&assignment.task.origin==='user'){
           const progress=progressFor(requestId);
           progress.toolRounds=Math.min(2,progress.toolRounds+1);
@@ -944,20 +946,45 @@ export class Runtime {
           if(nudge){progress.lastNudgeAt=now();progress.nudgeCount=(progress.nudgeCount??0)+1;}
           persistProgress();
           if(gate||nudge){
-            let content='';
+            heldForProgress=true;
+            const extraFlight=this.beginInputFlight(assignment.run_id,cursor,signal);
+            const extraSignal=AbortSignal.any([extraFlight.signal,AbortSignal.timeout(20_000)]);
+            let cancelGeneration:(()=>void)|undefined;
+            let published:ResponseInputItem|undefined;
+            const discardHeld=()=>{input=[...prefix,...(published?[published]:[])];nativeState=precedingNativeState;inputTokens=precedingInputTokens;save();};
             try{
-              const opening=await provider.respond([...prefix,{role:'system',content:nudge?SILENCE_MESSAGE_NOTE:START_MESSAGE_NOTE}],[],signal);
-              if(opening.status==='completed'&&!opening.error)content=opening.output.flatMap(item=>item.type==='message'?item.content.flatMap(part=>part.type==='output_text'?[part.text]:[]):[]).join('\n').trim();
-            }catch{signal.throwIfAborted();}
-            if(content){
-              const digest=new Bun.CryptoHasher('sha256').update(JSON.stringify(nudge?[assignment.run_id,'silence-message',requestId,progress.nudgeCount]:[assignment.run_id,'start-message',requestId])).digest('hex');
-              const eventId=`${digest.slice(0,8)}-${digest.slice(8,12)}-8${digest.slice(13,16)}-a${digest.slice(17,20)}-${digest.slice(20,32)}`;
-              const opening:ResponseInputItem={type:'message',id:eventId,role:'assistant',status:'completed',phase:'commentary',content:[{type:'output_text',text:content,annotations:[]}]};
-              this.event({kind:'message',event_id:eventId,message_id:eventId,run_id:assignment.run_id,content,phase:'commentary',...semanticEvent,...responseAttribution});
-              input.push(opening);
-              await this.waitReceipts(assignment.run_id,signal);
-              if(!this.config.journal.wasRejected(eventId)){if(rememberVisible(eventId))markVisible(requestId);semantic?.delivered(semanticContextId,semantic.tracksDeliveryIds?eventId:undefined);}
-              persistProgress([opening]);
+              let content='';
+              try{
+                // Bound even a provider that fails to settle its promise when its signal is aborted.
+                const cancelled=new Promise<never>((_,reject)=>{
+                  cancelGeneration=()=>reject(extraSignal.reason);
+                  if(extraSignal.aborted)cancelGeneration();else extraSignal.addEventListener('abort',cancelGeneration,{once:true});
+                });
+                const opening=await this.measured({kind:nudge?'provider_mid_message':'provider_start_message',run_id:assignment.run_id,input_image_count:inputImageCount(prefix)},()=>Promise.race([
+                  Promise.resolve().then(()=>{extraSignal.throwIfAborted();return provider.respond([...prefix,{role:'system',content:nudge?SILENCE_MESSAGE_NOTE:START_MESSAGE_NOTE}],[],extraSignal);}),cancelled,
+                ]),response=>({output_count:response.output.length,...(response.usage?{input_tokens:response.usage.input_tokens,output_tokens:response.usage.output_tokens}:{})}));
+                if(!extraSignal.aborted&&opening.status==='completed'&&!opening.error)content=opening.output.flatMap(item=>item.type==='message'?item.content.flatMap(part=>part.type==='output_text'?[part.text]:[]):[]).join('\n').trim();
+              }catch{signal.throwIfAborted();}
+              // A sentence generated for the old request must not escape after steering. Discard
+              // its held calls as well, so even read calls wait for inference on the new input.
+              const latest=await this.readContext(assignment.run_id,cursor,signal);
+              if(extraFlight.abort.signal.aborted||latest.messages.some(message=>message.role!=='assistant'&&message.sequence>cursor)){discardHeld();continue;}
+              if(content){
+                const digest=new Bun.CryptoHasher('sha256').update(JSON.stringify(nudge?[assignment.run_id,'silence-message',requestId,progress.nudgeCount]:[assignment.run_id,'start-message',requestId])).digest('hex');
+                const eventId=`${digest.slice(0,8)}-${digest.slice(8,12)}-8${digest.slice(13,16)}-a${digest.slice(17,20)}-${digest.slice(20,32)}`;
+                const opening:ResponseInputItem={type:'message',id:eventId,role:'assistant',status:'completed',phase:'commentary',content:[{type:'output_text',text:content,annotations:[]}]};
+                published=opening;
+                this.event({kind:'message',event_id:eventId,message_id:eventId,run_id:assignment.run_id,content,phase:'commentary',...semanticEvent,...responseAttribution});
+                input.push(opening);
+                await this.waitReceipts(assignment.run_id,signal);
+                if(!this.config.journal.wasRejected(eventId)){if(rememberVisible(eventId))markVisible(requestId);semantic?.delivered(semanticContextId,semantic.tracksDeliveryIds?eventId:undefined);}
+                persistProgress([opening]);
+                const afterDelivery=await this.readContext(assignment.run_id,cursor,signal);
+                if(extraFlight.abort.signal.aborted||afterDelivery.messages.some(message=>message.role!=='assistant'&&message.sequence>cursor)){discardHeld();continue;}
+              }
+            }finally{
+              if(cancelGeneration)extraSignal.removeEventListener('abort',cancelGeneration);
+              if(this.inputFlights.get(assignment.run_id)===extraFlight)this.inputFlights.delete(assignment.run_id);
             }
           }
         }
@@ -971,8 +998,9 @@ export class Runtime {
           const latest = await this.readContext(assignment.run_id,cursor,signal);
           // New input steers the work instead of discarding it: read-only lookups already chosen still run and
           // their results stay usable; only actions with side effects wait until the model has read the new input.
+          // A progress-generation hold also gates reads if steering arrives after its final mailbox check.
           const readOnly=this.config.tools.parallelRead(item.name)||item.name==='search_prior_work'||item.name==='retrieve_prior_work'||item.name==='read_attention'||item.name==='read_demonstration'||item.name==='read_artifact';
-          if (!readOnly && latest.messages.some(m => m.role !== "assistant" && m.sequence > cursor)) {
+          if ((heldForProgress||!readOnly) && latest.messages.some(m => m.role !== "assistant" && m.sequence > cursor)) {
             return {result:{text:'Not run yet: the user sent a new message. Read it, then decide whether this action is still wanted.'}};
           }
           if(!captureAllowed)return {result:{text:'Skipped before execution: inspect the previous two desktop captures before another batch.'}};
