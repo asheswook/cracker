@@ -170,7 +170,9 @@ export async function tickSources(sql: Database, now = new Date()) {
         // request or a moved deadline is known by morning — and alerts keep their own quiet rules.
         const wait = await quietWait(tx, String(s['workspace_id']), now);
         const lastLook = wait ? (await tx`SELECT max(created_at) AS at FROM assistant.attention_source_runs WHERE source_id=${id}`)[0]?.['at'] : null;
-        if (wait && lastLook && now.getTime() - new Date(String(lastLook)).getTime() < 120 * 60_000) {
+        // A known request due within the next three hours keeps the normal rhythm even at night.
+        const urgent = wait ? (await tx`SELECT 1 FROM assistant.attention_source_items WHERE source_id=${id} AND state='open' AND action<>'none' AND due_at BETWEEN ${now} AND ${now}::timestamptz+interval '3 hours' LIMIT 1`)[0] : null;
+        if (wait && !urgent && lastLook && now.getTime() - new Date(String(lastLook)).getTime() < 120 * 60_000) {
           await tx`UPDATE assistant.attention_sources SET next_check_at=${now}::timestamptz+interval '30 minutes' WHERE id=${id}`; return 0;
         }
         await startLook(tx, s, now, false);
@@ -193,6 +195,9 @@ async function noteFailure(tx: Query, source: string, kind: string | null, error
     health=CASE WHEN ${userStep} THEN 'needs_user' WHEN failure_count+1>=3 THEN 'degraded' ELSE 'retrying' END,
     last_error=${error ?? kind},updated_at=now() WHERE id=${source}`;
   await tx`UPDATE assistant.attention_sources SET next_check_at=now()+LEAST(60,15*power(2,LEAST(failure_count-1,5)))*interval '1 minute' WHERE id=${source} AND enabled`;
+  // With a known request due soon, retry sooner (every 15 minutes) so recovery is noticed before it is due.
+  await tx`UPDATE assistant.attention_sources s SET next_check_at=LEAST(s.next_check_at,now()+interval '15 minutes') WHERE s.id=${source} AND s.enabled
+    AND EXISTS(SELECT 1 FROM assistant.attention_source_items i WHERE i.source_id=s.id AND i.state='open' AND i.action<>'none' AND i.due_at BETWEEN now() AND now()+interval '3 hours')`;
 }
 
 /** The observation run reports what it saw. Accepted once, only from a live run of the current revision. */
